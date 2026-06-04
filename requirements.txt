@@ -1,0 +1,9 @@
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-dotenv>=1.0.1
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+langchain>=0.2.15
+langchain-core>=0.2.35
+langchain-openai>=0.1.23
+langsmith>=0.1.95

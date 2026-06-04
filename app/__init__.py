@@ -1,0 +1,2 @@
+"""Local LangChain agent app."""
+
