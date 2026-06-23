@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
-from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import JSON as SA_JSON
 
 from app.core.database import Base
 
@@ -62,7 +62,7 @@ class Message(TimestampMixin, Base):
     thread_id: Mapped[str] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"), index=True)
     role: Mapped[str] = mapped_column(String(40))
     content: Mapped[str] = mapped_column(Text)
-    extra: Mapped[dict] = mapped_column(JSON, default=dict)
+    extra: Mapped[dict] = mapped_column(SA_JSON, default=dict)
 
     thread: Mapped[Thread] = relationship(back_populates="messages")
 
@@ -75,8 +75,8 @@ class McpServer(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120))
     transport: Mapped[str] = mapped_column(String(40), default="stdio")
     command: Mapped[str] = mapped_column(String(260), default="")
-    args: Mapped[list] = mapped_column(JSON, default=list)
-    env: Mapped[dict] = mapped_column(JSON, default=dict)
+    args: Mapped[list] = mapped_column(SA_JSON, default=list)
+    env: Mapped[dict] = mapped_column(SA_JSON, default=dict)
     url: Mapped[str] = mapped_column(String(500), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 

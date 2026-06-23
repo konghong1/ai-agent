@@ -1,13 +1,16 @@
-# Local LangChain AI Agent
+# Configurable AI Agent Platform
 
-一个可本地启动调试的 LangChain Agent 示例，支持：
+一个本地可运行的 AI Agent 项目骨架，包含：
 
-- LangChain tool-calling agent
-- LangSmith trace 调试
-- FastAPI HTTP 接口
-- React 可视化聊天界面
-- CLI 交互
-- 内置工具：计算器、当前时间、工作区文件列表、读取工作区文本文件
+- 用户注册 / 登录
+- JWT 鉴权
+- Agent 配置管理
+- 会话与消息持久化
+- 内置 LangChain tools
+- MCP Server 配置管理骨架
+- Skill 配置管理骨架
+- React 控制台
+- LangSmith trace
 
 ## 1. 安装后端依赖
 
@@ -19,30 +22,37 @@ pip install -r requirements.txt
 
 ## 2. 配置环境变量
 
-复制 `.env.example` 为 `.env`，填写：
+复制 `.env.example` 为 `.env`，然后填写模型服务配置：
 
 ```env
-OPENAI_API_KEY=your-nvidia-nim-api-key
-OPENAI_BASE_URL=https://integrate.api.nvidia.com/v1
-OPENAI_MODEL=moonshotai/kimi-k2.6
+OPENAI_API_KEY=your-api-key
+OPENAI_BASE_URL=https://your-openai-compatible-endpoint/v1
+OPENAI_MODEL=your-model
 
 LANGSMITH_TRACING=true
 LANGSMITH_API_KEY=your-langsmith-api-key
-LANGSMITH_PROJECT=local-langchain-agent
+LANGSMITH_PROJECT=ai-agent-platform
+
+DATABASE_URL=sqlite:///D:/workspace/ai-agent/agent.db
+SECRET_KEY=replace-with-a-long-random-secret
 ```
 
-## 3. 启动后端 API
+注意：`.env` 里的注释请使用 `#`，不要使用 `;`。
+
+## 3. 启动后端
 
 ```powershell
 uvicorn app.server:app --reload --host 127.0.0.1 --port 8010
 ```
 
-访问：
+可访问：
 
 - 健康检查：http://127.0.0.1:8010/health
-- Agent 调用：`POST http://127.0.0.1:8010/chat`
+- API 文档：http://127.0.0.1:8010/docs
 
-## 4. 启动 React 前端
+首次启动会自动创建 SQLite 数据库。
+
+## 4. 启动前端
 
 ```powershell
 cd web
@@ -56,25 +66,23 @@ npm run dev
 http://127.0.0.1:5173
 ```
 
-前端会通过 Vite proxy 调用后端 `/chat`，聊天调用会继续写入 LangSmith。
+## 5. 当前功能范围
 
-## 5. CLI 调试
+已经实现：
 
-```powershell
-python -m app.cli "列出当前工作区文件，并计算 23*19"
-```
+- 注册 / 登录 / 当前用户接口
+- 默认 Agent 自动创建
+- Agent 创建和配置
+- 会话创建、列表、消息读取
+- 登录后聊天
+- MCP Server 配置保存和基础校验
+- Skill 配置保存
 
-或进入交互：
+下一步建议实现：
 
-```powershell
-python -m app.cli
-```
-
-## 6. 工具扩展
-
-在 `app/tools.py` 里新增 `@tool` 函数，然后把它加入 `get_tools()` 返回列表即可。
-
-相关官方文档：
-
-- LangChain agents: https://docs.langchain.com/oss/python/langchain/agents
-- LangSmith tracing: https://docs.langchain.com/langsmith/trace-with-langchain
+- MCP runtime 连接和 tool 适配
+- Skill prompt 注入和 skill tools 加载
+- Tool 调用前确认
+- Agent 与 MCP/Skill 的绑定表
+- Alembic 数据库迁移
+- Docker Compose 部署

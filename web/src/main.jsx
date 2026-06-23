@@ -1,329 +1,414 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Activity,
   Bot,
   BrainCircuit,
-  Calculator,
-  Clock3,
-  FileSearch,
-  Gauge,
-  Github,
-  History,
-  Network,
+  Cable,
+  KeyRound,
+  LogOut,
+  MessageSquare,
   Palette,
-  RotateCcw,
+  Plus,
+  RefreshCcw,
   Send,
+  ShieldCheck,
   Sparkles,
-  TerminalSquare,
   Wrench
 } from "lucide-react";
 import "./styles.css";
+import { MessageRenderer } from './components';
 
-const starterMessages = [
-  {
-    role: "assistant",
-    content:
-      "你好，我是本地 LangChain Agent。可以调用时间、计算器、工作区文件等工具，并把调用链记录到 LangSmith。"
-  }
+const TOKEN_KEY = "agent-platform-token";
+
+const THEME_KEY = "agent-platform-theme";
+const THEMES = [
+  { id: "dark", label: "暗黑默认", icon: "🌑" },
+  { id: "ice", label: "冰晶色", icon: "❄️" },
+  { id: "planet", label: "悬浮星体", icon: "🪐" }
 ];
 
-const STORAGE_KEY = "agent-console-sessions";
-const THEME_KEY = "agent-console-theme";
-
-function createSession(title = "新的会话") {
+function authHeaders(token) {
   return {
-    id: `local-${crypto.randomUUID().slice(0, 8)}`,
-    title,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    messages: starterMessages
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`
   };
 }
 
-function loadSessions() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    if (Array.isArray(saved) && saved.length) return saved;
-  } catch {
-    // Ignore invalid local data and start clean.
+async function api(path, { token, method = "GET", body } = {}) {
+  const response = await fetch(path, {
+    method,
+    headers: token ? authHeaders(token) : { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = response.status === 204 ? null : await response.json();
+  if (!response.ok) {
+    throw new Error(data?.detail || "请求失败");
   }
-  return [createSession("本地调试")];
+  return data;
 }
 
-const quickPrompts = [
-  "现在几点？用工具计算 23*19",
-  "列出当前项目文件",
-  "读取 README.md，总结如何启动",
-  "解释一下这个 Agent 的调用链路"
-];
-
-const tools = [
-  { name: "current_time", icon: Clock3, accent: "mint" },
-  { name: "calculator", icon: Calculator, accent: "amber" },
-  { name: "list_workspace_files", icon: FileSearch, accent: "cyan" },
-  { name: "read_workspace_text_file", icon: TerminalSquare, accent: "rose" }
-];
-
 function App() {
-  const [sessions, setSessions] = useState(loadSessions);
-  const [activeSessionId, setActiveSessionId] = useState(() => sessions[0]?.id);
-  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || "dark");
+  const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
+  const [user, setUser] = useState(null);
+  const [authMode, setAuthMode] = useState("login");
+  const [authForm, setAuthForm] = useState({ email: "", username: "", password: "" });
+  const [agents, setAgents] = useState([]);
+  const [activeAgentId, setActiveAgentId] = useState(null);
+  const [threads, setThreads] = useState([]);
+  const [activeThreadId, setActiveThreadId] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState("ready");
-  const [lastError, setLastError] = useState("");
-  const inputRef = useRef(null);
+  const [error, setError] = useState("");
+  const [view, setView] = useState("chat");
+  const [mcpServers, setMcpServers] = useState([]);
+  const [skills, setSkills] = useState([]);
+  const [agentDraft, setAgentDraft] = useState({ name: "New Agent", description: "", system_prompt: "", model_name: "", temperature: 0 });
+  const [mcpDraft, setMcpDraft] = useState({ name: "filesystem", transport: "stdio", command: "npx", args: "-y @modelcontextprotocol/server-filesystem D:/workspace", url: "" });
+  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_KEY) || "dark");
+  const [skillDraft, setSkillDraft] = useState({ name: "code-review", title: "代码审查", description: "审查代码风险、可维护性和测试缺口", path: "skills/code-review" });
 
-  const activeSession = sessions.find((session) => session.id === activeSessionId) || sessions[0];
-  const messages = activeSession?.messages || starterMessages;
-  const threadId = activeSession?.id || "local-debug";
+  const activeAgent = useMemo(() => agents.find((agent) => agent.id === Number(activeAgentId)) || agents[0], [agents, activeAgentId]);
 
-  const stats = useMemo(() => {
-    const userCount = messages.filter((message) => message.role === "user").length;
-    return {
-      turns: userCount,
-      traces: userCount,
-      thread: threadId
-    };
-  }, [messages, threadId]);
+  useEffect(() => {
+    if (!token) return;
+    bootstrap();
+  }, [token]);
 
-  React.useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-  }, [sessions]);
+  useEffect(() => {
+    if (!token || !activeAgent) return;
+    loadThreads(activeAgent.id);
+  }, [token, activeAgent?.id]);
 
-  React.useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
 
-  function updateActiveSession(updater) {
-    setSessions((current) =>
-      current.map((session) => {
-        if (session.id !== activeSessionId) return session;
-        const nextSession = updater(session);
-        return { ...nextSession, updatedAt: new Date().toISOString() };
-      })
-    );
-  }
-
-  async function sendMessage(text = input) {
-    const message = text.trim();
-    if (!message || status === "thinking") return;
-
-    setInput("");
-    setLastError("");
-    setStatus("thinking");
-    updateActiveSession((session) => ({
-      ...session,
-      title: session.title === "新的会话" || session.title === "本地调试" ? message.slice(0, 24) : session.title,
-      messages: [...session.messages, { role: "user", content: message }]
-    }));
-
+  async function bootstrap() {
     try {
-      const response = await fetch("/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json; charset=utf-8" },
-        body: JSON.stringify({ message, thread_id: threadId })
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || "Agent request failed.");
-      }
-      updateActiveSession((session) => ({
-        ...session,
-        id: data.thread_id || session.id,
-        messages: [...session.messages, { role: "assistant", content: data.answer }]
-      }));
-      if (data.thread_id && data.thread_id !== activeSessionId) {
-        setActiveSessionId(data.thread_id);
-      }
-      setStatus("ready");
-    } catch (error) {
-      setLastError(error.message);
-      updateActiveSession((session) => ({
-        ...session,
-        messages: [...session.messages, { role: "assistant", content: `请求失败：${error.message}` }]
-      }));
-      setStatus("error");
-    } finally {
-      requestAnimationFrame(() => inputRef.current?.focus());
+      setError("");
+      const me = await api("/auth/me", { token });
+      setUser(me);
+      const nextAgents = await api("/agents", { token });
+      setAgents(nextAgents);
+      setActiveAgentId((current) => current || nextAgents[0]?.id || null);
+      setMcpServers(await api("/mcp-servers", { token }));
+      setSkills(await api("/skills", { token }));
+    } catch (err) {
+      logout();
+      setError(err.message);
     }
   }
 
-  function resetChat() {
-    const session = createSession();
-    setSessions((current) => [session, ...current]);
-    setActiveSessionId(session.id);
-    setLastError("");
-    setStatus("ready");
+  async function loadThreads(agentId) {
+    const nextThreads = await api(`/threads?agent_id=${agentId}`, { token });
+    setThreads(nextThreads);
+    if (nextThreads.length) {
+      setActiveThreadId(nextThreads[0].id);
+      setMessages(await api(`/threads/${nextThreads[0].id}/messages`, { token }));
+    } else {
+      setActiveThreadId(null);
+      setMessages([]);
+    }
   }
 
-  function switchSession(sessionId) {
-    setActiveSessionId(sessionId);
-    setLastError("");
-    setStatus("ready");
-  }
-
-  function cycleTheme() {
-    setTheme((current) => (current === "dark" ? "light" : "dark"));
-  }
-
-  function handleSubmit(event) {
+  async function handleAuth(event) {
     event.preventDefault();
-    sendMessage();
+    setStatus("thinking");
+    setError("");
+    try {
+      const path = authMode === "login" ? "/auth/login" : "/auth/register";
+      const payload = authMode === "login" ? { email: authForm.email, password: authForm.password } : authForm;
+      const data = await api(path, { method: "POST", body: payload });
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      setToken(data.access_token);
+      setUser(data.user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setStatus("ready");
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem(TOKEN_KEY);
+    setToken("");
+    setUser(null);
+    setAgents([]);
+    setThreads([]);
+    setMessages([]);
+  }
+
+
+  // Handle choice button click from AI messages
+  async function handleChoice(value, label) {
+    if (status === "thinking") return;
+    const message = label || value;
+    setInput("");
+    setError("");
+    setStatus("thinking");
+    setMessages((current) => [...current, { role: "user", content: message, id: `local-${Date.now()}` }]);
+    try {
+      const data = await api("/chat", {
+        token,
+        method: "POST",
+        body: { message, agent_id: activeAgent.id, thread_id: activeThreadId }
+      });
+      setActiveThreadId(data.thread_id);
+      setMessages(await api(`/threads/${data.thread_id}/messages`, { token }));
+      setThreads(await api(`/threads?agent_id=${activeAgent.id}`, { token }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setStatus("ready");
+    }
+  }
+
+  async function sendMessage(event) {
+    event?.preventDefault();
+    const message = input.trim();
+    if (!message || !activeAgent || status === "thinking") return;
+    setInput("");
+    setError("");
+    setStatus("thinking");
+    setMessages((current) => [...current, { role: "user", content: message, id: `local-${Date.now()}` }]);
+    try {
+      const data = await api("/chat", {
+        token,
+        method: "POST",
+        body: { message, agent_id: activeAgent.id, thread_id: activeThreadId }
+      });
+      setActiveThreadId(data.thread_id);
+      setMessages(await api(`/threads/${data.thread_id}/messages`, { token }));
+      setThreads(await api(`/threads?agent_id=${activeAgent.id}`, { token }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setStatus("ready");
+    }
+  }
+
+  async function createAgent(event) {
+    event.preventDefault();
+    const body = {
+      ...agentDraft,
+      system_prompt: agentDraft.system_prompt || undefined,
+      model_name: agentDraft.model_name || undefined,
+      temperature: Number(agentDraft.temperature || 0)
+    };
+    const created = await api("/agents", { token, method: "POST", body });
+    const nextAgents = await api("/agents", { token });
+    setAgents(nextAgents);
+    setActiveAgentId(created.id);
+    setView("chat");
+  }
+
+  async function createThread() {
+    if (!activeAgent) return;
+    const thread = await api("/threads", { token, method: "POST", body: { agent_id: activeAgent.id, title: "New chat" } });
+    setActiveThreadId(thread.id);
+    setMessages([]);
+    setThreads(await api(`/threads?agent_id=${activeAgent.id}`, { token }));
+  }
+
+  async function createMcp(event) {
+    event.preventDefault();
+    const body = {
+      ...mcpDraft,
+      args: mcpDraft.args.split(" ").map((item) => item.trim()).filter(Boolean),
+      env: {}
+    };
+    await api("/mcp-servers", { token, method: "POST", body });
+    setMcpServers(await api("/mcp-servers", { token }));
+  }
+
+  async function createSkill(event) {
+    event.preventDefault();
+    await api("/skills", { token, method: "POST", body: { ...skillDraft, source_type: "local" } });
+    setSkills(await api("/skills", { token }));
+  }
+
+  if (!token || !user) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-panel">
+          <div className="brand-lockup">
+            <div className="brand-mark"><Bot size={24} /></div>
+            <div>
+              <p className="eyebrow">AI Agent Platform</p>
+              <h1>{authMode === "login" ? "登录控制台" : "创建账号"}</h1>
+            </div>
+          </div>
+          <form className="stack-form" onSubmit={handleAuth}>
+            <label>邮箱<input value={authForm.email} onChange={(event) => setAuthForm({ ...authForm, email: event.target.value })} type="email" required /></label>
+            {authMode === "register" && (
+              <label>用户名<input value={authForm.username} onChange={(event) => setAuthForm({ ...authForm, username: event.target.value })} required /></label>
+            )}
+            <label>密码<input value={authForm.password} onChange={(event) => setAuthForm({ ...authForm, password: event.target.value })} type="password" minLength={6} required /></label>
+            {error && <div className="error-strip">{error}</div>}
+            <button className="primary-button" disabled={status === "thinking"}><KeyRound size={18} />{authMode === "login" ? "登录" : "注册"}</button>
+          </form>
+          <button className="text-button" onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}>
+            {authMode === "login" ? "没有账号？注册一个" : "已有账号？去登录"}
+          </button>
+        </section>
+      </main>
+    );
   }
 
   return (
-    <main className="shell">
-      <section className="left-panel">
+    <main className="shell" data-theme={theme}>
+      <aside className="left-panel">
         <div className="brand-lockup">
-          <div className="brand-mark">
-            <Bot size={24} />
-          </div>
+          <div className="brand-mark"><Bot size={24} /></div>
           <div>
-            <p className="eyebrow">LangChain</p>
+            <p className="eyebrow">Signed in as {user.username}</p>
             <h1>Agent Console</h1>
           </div>
         </div>
 
-        <div className="agent-core">
-          <div className={`core-ring ${status}`}>
-            <BrainCircuit size={48} />
-            <span />
-            <span />
-          </div>
-          <div className="core-copy">
-            <p>Runtime</p>
-            <strong>{status === "thinking" ? "Thinking" : status === "error" ? "Alert" : "Online"}</strong>
-          </div>
+        <div className="nav-list">
+          <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={17} />聊天</button>
+          <button className={view === "agents" ? "active" : ""} onClick={() => setView("agents")}><BrainCircuit size={17} />Agent</button>
+          <button className={view === "mcp" ? "active" : ""} onClick={() => setView("mcp")}><Cable size={17} />MCP</button>
+          <button className={view === "skills" ? "active" : ""} onClick={() => setView("skills")}><Sparkles size={17} />Skill</button>
         </div>
 
-        <div className="metric-grid">
-          <Metric icon={Activity} label="Turns" value={stats.turns} />
-          <Metric icon={Network} label="Trace" value={stats.traces} />
-          <Metric icon={Gauge} label="Port" value="8010" />
-        </div>
+        <label className="select-label">当前 Agent
+          <select value={activeAgent?.id || ""} onChange={(event) => setActiveAgentId(Number(event.target.value))}>
+            {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+          </select>
+        </label>
 
         <div className="history-list">
-          <div className="section-title">
-            <History size={16} />
-            <span>History</span>
-          </div>
-          {sessions.slice(0, 8).map((session) => (
-            <button
-              className={`history-row ${session.id === activeSessionId ? "active" : ""}`}
-              key={session.id}
-              onClick={() => switchSession(session.id)}
-            >
-              <span>{session.title}</span>
-              <small>{new Date(session.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small>
+          <div className="section-title"><MessageSquare size={16} /><span>会话</span><button onClick={createThread} title="新会话"><Plus size={15} /></button></div>
+          {threads.map((thread) => (
+            <button className={`history-row ${thread.id === activeThreadId ? "active" : ""}`} key={thread.id} onClick={async () => {
+              setActiveThreadId(thread.id);
+              setMessages(await api(`/threads/${thread.id}/messages`, { token }));
+            }}>
+              <span>{thread.title}</span>
+              <small>{new Date(thread.updated_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</small>
             </button>
           ))}
         </div>
 
-        <div className="tool-list">
-          <div className="section-title">
-            <Wrench size={16} />
-            <span>Tools</span>
-          </div>
-          {tools.map((tool) => (
-            <div className="tool-row" key={tool.name}>
-              <div className={`tool-icon ${tool.accent}`}>
-                <tool.icon size={17} />
-              </div>
-              <span>{tool.name}</span>
-              <i />
-            </div>
-          ))}
-        </div>
-      </section>
+        <button className="secondary-button" onClick={bootstrap}><RefreshCcw size={16} />刷新</button>
+        <button className="secondary-button" onClick={logout}><LogOut size={16} />退出</button>
+      </aside>
 
       <section className="chat-panel">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Thread</p>
-            <h2>{threadId}</h2>
+            <p className="eyebrow">{activeAgent?.model_name || "No model"}</p>
+            <h2>{viewTitle(view, activeAgent)}</h2>
           </div>
-          <div className="top-actions">
-            <a
-              className="icon-button"
-              href="https://smith.langchain.com"
-              target="_blank"
-              rel="noreferrer"
-              title="打开 LangSmith"
-              aria-label="打开 LangSmith"
-            >
-              <Github size={18} />
-            </a>
-            <button className="icon-button" onClick={cycleTheme} title="切换主题" aria-label="切换主题">
-              <Palette size={18} />
-            </button>
-            <button className="icon-button" onClick={resetChat} title="新会话" aria-label="新会话">
-              <RotateCcw size={18} />
-            </button>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <div className="theme-switcher">
+              {THEMES.map((t) => (
+                <button
+                  key={t.id}
+                  className={`theme-btn ${theme === t.id ? "active" : ""}`}
+                  onClick={() => setTheme(t.id)}
+                  title={t.label}
+                  type="button"
+                >
+                  {t.icon}
+                </button>
+              ))}
+            </div>
+            <div className="status-pill"><ShieldCheck size={16} />{status === "thinking" ? "运行中" : "已连接"}</div>
           </div>
         </header>
 
-        <div className="chat-stream" aria-live="polite">
-          {messages.map((message, index) => (
-            <article className={`message ${message.role}`} key={`${message.role}-${index}`}>
-              <div className="avatar">{message.role === "assistant" ? <Sparkles size={17} /> : "你"}</div>
-              <div className="bubble">{message.content}</div>
-            </article>
-          ))}
-          {status === "thinking" && (
-            <article className="message assistant">
-              <div className="avatar">
-                <Sparkles size={17} />
-              </div>
-              <div className="bubble typing">
-                <span />
-                <span />
-                <span />
-              </div>
-            </article>
-          )}
-        </div>
+        {view === "chat" && (
+          <>
+            <div className="chat-stream" aria-live="polite">
+              {messages.length === 0 && <div className="empty-state"><Wrench size={28} />选择一个 Agent，开始第一轮对话。</div>}
+              {messages.map((message) => (
+                <article className={`message ${message.role}`} key={message.id}>
+                  <div className="avatar">{message.role === "assistant" ? <Sparkles size={17} /> : "你"}</div>
+                  <MessageRenderer message={message} onChoiceClick={handleChoice} />
+                </article>
+              ))}
+              {status === "thinking" && <article className="message assistant"><div className="avatar"><Sparkles size={17} /></div><div className="bubble typing"><span /><span /><span /></div></article>}
+            </div>
+            {error && <div className="error-strip">{error}</div>}
+            <form className="composer" onSubmit={sendMessage}>
+              <textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="给 Agent 发送消息..." rows={1} />
+              <button type="submit" disabled={!input.trim() || status === "thinking"} aria-label="发送"><Send size={20} /></button>
+            </form>
+          </>
+        )}
 
-        <div className="quick-row">
-          {quickPrompts.map((prompt) => (
-            <button key={prompt} onClick={() => sendMessage(prompt)} disabled={status === "thinking"}>
-              {prompt}
-            </button>
-          ))}
-        </div>
+        {view === "agents" && (
+          <ConfigView title="创建 Agent" onSubmit={createAgent}>
+            <label>名称<input value={agentDraft.name} onChange={(event) => setAgentDraft({ ...agentDraft, name: event.target.value })} /></label>
+            <label>描述<input value={agentDraft.description} onChange={(event) => setAgentDraft({ ...agentDraft, description: event.target.value })} /></label>
+            <label>模型<input value={agentDraft.model_name} onChange={(event) => setAgentDraft({ ...agentDraft, model_name: event.target.value })} placeholder={activeAgent?.model_name} /></label>
+            <label>系统提示词<textarea value={agentDraft.system_prompt} onChange={(event) => setAgentDraft({ ...agentDraft, system_prompt: event.target.value })} rows={5} /></label>
+            <button className="primary-button"><Plus size={18} />创建 Agent</button>
+            <ItemList items={agents} empty="还没有 Agent" />
+          </ConfigView>
+        )}
 
-        {lastError && <div className="error-strip">{lastError}</div>}
+        {view === "mcp" && (
+          <ConfigView title="配置 MCP Server" onSubmit={createMcp}>
+            <label>名称<input value={mcpDraft.name} onChange={(event) => setMcpDraft({ ...mcpDraft, name: event.target.value })} /></label>
+            <label>Transport<select value={mcpDraft.transport} onChange={(event) => setMcpDraft({ ...mcpDraft, transport: event.target.value })}><option value="stdio">stdio</option><option value="sse">sse</option><option value="http">http</option></select></label>
+            <label>Command<input value={mcpDraft.command} onChange={(event) => setMcpDraft({ ...mcpDraft, command: event.target.value })} /></label>
+            <label>Args<input value={mcpDraft.args} onChange={(event) => setMcpDraft({ ...mcpDraft, args: event.target.value })} /></label>
+            <label>URL<input value={mcpDraft.url} onChange={(event) => setMcpDraft({ ...mcpDraft, url: event.target.value })} /></label>
+            <button className="primary-button"><Plus size={18} />保存 MCP</button>
+            <ItemList items={mcpServers} empty="还没有 MCP Server" />
+          </ConfigView>
+        )}
 
-        <form className="composer" onSubmit={handleSubmit}>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                sendMessage();
-              }
-            }}
-            placeholder="问 Agent 一个问题..."
-            rows={1}
-          />
-          <button type="submit" disabled={!input.trim() || status === "thinking"} aria-label="发送">
-            <Send size={20} />
-          </button>
-        </form>
+        {view === "skills" && (
+          <ConfigView title="登记 Skill" onSubmit={createSkill}>
+            <label>名称<input value={skillDraft.name} onChange={(event) => setSkillDraft({ ...skillDraft, name: event.target.value })} /></label>
+            <label>标题<input value={skillDraft.title} onChange={(event) => setSkillDraft({ ...skillDraft, title: event.target.value })} /></label>
+            <label>描述<input value={skillDraft.description} onChange={(event) => setSkillDraft({ ...skillDraft, description: event.target.value })} /></label>
+            <label>路径<input value={skillDraft.path} onChange={(event) => setSkillDraft({ ...skillDraft, path: event.target.value })} /></label>
+            <button className="primary-button"><Plus size={18} />保存 Skill</button>
+            <ItemList items={skills} empty="还没有 Skill" />
+          </ConfigView>
+        )}
       </section>
     </main>
   );
 }
 
-function Metric({ icon: Icon, label, value }) {
+function viewTitle(view, activeAgent) {
+  if (view === "agents") return "Agent 配置";
+  if (view === "mcp") return "MCP 配置";
+  if (view === "skills") return "Skill 管理";
+  return activeAgent?.name || "Agent Chat";
+}
+
+function ConfigView({ title, onSubmit, children }) {
   return (
-    <div className="metric">
-      <Icon size={17} />
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div className="config-view">
+      <form className="config-form" onSubmit={onSubmit}>
+        <h3>{title}</h3>
+        {children}
+      </form>
+    </div>
+  );
+}
+
+function ItemList({ items, empty }) {
+  return (
+    <div className="item-list">
+      {items.length === 0 && <p className="muted">{empty}</p>}
+      {items.map((item) => (
+        <div className="item-row" key={item.id}>
+          <strong>{item.title || item.name}</strong>
+          <span>{item.description || item.transport || item.model_name || item.path}</span>
+        </div>
+      ))}
     </div>
   );
 }
