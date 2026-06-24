@@ -1,21 +1,31 @@
 {
-  "name": "langchain-agent-console",
-  "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 5173",
-    "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 4173"
-  },
-  "dependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
-    "lucide-react": "^0.468.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.7"
-  }
+    "version": "1.0.0",
+    "name": "ai-agent-platform",
+    "scripts": {
+        "preview": "vite preview --host 127.0.0.1 --port 4173",
+        "build": "tsc && vite build",
+        "dev": "vite --host 127.0.0.1 --port 5173"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-react": "^4.3",
+        "typescript": "^5.7",
+        "vite": "^6.0"
+    },
+    "type": "module",
+    "dependencies": {
+        "@ant-design/pro-components": "^2.7",
+        "antd": "^5.15",
+        "axios": "^1.6",
+        "echarts": "^5.5",
+        "echarts-for-react": "^3.0",
+        "framer-motion": "^12.41.0",
+        "lucide-react": "^0.468",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "react-markdown": "^10.1",
+        "react-router-dom": "^6.22",
+        "remark-gfm": "^4.0",
+        "zustand": "^4.5"
+    },
+    "private": true
 }

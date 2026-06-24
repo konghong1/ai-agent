@@ -1,0 +1,39 @@
+﻿.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0a0e17 0%, #111827 100%);
+}
+
+.login-card {
+  background: rgba(17, 24, 39, 0.92) !important;
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(0, 212, 255, 0.12) !important;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  padding: 24px;
+}
+
+.login-btn {
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.3), rgba(0, 255, 213, 0.15)) !important;
+  border: 1px solid rgba(0, 212, 255, 0.4) !important;
+  color: #e8f4f8 !important;
+}
+
+.login-btn:hover {
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.5), rgba(0, 255, 213, 0.25)) !important;
+  border-color: #00d4ff !important;
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.2) !important;
+}
+
+.ant-tabs-tab {
+  color: #8899aa !important;
+}
+
+.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: #00d4ff !important;
+}
+
+.ant-tabs-ink-bar {
+  background: #00d4ff !important;
+}

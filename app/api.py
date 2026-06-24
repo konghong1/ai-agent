@@ -9,26 +9,29 @@ from app.core.database import get_db
 from app.core.security import create_access_token
 from app.deps import get_current_user
 from app.models import (
-    AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBFolder, KBDocument,
-    Message, Skill, Thread, User, McpServer, SystemSetting,
+    KBFeedback, RetrievalLog,
+AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBFolder, KBDocument,
+Message, Skill, Thread, User, McpServer, SystemSetting,
 )
 from app.schemas import (
-    AgentCreate, AgentRead, AgentUpdate,
-    ChatRequest, ChatResponse,
-    KnowledgeBaseCreate, KnowledgeBaseRead, KnowledgeBaseUpdate,
-    KBFolderCreate, KBFolderRead, KBFolderUpdate,
-    KBDocumentRead, KBSearchRequest, KBSearchResult, KBUploadResponse,
-    McpServerCreate, McpServerRead, McpServerUpdate,
-    MessageRead,
-    SkillCreate, SkillRead, SkillUpdate,
-    ThreadCreate, ThreadRead,
-    TokenResponse, UserCreate, UserLogin, UserRead,
-    UserUpdate as UserUpdateSchema, UserManagementRead,
-    SystemSettingCreate, SystemSettingRead, SystemSettingUpdate,
+    KBStatsResponse,
+AgentCreate, AgentRead, AgentUpdate,
+ChatRequest, ChatResponse,
+KnowledgeBaseCreate, KnowledgeBaseRead, KnowledgeBaseUpdate,
+KBFolderCreate, KBFolderRead, KBFolderUpdate,
+KBDocumentRead, KBSearchRequest, KBSearchResult, KBUploadResponse,
+McpServerCreate, McpServerRead, McpServerUpdate,
+MessageRead,
+SkillCreate, SkillRead, SkillUpdate,
+ThreadCreate, ThreadRead,
+TokenResponse, UserCreate, UserLogin, UserRead,
+UserUpdate as UserUpdateSchema, UserManagementRead,
+SystemSettingCreate, SystemSettingRead, SystemSettingUpdate,
 )
 from app.services import (
-    DEFAULT_SYSTEM_PROMPT, authenticate_user, create_user, new_thread_id,
-    KnowledgeBaseService, UserService, SystemSettingService,
+    HybridRetriever, ContextBuilder, RAG_SYSTEM_PROMPT, QueryRewriter,
+DEFAULT_SYSTEM_PROMPT, authenticate_user, create_user, new_thread_id,
+KnowledgeBaseService, UserService, SystemSettingService,
 )
 from app.settings import get_settings
 
@@ -439,3 +442,90 @@ def update_setting(key: str, payload: SystemSettingUpdate, current_user: User = 
 @router.delete("/settings/{key}", status_code=204)
 def delete_setting(key: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
     SystemSettingService.delete_setting(db, key)
+
+# ---- RAG Statistics ----
+
+@router.get("/knowledge-bases/{kb_id}/stats", response_model=KBStatsResponse)
+def get_kb_stats(
+    kb_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get knowledge base statistics for RAG quality monitoring."""
+    kb = KnowledgeBaseService.get_kb(db, kb_id, current_user.id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found.")
+
+    total_docs = db.scalar(select(func.count(KBDocument.id)).where(KBDocument.kb_id == kb_id)) or 0
+    total_chunks = db.scalar(select(func.count(KBChunk.id)).where(KBChunk.kb_id == kb_id)) or 0
+    status_rows = db.execute(
+        select(KBDocument.status, func.count(KBDocument.id))
+        .where(KBDocument.kb_id == kb_id)
+        .group_by(KBDocument.status)
+    ).all()
+    status_breakdown = {row[0]: row[1] for row in status_rows}
+
+    hot_queries = db.execute(
+        select(RetrievalLog.query, func.count(RetrievalLog.id).label('cnt'))
+        .where(RetrievalLog.kb_id == kb_id)
+        .group_by(RetrievalLog.query)
+        .order_by(desc('cnt'))
+        .limit(10)
+    ).all()
+    hot = [str(r.query) for r in hot_queries]
+
+    return KBStatsResponse(
+        total_documents=total_docs,
+        total_chunks=total_chunks,
+        avg_chunks_per_doc=round(total_chunks / max(total_docs, 1), 1),
+        status_breakdown=status_breakdown,
+        hot_queries=hot,
+    )
+
+
+# ---- Retrieval Feedback ----
+
+@router.post("/retrieval-feedback")
+def submit_feedback(
+    payload: RetrievalFeedbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Submit user feedback on retrieval results."""
+    feedback = KBFeedback(
+        user_id=current_user.id,
+        thread_id=payload.thread_id,
+        chunk_id=payload.chunk_id,
+        is_helpful=payload.is_helpful,
+        comment=payload.comment,
+    )
+    db.add(feedback)
+    db.commit()
+    return {"status": "ok"}
+
+
+# ---- Update KB RAG Config ----
+
+@router.patch("/knowledge-bases/{kb_id}/rag-config")
+def update_kb_rag_config(
+    kb_id: int,
+    payload: RAGConfigUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update RAG configuration for a knowledge base."""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found.")
+    if kb.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        kb.rag_config[key] = value
+
+    db.commit()
+    db.refresh(kb)
+    return {"status": "ok", "rag_config": kb.rag_config}
+
+
+

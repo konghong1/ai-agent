@@ -1,0 +1,67 @@
+:root {
+  --ice-primary: #00d4ff;
+  --ice-primary-10: rgba(0, 212, 255, 0.10);
+  --ice-primary-30: rgba(0, 212, 255, 0.30);
+  --ice-primary-60: rgba(0, 212, 255, 0.60);
+  --ice-primary-dark: #0099cc;
+  --ice-secondary: #7b68ee;
+  --ice-secondary-10: rgba(123, 104, 238, 0.10);
+  --ice-accent: #00ffd5;
+  --ice-accent-10: rgba(0, 255, 213, 0.10);
+  --ice-bg-primary: #0a0e17;
+  --ice-bg-secondary: #111827;
+  --ice-bg-card: rgba(17, 24, 39, 0.85);
+  --ice-bg-glass: rgba(255, 255, 255, 0.03);
+  --ice-bg-hover: rgba(0, 212, 255, 0.06);
+  --ice-text-primary: #e8f4f8;
+  --ice-text-secondary: #8899aa;
+  --ice-text-muted: #556677;
+  --ice-text-inverse: #0a0e17;
+  --ice-border: rgba(0, 212, 255, 0.12);
+  --ice-border-hover: rgba(0, 212, 255, 0.35);
+  --ice-border-active: rgba(0, 212, 255, 0.55);
+  --ice-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --ice-shadow-md: 0 4px 24px rgba(0, 212, 255, 0.06);
+  --ice-shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.5);
+  --ice-glow: 0 0 20px rgba(0, 212, 255, 0.15);
+  --ice-glow-strong: 0 0 30px rgba(0, 212, 255, 0.25);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #root { height: 100%; overflow: hidden; }
+body {
+  background: var(--ice-bg-primary);
+  color: var(--ice-text-primary);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--ice-primary-30); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--ice-primary-60); }
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-8px); }
+  75% { transform: translateX(8px); }
+}
+.shake { animation: shake 0.4s ease; }
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}

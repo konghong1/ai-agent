@@ -228,3 +228,41 @@ class KBChunk(TimestampMixin, Base):
     metadata_: Mapped[dict] = mapped_column(SA_JSON, default=dict)
 
     __table_args__ = (UniqueConstraint("document_id", "chunk_index", "vector_id", name="uq_kb_chunk_vec"),)
+
+
+# ============================================================
+# KBFeedback (RAG feedback tracking)
+# ============================================================
+
+class KBFeedback(Base):
+    """User feedback on retrieval results."""
+    __tablename__ = "kb_feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    thread_id: Mapped[str] = mapped_column(String(80))
+    chunk_id: Mapped[int] = mapped_column(ForeignKey("kb_chunks.id", ondelete="CASCADE"))
+    is_helpful: Mapped[bool]
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ============================================================
+# RetrievalLog (RAG search logging)
+# ============================================================
+
+class RetrievalLog(Base):
+    """Logs each retrieval operation for analysis and optimization."""
+    __tablename__ = "retrieval_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(80))
+    query: Mapped[str] = mapped_column(Text)
+    rewritten_query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kb_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"))
+    top_k: Mapped[int]
+    hit_count: Mapped[int]
+    avg_score: Mapped[float]
+    took_ms: Mapped[int]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

@@ -516,3 +516,232 @@ def authenticate_user(db: Session, email: str, password: str) -> User | None:
 
 def new_thread_id() -> str:
     return f"thread-{uuid.uuid4().hex[:12]}"
+
+
+# ============================================================
+# RAG Core Services (RAG 增强核心)
+# ============================================================
+
+class QueryRewriter:
+    """Query rewriting for better retrieval."""
+
+    @staticmethod
+    def rewrite(query: str, kb_name: str = "") -> str:
+        """Simple rule-based query rewriting."""
+        stop_words = {"怎么", "如何", "什么", "为什么", "呢", "吗", "的", "了", "是", "在", "有", "我", "你", "他", "她", "它", "们", "这", "那", "个", "一", "不", "也", "都", "太", "很", "非常", "比较", "有点", "稍微", "大概", "大约", "也许", "可能", "应该", "可以", "能够", "需要", "必须", "请", "帮", "给", "让", "叫", "把", "被", "从", "向", "朝", "往", "对", "对于", "关于", "至于", "根据", "通过", "经过", "按照", "由于", "因为", "所以", "但是", "可是", "然而", "不过", "虽然", "尽管", "如果", "假如", "只要", "无论", "不管", "即使", "既然", "于是", "因此", "因而", "所以", "总之", "总而言之", "综上所述", "也就是说", "换句话说", "例如", "比如", "譬如", "像", "如同", "仿佛", "似的", "一样", "等等", "之类", "而言", "来说", "而言", "来说", "的话", "方面", "起来", "下来", "出来", "进来", "上去", "下来", "过来", "回去", "回来", "出去", "进去", "起来", "下来"}
+        words = [w for w in query if w not in stop_words]
+        return ''.join(words) if words else query
+
+
+class HybridRetriever:
+    """Hybrid retrieval: vector + keyword + RRF fusion + MMR dedup + rerank."""
+
+    def __init__(self, kb, db):
+        self.kb = kb
+        self.db = db
+        self.chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+
+    def retrieve(self, query: str, top_k: int = 20, rerank_top_k: int = 10, folder_id=None):
+        """Execute hybrid retrieval and return sorted results."""
+        # Road 1: Vector search
+        vector_hits = self._vector_search(query, top_k=top_k * 2, folder_id=folder_id)
+        # Road 2: Keyword search
+        keyword_hits = self._keyword_search(query, top_k=top_k * 2, folder_id=folder_id)
+        # RRF fusion
+        fused = self._rrf_fusion(vector_hits, keyword_hits, k=60)
+        # MMR deduplication
+        if fused and self.kb.rag_config.get('mmr_enabled', True):
+            fused = self._mmr_deduplicate(fused, threshold=self.kb.rag_config.get('mmr_threshold', 0.5))
+        # Rerank
+        if fused and self.kb.rag_config.get('rerank_enabled', True):
+            fused = self._rerank(query, fused[:rerank_top_k])
+        # Filter low scores
+        min_score = self.kb.rag_config.get('min_relevance_score', 0.3)
+        fused = [h for h in fused if h['score'] >= min_score]
+        return fused[:top_k]
+
+    def _vector_search(self, query, top_k, folder_id):
+        """Vector search via ChromaDB."""
+        embeddings = get_embeddings(self.kb.embedding_model)
+        query_vec = embeddings.embed_query(query)
+        coll = self.chroma_client.get_collection(f"kb_{self.kb.id}")
+        where = {"kb_id": str(self.kb.id)}
+        if folder_id:
+            where["folder_id"] = str(folder_id)
+        try:
+            results = coll.query(query_embeddings=[query_vec], n_results=top_k, where=where)
+        except Exception:
+            return []
+        hits = []
+        for i in range(len(results['ids'][0])):
+            hits.append({
+                'type': 'vector',
+                'score': 1 - results['distances'][0][i],
+                'content': results['documents'][0][i],
+                'metadata': results['metadatas'][0][i] if results['metadatas'][0][i] else {},
+                'vector_id': results['ids'][0][i],
+            })
+        return hits
+
+    def _keyword_search(self, query, top_k, folder_id):
+        """Keyword search via SQLite LIKE matching."""
+        keywords = [w for w in query if len(w) > 0]
+        if not keywords:
+            return []
+        conditions = [KBChunk.content.like(f"%{kw}%") for kw in keywords]
+        stmt = select(KBChunk).where(KBChunk.kb_id == self.kb.id, or_(*conditions)).limit(top_k)
+        if folder_id:
+            stmt = stmt.where(KBChunk.folder_id == folder_id)
+        chunks = list(self.db.scalars(stmt).all())
+        hits = []
+        for chunk in chunks:
+            doc = chunk.document
+            score = sum(1 for kw in keywords if kw in chunk.content) / len(keywords)
+            hits.append({
+                'type': 'keyword',
+                'score': score,
+                'content': chunk.content,
+                'metadata': {
+                    'document_id': doc.id,
+                    'document_name': doc.original_filename,
+                    'folder_path': '',
+                    'kb_id': self.kb.id,
+                    'folder_id': chunk.folder_id,
+                },
+                'vector_id': chunk.vector_id,
+            })
+        return hits
+
+    def _rrf_fusion(self, vector_hits, keyword_hits, k=60):
+        """Reciprocal Rank Fusion."""
+        rank_map = {}
+        for i, hit in enumerate(vector_hits):
+            vid = hit['vector_id']
+            rank_map[vid] = rank_map.get(vid, 0) + k / (k + i + 1)
+        for i, hit in enumerate(keyword_hits):
+            vid = hit['vector_id']
+            rank_map[vid] = rank_map.get(vid, 0) + k / (k + i + 1)
+        merged = {}
+        for hit in vector_hits + keyword_hits:
+            vid = hit['vector_id']
+            if vid not in merged:
+                merged[vid] = {**hit, 'rrf_score': 0}
+            merged[vid]['rrf_score'] = rank_map.get(vid, 0)
+            if 'hit_source' not in merged[vid]:
+                merged[vid]['hit_source'] = hit['type']
+            elif hit['type'] != merged[vid]['hit_source']:
+                merged[vid]['hit_source'] = 'both'
+        return sorted(merged.values(), key=lambda x: x['rrf_score'], reverse=True)
+
+    def _mmr_deduplicate(self, hits, threshold=0.5):
+        """Maximal Marginal Relevance deduplication."""
+        if not hits:
+            return []
+        try:
+            import numpy as np
+            embeddings = get_embeddings(self.kb.embedding_model)
+            selected = [hits[0]]
+            remaining = list(hits[1:])
+            while remaining and len(selected) < 10:
+                best_idx = 0
+                best_score = -1
+                for i, candidate in enumerate(remaining):
+                    cand_emb = np.array(embeddings.embed_query(candidate['content']))
+                    max_sim = 0
+                    for sel in selected:
+                        sel_emb = np.array(embeddings.embed_query(sel['content']))
+                        norm_c = np.linalg.norm(cand_emb)
+                        norm_s = np.linalg.norm(sel_emb)
+                        if norm_c > 0 and norm_s > 0:
+                            sim = float(np.dot(cand_emb, sel_emb) / (norm_c * norm_s))
+                            max_sim = max(max_sim, sim)
+                    mmr_score = candidate['score'] - threshold * max_sim
+                    if mmr_score > best_score:
+                        best_score = mmr_score
+                        best_idx = i
+                selected.append(remaining.pop(best_idx))
+            return selected
+        except Exception:
+            return hits[:10]
+
+    def _rerank(self, query, hits):
+        """Cross-Encoder reranking."""
+        if not hits:
+            return []
+        model_name = self.kb.rag_config.get('rerank_model', 'bge-reranker-base')
+        try:
+            from sentence_transformers import CrossEncoder
+            ce = CrossEncoder(model_name)
+            pairs = [[query, h['content']] for h in hits]
+            scores = ce.predict(pairs)
+            for hit, score in zip(hits, scores):
+                hit['rerank_score'] = float(score)
+                hit['score'] = float(score)
+            return sorted(hits, key=lambda x: x['rerank_score'], reverse=True)
+        except Exception:
+            return sorted(hits, key=lambda x: x.get('rrf_score', 0), reverse=True)
+
+
+class ContextBuilder:
+    """Build LLM-ready context from retrieval results."""
+
+    def __init__(self, max_tokens=4000):
+        self.max_tokens = max_tokens
+
+    def build(self, query, hits, include_sources=True):
+        """Return (context_text, sources_list)."""
+        if not hits:
+            return "", []
+        context_parts = []
+        sources = []
+        budget = self.max_tokens
+        for i, hit in enumerate(hits, 1):
+            content = hit['content']
+            meta = hit.get('metadata', {})
+            # Approximate token count
+            token_count = len(content) // 3.5
+            if token_count > budget:
+                content = content[:budget * 3] + "... [内容过长，已截断]"
+                token_count = budget
+            budget -= token_count
+            if budget <= 0:
+                break
+            source_tag = ""
+            if include_sources:
+                doc_name = meta.get('document_name', 'Unknown')
+                score_pct = hit.get('score', 0)
+                folder_path = meta.get('folder_path', '')
+                source_tag = f"[来源: {doc_name}, 相关度: {score_pct:.0%}]"
+                if folder_path:
+                    source_tag += f" ({folder_path})"
+            context_parts.append(f"{source_tag}\n{content}\n")
+            sources.append({
+                'document_name': meta.get('document_name', ''),
+                'folder_path': meta.get('folder_path', ''),
+                'score': hit.get('score', 0),
+                'rerank_score': hit.get('rerank_score'),
+                'hit_source': hit.get('hit_source', 'vector'),
+            })
+        context = "\n=== 检索到的相关知识 ===\n\n" + "".join(context_parts)
+        return context, sources
+
+
+# RAG System Prompt
+RAG_SYSTEM_PROMPT = """你是一个基于知识库的智能问答助手。
+
+## 回答规则
+
+1. **优先使用检索到的知识**: 当提供了检索结果时，必须基于这些内容回答问题
+2. **必须引用来源**: 每个关键信息后面标注 [来源: 文件名]
+3. **不知道就说不知道**: 如果检索结果中没有相关信息，明确告知用户
+4. **不要编造答案**: 即使你觉得知道答案，也要以检索结果为准
+5. **综合多来源**: 多个文档有相关信息时，综合后给出完整回答
+6. **指出矛盾**: 不同文档有冲突信息时，告知用户并列出各方说法
+
+## 回答风格
+
+- 结构化，条理清晰
+- 适当使用 Markdown 格式
+- 引用具体数据和事实
+- 如果问题超出知识库范围，告知用户并尝试用通用知识回答
+"""

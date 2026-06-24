@@ -324,3 +324,52 @@ class SystemSettingRead(BaseModel):
     description: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+
+# ============================================================
+# RAG Configuration Schemas
+# ============================================================
+
+class RAGConfigUpdate(BaseModel):
+    hybrid_search: bool | None = None
+    rerank_enabled: bool | None = None
+    rerank_model: str | None = None
+    top_k: int | None = Field(default=None, ge=1, le=50)
+    rerank_top_k: int | None = Field(default=None, ge=1, le=30)
+    mmr_enabled: bool | None = None
+    mmr_threshold: float | None = Field(default=None, ge=0, le=1)
+    max_context_tokens: int | None = Field(default=None, ge=500, le=16000)
+    min_relevance_score: float | None = Field(default=None, ge=0, le=1)
+    query_rewrite: bool | None = None
+    include_sources: bool | None = None
+
+
+class RetrievalFeedbackRequest(BaseModel):
+    thread_id: str
+    chunk_id: int
+    is_helpful: bool
+    comment: str | None = ""
+
+
+class RetrievalLogRead(BaseModel):
+    id: int
+    thread_id: str
+    query: str
+    rewritten_query: str | None
+    kb_id: int
+    top_k: int
+    hit_count: int
+    avg_score: float
+    took_ms: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KBStatsResponse(BaseModel):
+    total_documents: int
+    total_chunks: int
+    avg_chunks_per_doc: float
+    status_breakdown: dict
+    hot_queries: list[str]
