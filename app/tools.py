@@ -74,5 +74,68 @@ def read_workspace_text_file(relative_path: str, max_chars: int = 4000) -> str:
     return target.read_text(encoding="utf-8", errors="replace")[:max_chars]
 
 
+# ============================================================
+# Knowledge Base Search Tool (Task 12)
+# ============================================================
+
+@tool
+def search_knowledge_base(query: str, kb_id: int | None = None, top_k: int = 5) -> str:
+    """Search one or all knowledge bases for relevant information.
+
+    Args:
+        query: The search query text.
+        kb_id: Optional specific knowledge base ID to search. If None, searches all KBs.
+        top_k: Number of results to return (1-20).
+
+    Returns:
+        Formatted search results with document names, folder paths, and relevant text snippets.
+    """
+    from sqlalchemy import select
+    from app.core.database import SessionLocal
+    from app.models import KnowledgeBase
+    from app.services import KnowledgeBaseService
+
+    db = SessionLocal()
+    try:
+        if kb_id:
+            kbs = [db.get(KnowledgeBase, kb_id)]
+        else:
+            kbs = list(db.scalars(select(KnowledgeBase).where(KnowledgeBase.enabled == True)).all())
+
+        if not kbs or kbs[0] is None:
+            return "未找到可用的知识库。"
+
+        all_results = []
+        for kb in kbs:
+            hits = KnowledgeBaseService.search_knowledge_base(db, kb.id, query, top_k=top_k)
+            for hit in hits:
+                hit["_kb_name"] = kb.name
+            all_results.extend(hits)
+
+        if not all_results:
+            return "未在知识库中找到相关内容。"
+
+        lines = ["知识库搜索结果：", ""]
+        for i, hit in enumerate(all_results, 1):
+            lines.append(f"--- 结果 {i} ---")
+            lines.append(f"知识库: {hit.get('_kb_name', '')}")
+            lines.append(f"文档: {hit.get('document_name', '')}")
+            path = hit.get('folder_path', '')
+            if path:
+                lines.append(f"路径: {path}")
+            lines.append(f"相关度: {hit.get('score', 0):.2%}")
+            content = hit.get('content', '')
+            if len(content) > 300:
+                content = content[:300] + "..."
+            lines.append(f"内容: {content}")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    finally:
+        db.close()
+
+
 def get_tools():
-    return [calculator, current_time, list_workspace_files, read_workspace_text_file]
+    """Return all available LangChain tools."""
+    return [calculator, current_time, list_workspace_files, read_workspace_text_file, search_knowledge_base]

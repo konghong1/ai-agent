@@ -25,6 +25,11 @@ class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class UserUpdate(BaseModel):
+    role: str | None = Field(default=None, min_length=1, max_length=40)
+    enabled: bool | None = None
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -38,6 +43,7 @@ class AgentCreate(BaseModel):
     model_name: str | None = None
     temperature: float = Field(default=0, ge=0, le=2)
     enabled: bool = True
+    knowledge_base_ids: list[int] = Field(default_factory=list)
 
 
 class AgentUpdate(BaseModel):
@@ -47,6 +53,7 @@ class AgentUpdate(BaseModel):
     model_name: str | None = None
     temperature: float | None = Field(default=None, ge=0, le=2)
     enabled: bool | None = None
+    knowledge_base_ids: list[int] | None = None
 
 
 class AgentRead(BaseModel):
@@ -161,5 +168,159 @@ class SkillRead(BaseModel):
     source_type: str
     path: str
     enabled: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# Knowledge Base Schemas (Task 5)
+# ============================================================
+
+class KnowledgeBaseCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    chunk_size: int = Field(default=500, ge=100, le=4000)
+    chunk_overlap: int = Field(default=50, ge=0, le=500)
+    enabled: bool = True
+
+
+class KnowledgeBaseUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    embedding_model: str | None = None
+    chunk_size: int | None = Field(default=None, ge=100, le=4000)
+    chunk_overlap: int | None = Field(default=None, ge=0, le=500)
+    enabled: bool | None = None
+
+
+class KnowledgeBaseRead(BaseModel):
+    id: int
+    name: str
+    description: str
+    embedding_model: str
+    chunk_size: int
+    chunk_overlap: int
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KBFolderCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=300)
+    description: str = ""
+    parent_id: int | None = None
+
+
+class KBFolderUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=300)
+    description: str | None = None
+    parent_id: int | None = None
+
+
+class KBFolderRead(BaseModel):
+    id: int
+    kb_id: int
+    parent_id: int | None
+    name: str
+    description: str
+    created_at: datetime
+    updated_at: datetime
+    children: list["KBFolderRead"] = Field(default_factory=list)
+    document_count: int = Field(default=0)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KBFolderTreeNode(BaseModel):
+    """Recursive tree node for the folder browser."""
+    id: int
+    name: str
+    description: str
+    children: list["KBFolderTreeNode"] = Field(default_factory=list)
+    document_count: int = Field(default=0)
+
+
+class KBDocumentRead(BaseModel):
+    id: int
+    kb_id: int
+    folder_id: int | None
+    original_filename: str
+    file_type: str
+    file_size: int
+    status: str
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KBSearchRequest(BaseModel):
+    """Request body for searching a knowledge base."""
+    query: str = Field(..., min_length=1, max_length=500)
+    kb_id: int
+    folder_id: int | None = None
+    top_k: int = Field(default=5, ge=1, le=20)
+
+
+class KBSearchResult(BaseModel):
+    """A single hit returned by a knowledge-base search."""
+    chunk_id: int
+    vector_id: str
+    document_id: int
+    document_name: str
+    folder_path: str
+    page_number: int | None
+    chunk_index: int
+    content: str
+    score: float
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KBUploadResponse(BaseModel):
+    document_id: int
+    status: str
+    message: str
+
+
+# ============================================================
+# User Management Schemas (Task 6)
+# ============================================================
+
+class UserManagementRead(BaseModel):
+    id: int
+    email: EmailStr
+    username: str
+    role: str
+    enabled: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# System Setting Schemas (Task 7)
+# ============================================================
+
+class SystemSettingCreate(BaseModel):
+    key: str = Field(..., min_length=1, max_length=120)
+    value: str = ""
+    description: str = ""
+
+
+class SystemSettingUpdate(BaseModel):
+    value: str | None = None
+    description: str | None = None
+
+
+class SystemSettingRead(BaseModel):
+    id: int
+    key: str
+    value: str
+    description: str
 
     model_config = ConfigDict(from_attributes=True)

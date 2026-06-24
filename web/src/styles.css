@@ -1782,3 +1782,273 @@ h2 {
   border-color: rgba(100,80,180,0.12);
 }
 :root[data-theme="planet"] .tb-zoom-btn:hover { background: rgba(100,60,180,0.15); }
+
+/* ========================================
+   Knowledge Base Styles (追加，不影响原有样式)
+   ======================================== */
+
+/* KB Create Form */
+.kb-create-form {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(244, 241, 232, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.kb-create-form input {
+  padding: 8px 12px;
+  border: 1px solid rgba(244, 241, 232, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f4f1e8;
+  font-size: 13px;
+}
+.kb-create-form input:focus {
+  outline: none;
+  border-color: #5de2b9;
+  box-shadow: 0 0 0 3px rgba(93, 226, 185, 0.08);
+}
+.kb-create-form input::placeholder {
+  color: #6a7098;
+}
+
+/* KB List */
+.kb-list {
+  display: grid;
+  gap: 6px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 4px;
+}
+.kb-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid rgba(244, 241, 232, 0.08);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.kb-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.kb-item.active {
+  background: rgba(93, 226, 185, 0.08);
+  border-color: rgba(93, 226, 185, 0.3);
+}
+
+/* KB Detail */
+.kb-detail {
+  padding: 12px;
+  border-top: 1px solid rgba(244, 241, 232, 0.06);
+}
+.kb-section {
+  margin-top: 14px;
+}
+.kb-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #9ea49b;
+  font-weight: 600;
+}
+
+/* Folder Tree */
+.folder-tree {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid rgba(244, 241, 232, 0.06);
+  border-radius: 6px;
+  padding: 4px;
+  background: rgba(0, 0, 0, 0.15);
+}
+.tree-node {
+  display: flex;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+.tree-node:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.tree-toggle {
+  background: none;
+  border: none;
+  color: #9ea49b;
+  padding: 2px 4px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  min-height: 20px;
+  border-radius: 3px;
+}
+.tree-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f4f1e8;
+}
+
+/* Document List */
+.doc-list {
+  max-height: 180px;
+  overflow-y: auto;
+  display: grid;
+  gap: 4px;
+}
+.doc-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border: 1px solid rgba(244, 241, 232, 0.06);
+  border-radius: 6px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.doc-item strong {
+  display: block;
+  font-size: 13px;
+  color: #f4f1e8;
+}
+
+/* KB Search */
+.kb-search-bar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.kb-search-bar input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid rgba(244, 241, 232, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f4f1e8;
+  font-size: 13px;
+}
+.kb-search-bar input:focus {
+  outline: none;
+  border-color: #5de2b9;
+  box-shadow: 0 0 0 3px rgba(93, 226, 185, 0.08);
+}
+.kb-search-bar input::placeholder {
+  color: #6a7098;
+}
+.search-results {
+  max-height: 240px;
+  overflow-y: auto;
+  display: grid;
+  gap: 6px;
+}
+.search-result-item {
+  padding: 10px 12px;
+  border: 1px solid rgba(244, 241, 232, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.result-meta {
+  font-size: 11px;
+  color: #9ea49b;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.result-content {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #c8d0c8;
+}
+
+/* Theme: Ice */
+:root[data-theme="ice"] .kb-create-form {
+  border-color: rgba(100, 180, 220, 0.1);
+  background: rgba(100, 180, 220, 0.03);
+}
+:root[data-theme="ice"] .kb-create-form input {
+  background: rgba(100, 180, 220, 0.06);
+  border-color: rgba(100, 180, 220, 0.15);
+  color: #e0e8f0;
+}
+:root[data-theme="ice"] .kb-create-form input:focus {
+  border-color: #64b4dc;
+  box-shadow: 0 0 0 3px rgba(100, 180, 220, 0.1);
+}
+:root[data-theme="ice"] .kb-item {
+  background: rgba(100, 180, 220, 0.04);
+  border-color: rgba(100, 180, 220, 0.1);
+}
+:root[data-theme="ice"] .kb-item.active {
+  background: rgba(100, 180, 220, 0.12);
+  border-color: rgba(100, 180, 220, 0.3);
+}
+:root[data-theme="ice"] .folder-tree {
+  background: rgba(100, 180, 220, 0.05);
+  border-color: rgba(100, 180, 220, 0.1);
+}
+:root[data-theme="ice"] .doc-item {
+  background: rgba(100, 180, 220, 0.04);
+  border-color: rgba(100, 180, 220, 0.1);
+}
+:root[data-theme="ice"] .kb-search-bar input {
+  background: rgba(100, 180, 220, 0.06);
+  border-color: rgba(100, 180, 220, 0.15);
+  color: #e0e8f0;
+}
+:root[data-theme="ice"] .kb-search-bar input:focus {
+  border-color: #64b4dc;
+  box-shadow: 0 0 0 3px rgba(100, 180, 220, 0.1);
+}
+:root[data-theme="ice"] .search-result-item {
+  background: rgba(100, 180, 220, 0.04);
+  border-color: rgba(100, 180, 220, 0.1);
+}
+
+/* Theme: Planet */
+:root[data-theme="planet"] .kb-create-form {
+  border-color: rgba(100, 80, 180, 0.1);
+  background: rgba(100, 80, 180, 0.03);
+}
+:root[data-theme="planet"] .kb-create-form input {
+  background: rgba(20, 15, 40, 0.6);
+  border-color: rgba(100, 80, 180, 0.15);
+  color: #c8d0e8;
+}
+:root[data-theme="planet"] .kb-create-form input:focus {
+  border-color: #8050d0;
+  box-shadow: 0 0 0 3px rgba(140, 80, 220, 0.1);
+}
+:root[data-theme="planet"] .kb-item {
+  background: rgba(30, 20, 55, 0.4);
+  border-color: rgba(100, 80, 180, 0.1);
+}
+:root[data-theme="planet"] .kb-item.active {
+  background: rgba(140, 80, 220, 0.12);
+  border-color: rgba(140, 100, 220, 0.3);
+}
+:root[data-theme="planet"] .folder-tree {
+  background: rgba(30, 20, 60, 0.3);
+  border-color: rgba(100, 80, 180, 0.1);
+}
+:root[data-theme="planet"] .doc-item {
+  background: rgba(30, 20, 60, 0.3);
+  border-color: rgba(100, 80, 180, 0.1);
+}
+:root[data-theme="planet"] .kb-search-bar input {
+  background: rgba(20, 15, 40, 0.6);
+  border-color: rgba(100, 80, 180, 0.15);
+  color: #c8d0e8;
+}
+:root[data-theme="planet"] .kb-search-bar input:focus {
+  border-color: #8050d0;
+  box-shadow: 0 0 0 3px rgba(140, 80, 220, 0.1);
+}
+:root[data-theme="planet"] .search-result-item {
+  background: rgba(30, 20, 60, 0.3);
+  border-color: rgba(100, 80, 180, 0.1);
+}

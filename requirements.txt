@@ -12,3 +12,11 @@ passlib>=1.7.4
 python-jose[cryptography]>=3.3.0
 python-multipart>=0.0.9
 email-validator>=2.1.1
+
+# Knowledge Base dependencies
+chromadb>=0.5.0
+langchain-text-splitters>=0.2.0
+unstructured>=0.14.0
+openai>=1.30.0
+pdfminer.six>=20221105
+python-docx>=1.1.0
