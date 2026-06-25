@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   --ice-primary: #00d4ff;
   --ice-primary-10: rgba(0, 212, 255, 0.10);
   --ice-primary-30: rgba(0, 212, 255, 0.30);
@@ -36,7 +36,7 @@
   --space-xl: 32px;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html, body, #root { height: 100%; overflow: hidden; }
+html, body, #root { height: 100%; margin: 0; padding: 0; }
 body {
   background: var(--ice-bg-primary);
   color: var(--ice-text-primary);
@@ -65,3 +65,4 @@ body {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-6px); }
 }
+

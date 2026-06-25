@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 
+import { authHeaders, authHeadersRaw } from '@/services/auth'
+
 const { Title, Text } = Typography
 
 export default function MCPManagement() {
@@ -40,12 +42,10 @@ export default function MCPManagement() {
           <a onClick={() => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }}><EditOutlined /></a>
           <a onClick={() => handleDelete(r.id)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
         </Space>
-      ),
-    },
-  ]
+      )}]
 
   return (
-    <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)', padding: 24 }}>
+    <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>MCP Server 管理</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields({ transport: 'stdio', enabled: true }); setModalOpen(true) }}>添加 MCP</Button>
@@ -80,10 +80,6 @@ export default function MCPManagement() {
   )
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('agent-token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 
 
 

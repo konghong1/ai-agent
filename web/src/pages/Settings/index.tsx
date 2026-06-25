@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { PlusOutlined, EditOutlined, DeleteOutlined, SettingOutlined, KeyOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 
+import { authHeaders, authHeadersRaw } from '@/services/auth'
+
 const { Title, Text } = Typography
 
 export default function SettingsPage() {
@@ -38,12 +40,10 @@ export default function SettingsPage() {
           <a onClick={() => { setEditing(r); form.setFieldsValue({ key: r.key, value: r.value, description: r.description }); setModalOpen(true) }}><EditOutlined /></a>
           <a onClick={() => handleDelete(r.key)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
         </Space>
-      ),
-    },
-  ]
+      )}]
 
   return (
-    <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)', padding: 24 }}>
+    <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <Title level={4} style={{ color: '#e8f4f8', marginBottom: 16 }}>系统设置</Title>
 
       <Tabs items={[
@@ -57,8 +57,7 @@ export default function SettingsPage() {
               </div>
               <Table columns={columns} dataSource={settings} rowKey="id" pagination={false} />
             </>
-          ),
-        },
+          )},
         {
           key: 'api', label: '🔑 API 配置',
           children: (
@@ -77,8 +76,7 @@ export default function SettingsPage() {
                 <Button type="primary" style={{ background: 'linear-gradient(135deg, rgba(0, 212, 255, 0.3), rgba(0, 255, 213, 0.15))', borderColor: 'rgba(0, 212, 255, 0.4)' }}>保存 API 配置</Button>
               </Form>
             </div>
-          ),
-        },
+          )},
         {
           key: 'theme', label: '🎨 主题',
           children: (
@@ -87,13 +85,11 @@ export default function SettingsPage() {
               {[
                 { name: '冰晶默认', color: '#00d4ff', desc: '冰蓝色调，科技感' },
                 { name: '深邃星空', color: '#7b68ee', desc: '紫色调，神秘感' },
-                { name: '清新薄荷', color: '#00ffd5', desc: '绿色调，清爽感' },
-              ].map((t) => (
+                { name: '清新薄荷', color: '#00ffd5', desc: '绿色调，清爽感' }].map((t) => (
                 <div key={t.name} style={{
                   display: 'flex', alignItems: 'center', gap: 16, padding: 16, marginBottom: 12,
                   borderRadius: 12, background: 'rgba(0, 212, 255, 0.04)',
-                  border: `1px solid ${t.color}33`, cursor: 'pointer',
-                }}>
+                  border: `1px solid ${t.color}33`, cursor: 'pointer'}}>
                   <div style={{ width: 40, height: 40, borderRadius: '50%', background: t.color }} />
                   <div>
                     <Text strong style={{ color: '#e8f4f8' }}>{t.name}</Text>
@@ -103,9 +99,7 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
-          ),
-        },
-      ]} />
+          )}]} />
 
       <Modal title={editing ? '编辑设置' : '添加设置'} open={modalOpen} onCancel={() => setModalOpen(false)} footer={null} width={480}>
         <Form form={form} layout="vertical" onFinish={handleSave}>
@@ -122,10 +116,6 @@ export default function SettingsPage() {
   )
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('agent-token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 
 
 

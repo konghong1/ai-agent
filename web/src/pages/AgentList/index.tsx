@@ -4,6 +4,8 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-de
 import { useNavigate } from 'react-router-dom'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 
+import { authHeaders, authHeadersRaw } from '@/services/auth'
+
 const { Title, Text } = Typography
 
 interface Agent {
@@ -62,12 +64,10 @@ export default function AgentList() {
           <a onClick={() => { setEditingAgent(r); form.setFieldsValue(r); setDrawerOpen(true) }}><EditOutlined /></a>
           <a onClick={() => handleDelete(r.id)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
         </Space>
-      ),
-    },
-  ]
+      )}]
 
   return (
-    <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)', padding: 24 }}>
+    <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>Agent 目录</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingAgent(null); form.resetFields({ temperature: 0.7, enabled: true }); setDrawerOpen(true) }}>新建 Agent</Button>
@@ -94,7 +94,3 @@ export default function AgentList() {
   )
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('agent-token')
-  return token ? { Authorization: 'Bearer ' + token } : {}
-}

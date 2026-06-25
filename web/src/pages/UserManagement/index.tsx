@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 
+import { authHeaders, authHeadersRaw } from '@/services/auth'
+
 const { Title, Text } = Typography
 
 interface User {
@@ -24,8 +26,7 @@ export default function UserManagement() {
     try {
       const res = await fetch(`/api/users/${editing!.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(values),
-      })
+        body: JSON.stringify(values)})
       if (res.ok) { message.success('更新成功'); setModalOpen(false); fetchUsers() }
     } catch (e: any) { message.error(e.message) }
   }
@@ -33,8 +34,7 @@ export default function UserManagement() {
   const handleToggle = async (u: User, checked: boolean) => {
     await fetch(`/api/users/${u.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ enabled: checked }),
-    })
+      body: JSON.stringify({ enabled: checked })})
     fetchUsers()
   }
 
@@ -45,8 +45,7 @@ export default function UserManagement() {
       onOk: async () => {
         const r = await fetch(`/api/users/${u.id}`, { method: 'DELETE', headers: authHeaders() })
         if (r.ok) { message.success('已删除'); fetchUsers() }
-      },
-    })
+      }})
   }
 
   const roleColor: Record<string, string> = { admin: 'green', editor: 'blue', user: 'orange' }
@@ -64,12 +63,10 @@ export default function UserManagement() {
           <a onClick={() => { setEditing(u); form.setFieldsValue(u); setModalOpen(true) }}><EditOutlined /></a>
           <a onClick={() => handleDelete(u)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
         </Space>
-      ),
-    },
-  ]
+      )}]
 
   return (
-    <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)', padding: 24 }}>
+    <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>用户管理</Title>
       </div>
@@ -93,10 +90,6 @@ export default function UserManagement() {
   )
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('agent-token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 
 
 

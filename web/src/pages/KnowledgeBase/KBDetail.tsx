@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeftOutlined, PlusOutlined, UploadOutlined, SearchOutlined, DeleteOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 
+import { authHeaders, authHeadersRaw } from '@/services/auth'
+
 const { Text, Title } = Typography
 
 interface KBFolder { id: number; name: string; parent_id: number | null; children: KBFolder[]; document_count: number }
@@ -13,11 +15,6 @@ function flattenFolders(folders: KBFolder[]): KBFolder[] {
   const walk = (items: KBFolder[]) => items.forEach(f => { result.push(f); f.children && walk(f.children) })
   walk(folders)
   return result
-}
-
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('agent-token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
 export default function KBDetail() {
@@ -41,8 +38,7 @@ export default function KBDetail() {
     Promise.all([
       fetch('/api/knowledge-bases/' + id, { headers: authHeaders() }).then(r => r.json()),
       fetch('/api/knowledge-bases/' + id + '/folders/tree', { headers: authHeaders() }).then(r => r.json()),
-      fetch('/api/knowledge-bases/' + id + '/documents', { headers: authHeaders() }).then(r => r.json()),
-    ]).then(([kbData, folderData, docData]) => {
+      fetch('/api/knowledge-bases/' + id + '/documents', { headers: authHeaders() }).then(r => r.json())]).then(([kbData, folderData, docData]) => {
       setKb(kbData)
       setFolders(folderData)
       setDocuments(docData)
@@ -89,8 +85,7 @@ export default function KBDetail() {
     try {
       const res = await fetch('/api/knowledge-bases/search', {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ kb_id: Number(id), query: searchQuery, top_k: 5 }),
-      })
+        body: JSON.stringify({ kb_id: Number(id), query: searchQuery, top_k: 5 })})
       const data = await res.json()
       setSearchResults(data)
     } catch (e: any) { message.error(e.message) }
@@ -108,8 +103,7 @@ export default function KBDetail() {
       pending: { color: 'default', text: '等待中' },
       processing: { color: 'processing', text: '处理中' },
       ready: { color: 'success', text: '已完成' },
-      failed: { color: 'error', text: '失败' },
-    }
+      failed: { color: 'error', text: '失败' }}
     const s = map[status] || map.pending
     return <Badge status={s.color as any} text={s.text} />
   }
@@ -118,15 +112,13 @@ export default function KBDetail() {
     { title: '文件名', dataIndex: 'original_filename', key: 'name',
       render: (name: string, record: KBDoc) => (
         <Space><span style={{ color: '#e8f4f8' }}>{name}</span><Tag>{record.file_type}</Tag></Space>
-      ),
-    },
+      )},
     { title: '大小', dataIndex: 'file_size', key: 'size', width: 100, render: (s: number) => `${(s / 1024).toFixed(1)} KB` },
     { title: '状态', dataIndex: 'status', key: 'status', width: 120, render: (s: string) => statusTag(s) },
     { title: '创建时间', dataIndex: 'created_at', key: 'time', width: 180, render: (t: string) => new Date(t).toLocaleString('zh-CN') },
     { title: '操作', key: 'action', width: 80, render: (_: any, r: KBDoc) => (
       <Button type="text" danger icon={<DeleteOutlined />} size="small" onClick={() => handleDeleteDoc(r.id)} />
-    )},
-  ]
+    )}]
 
   const renderFolderTree = (items: KBFolder[], depth = 0) =>
     items.map(f => (
@@ -149,7 +141,7 @@ export default function KBDetail() {
         style={{ color: '#e8f4f8', marginBottom: 16 }}>返回知识库列表</Button>
 
       {kb && (
-        <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)', marginBottom: 16 }}>
+        <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ marginBottom: 16 }}>
           <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>📚 {kb.name}</Title>
           <Text type="secondary">{kb.description}</Text>
         </IceCrystalCard>
@@ -157,7 +149,7 @@ export default function KBDetail() {
 
       <Row gutter={16}>
         <Col span={6}>
-          <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)', minHeight: 300 }}>
+          <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ minHeight: 300 }}>
             <div style={{ padding: 8 }}>
               <Title level={5} style={{ color: '#e8f4f8', marginBottom: 12 }}>📂 文件夹</Title>
               <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setFolderModal(true)} style={{ marginBottom: 12 }}>新建文件夹</Button>
@@ -171,7 +163,7 @@ export default function KBDetail() {
             {
               key: 'docs', label: '📄 文档管理',
               children: (
-                <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)' }}>
+                <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ }}>
                   <Space style={{ marginBottom: 16 }}>
                     <Button icon={<UploadOutlined />} onClick={() => setUploadModal(true)}>上传文件</Button>
                     <Select placeholder="选择文件夹" value={selectedFolder || undefined} onChange={setSelectedFolder} style={{ width: 200 }}
@@ -179,12 +171,11 @@ export default function KBDetail() {
                   </Space>
                   <Table columns={docColumns} dataSource={documents} rowKey="id" pagination={{ pageSize: 10 }} scroll={{ x: 800 }} />
                 </IceCrystalCard>
-              ),
-            },
+              )},
             {
               key: 'search', label: '🔍 检索测试',
               children: (
-                <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)' }}>
+                <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ }}>
                   <Space.Compact style={{ marginBottom: 16 }}>
                     <Input placeholder="输入检索问题..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
                       onPressEnter={handleSearch} style={{ flex: 1 }} />
@@ -201,9 +192,7 @@ export default function KBDetail() {
                   ))}
                   {searchResults.length === 0 && searchQuery && <Text type="secondary">暂无检索结果</Text>}
                 </IceCrystalCard>
-              ),
-            },
-          ]} />
+              )}]} />
         </Col>
       </Row>
 
@@ -211,8 +200,7 @@ export default function KBDetail() {
         <Form form={form} layout="vertical" onFinish={async (values) => {
           await fetch('/api/knowledge-bases/' + id + '/folders', {
             method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ name: values.name, parent_id: selectedFolder }),
-          })
+            body: JSON.stringify({ name: values.name, parent_id: selectedFolder })})
           setFolderModal(false); form.resetFields()
           const res = await fetch('/api/knowledge-bases/' + id + '/folders/tree', { headers: authHeaders() })
           setFolders(await res.json())
@@ -250,6 +238,7 @@ export default function KBDetail() {
     </div>
   )
 }
+
 
 
 

@@ -1,0 +1,68 @@
+﻿import React from 'react'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { ConfigProvider } from 'antd'
+import { useAuthStore } from '@/stores/auth'
+import BasicLayout from '@/layouts/BasicLayout'
+import LoginLayout from '@/layouts/LoginLayout'
+import Login from '@/pages/Login'
+import Dashboard from '@/pages/Dashboard'
+import AgentList from '@/pages/AgentList'
+import AgentDetail from '@/pages/AgentDetail'
+import KnowledgeBase from '@/pages/KnowledgeBase'
+import KBDetail from '@/pages/KnowledgeBase/KBDetail'
+import UserManagement from '@/pages/UserManagement'
+import MCPManagement from '@/pages/MCPManagement'
+import SkillManagement from '@/pages/SkillManagement'
+import SettingsPage from '@/pages/Settings'
+import './styles/variables.css'
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated } = useAuthStore()
+  return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
+}
+
+export default function App() {
+  return (
+    <ConfigProvider
+      theme={{
+        token: {
+          colorPrimary: '#00d4ff',
+          colorBgContainer: 'rgba(22, 27, 34, 0.85)',
+          borderRadius: 12,
+          fontFamily: 'Inter, system-ui, sans-serif',
+        },
+        algorithm: undefined,
+        cssVar: true,
+        hashed: false,
+      }}
+    >
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginLayout><Login /></LoginLayout>} />
+          <Route
+            path="/"
+            element={
+              <RequireAuth>
+                <BasicLayout />
+              </RequireAuth>
+            }
+          >
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="agents" element={<AgentList />} />
+            <Route path="agents/:id" element={<AgentDetail />} />
+            <Route path="knowledge-bases" element={<KnowledgeBase />} />
+            <Route path="knowledge-bases/:id" element={<KBDetail />} />
+            <Route path="users" element={<UserManagement />} />
+            <Route path="mcp-servers" element={<MCPManagement />} />
+            <Route path="skills" element={<SkillManagement />} />
+            <Route path="settings" element={<SettingsPage />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </ConfigProvider>
+  )
+}
+
+
+

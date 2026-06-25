@@ -8,7 +8,7 @@ export default function LoginLayout({ children }: { children: React.ReactNode })
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #0a0e17 0%, #111827 100%)',
+      background: 'linear-gradient(135deg, #0d1117 0%, #161b22 50%, #1a2332 100%)',
       position: 'relative',
       overflow: 'hidden',
     }}>

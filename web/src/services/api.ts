@@ -1,3 +1,5 @@
+import { authHeaders, authHeadersRaw } from './auth'
+
 export interface KnowledgeBase {
   id: number
   name: string
@@ -42,11 +44,6 @@ export interface KBSearchResult {
   score: number
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('agent-token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
-
 export const kbApi = {
   list: () => fetch('/api/knowledge-bases', { headers: authHeaders() }).then(r => r.json()),
   create: (data: Partial<KnowledgeBase>) =>
@@ -66,7 +63,7 @@ export const kbApi = {
     const fd = new FormData()
     fd.append('file', file)
     if (folderId) fd.append('folder_id', String(folderId))
-    return fetch(`/api/knowledge-bases/${kbId}/upload`, { method: 'POST', headers: authHeaders(), body: fd })
+    return fetch(`/api/knowledge-bases/${kbId}/upload`, { method: 'POST', headers: authHeadersRaw(), body: fd })
       .then(r => r.json())
   },
   deleteDocument: (kbId: number, docId: number) =>

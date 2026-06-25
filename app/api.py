@@ -127,6 +127,22 @@ def delete_agent(agent_id: int, current_user: User = Depends(get_current_user), 
 
 
 # ============================================================
+
+@router.get("/agents/{agent_id}", response_model=AgentRead)
+def get_agent(agent_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> AgentConfig:
+    agent = db.scalar(select(AgentConfig).where(AgentConfig.id == agent_id, AgentConfig.user_id == current_user.id))
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+    return agent
+
+
+@router.get("/agents/{agent_id}/threads", response_model=list[ThreadRead])
+def list_agent_threads(agent_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Thread]:
+    agent = db.scalar(select(AgentConfig).where(AgentConfig.id == agent_id, AgentConfig.user_id == current_user.id))
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found.")
+    return list(db.scalars(select(Thread).where(Thread.agent_id == agent_id).order_by(Thread.updated_at.desc())))
+
 # Threads & Messages
 # ============================================================
 
@@ -260,6 +276,14 @@ def delete_skill(skill_id: int, current_user: User = Depends(get_current_user), 
 
 
 # ============================================================
+
+@router.get("/knowledge-bases/{kb_id}", response_model=KnowledgeBaseRead)
+def get_kb(kb_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> KnowledgeBase:
+    kb = db.scalar(select(KnowledgeBase).where(KnowledgeBase.id == kb_id, KnowledgeBase.user_id == current_user.id))
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found.")
+    return kb
+
 # Knowledge Base Routes (Task 14)
 # ============================================================
 

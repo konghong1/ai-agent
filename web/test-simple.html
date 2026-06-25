@@ -1,0 +1,15 @@
+﻿<!DOCTYPE html>
+<html>
+<head><title>Test</title></head>
+<body>
+<h1>Hello World</h1>
+<p>If you see this, the browser works.</p>
+<div id="root"></div>
+<script type="module">
+  import React from 'react';
+  import { createRoot } from 'react-dom/client';
+  const root = createRoot(document.getElementById('root'));
+  root.render(React.createElement('h2', null, 'React is working!'));
+</script>
+</body>
+</html>

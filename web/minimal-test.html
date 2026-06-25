@@ -1,0 +1,21 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Minimal React Test</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const { createElement: h, useState: s } = React;
+const { createRoot } = ReactDOM;
+const root = createRoot(document.getElementById('root'));
+root.render(h('div', null, 
+  h('h1', null, 'React 18 Works!'),
+  h('p', null, 'If you see this, JavaScript is working.')
+));
+</script>
+</body>
+</html>

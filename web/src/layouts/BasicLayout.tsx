@@ -39,24 +39,36 @@ export default function BasicLayout() {
   }
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <ParticleBg count={25} speed={0.2} opacity={0.25} />
+    <Layout className="main-layout" style={{ minHeight: '100vh' }}>
+      <ParticleBg count={25} speed={0.2} opacity={0.2} />
       <Sider
-        collapsible collapsed={collapsed} onCollapse={toggleCollapsed} width={256} theme="dark"
-        style={{ background: 'rgba(10, 14, 23, 0.95)', borderRight: '1px solid rgba(0, 212, 255, 0.12)', zIndex: 10 }}
+        collapsible collapsed={collapsed} onCollapse={toggleCollapsed} width={256}
+        style={{
+          background: 'rgba(17, 25, 47, 0.92)',
+          borderRight: '1px solid rgba(0, 212, 255, 0.12)',
+          zIndex: 10,
+        }}
       >
         <div style={{ padding: '24px 16px', textAlign: 'center', borderBottom: '1px solid rgba(0, 212, 255, 0.08)' }}>
           <Text strong style={{ fontSize: 20, color: '#00d4ff', letterSpacing: 1 }}>AI Agent</Text>
           <br /><Text type="secondary" style={{ fontSize: 12 }}>管理平台</Text>
         </div>
-        <Menu mode="inline" items={menuItems} selectedKeys={[location.pathname]}
-          onClick={({ key }) => navigate(key)} style={{ borderRight: 'none', background: 'transparent' }} theme="dark" />
+        <Menu
+          mode="inline"
+          items={menuItems}
+          selectedKeys={[location.pathname]}
+          onClick={({ key }) => navigate(key)}
+          style={{ borderRight: 'none', background: 'transparent' }}
+          theme="light"
+          className="sidebar-menu"
+        />
       </Sider>
       <Layout>
         <Header style={{
-          background: 'rgba(10, 14, 23, 0.85)', backdropFilter: 'blur(20px)',
-          borderBottom: '1px solid rgba(0, 212, 255, 0.12)', padding: '0 24px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', zIndex: 10,
+          background: 'rgba(17, 25, 47, 0.85)', backdropFilter: 'blur(20px)',
+          borderBottom: '1px solid rgba(0, 212, 255, 0.12)',
+          padding: '0 24px', display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', zIndex: 10,
         }}>
           <Button type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
             onClick={toggleCollapsed} style={{ color: '#e8f4f8', fontSize: 16, padding: '4px' }} />
@@ -67,7 +79,10 @@ export default function BasicLayout() {
             </Space>
           </Dropdown>
         </Header>
-        <Content style={{ margin: 24, background: 'transparent', minHeight: 'calc(100vh - 64px)', overflow: 'auto', position: 'relative', zIndex: 1 }}>
+        <Content style={{
+          margin: 24, background: 'transparent', minHeight: 'calc(100vh - 64px)',
+          overflow: 'auto', position: 'relative', zIndex: 1,
+        }}>
           <Outlet />
         </Content>
       </Layout>

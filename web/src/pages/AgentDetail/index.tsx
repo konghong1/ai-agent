@@ -6,6 +6,8 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 
+import { authHeaders, authHeadersRaw } from '@/services/auth'
+
 const { Text, Title } = Typography
 const { TextArea } = Input
 
@@ -32,8 +34,7 @@ export default function AgentDetail() {
   useEffect(() => {
     Promise.all([
       fetch(`/api/agents/${id}`, { headers: authHeaders() }).then(r => r.json()),
-      fetch(`/api/agents/${id}/threads`, { headers: authHeaders() }).then(r => r.json()).catch(() => []),
-    ]).then(([agentData, threadsData]) => {
+      fetch(`/api/agents/${id}/threads`, { headers: authHeaders() }).then(r => r.json()).catch(() => [])]).then(([agentData, threadsData]) => {
       setAgent(agentData)
       if (threadsData.length > 0) {
         setThreadId(threadsData[0].id)
@@ -62,8 +63,7 @@ export default function AgentDetail() {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ agent_id: Number(id), message: input, thread_id: threadId || undefined }),
-      })
+        body: JSON.stringify({ agent_id: Number(id), message: input, thread_id: threadId || undefined })})
       const data = await res.json()
       const assistantMsg: Message = { id: Date.now() + 1, role: 'assistant', content: data.answer, created_at: new Date().toISOString() }
       setMessages(prev => [...prev, assistantMsg])
@@ -94,7 +94,7 @@ export default function AgentDetail() {
 
       <Row gutter={24}>
         <Col span={8}>
-          <IceCrystalCard hoverEffect="glow" animation="fadeInUp" title={agent?.name} style={{ background: 'rgba(17, 24, 39, 0.85)' }}>
+          <IceCrystalCard hoverEffect="glow" animation="fadeInUp" title={agent?.name} style={{ }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div>
                 <Text type="secondary" style={{ fontSize: 12 }}>模型</Text>
@@ -114,7 +114,7 @@ export default function AgentDetail() {
         </Col>
 
         <Col span={16}>
-          <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)', height: '100%', display: 'flex', flexDirection: 'column' }}>
+          <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0', minHeight: 400 }}>
               {messages.length === 0 ? (
                 <div style={{ textAlign: 'center', paddingTop: 120, color: '#556677' }}>
@@ -126,8 +126,7 @@ export default function AgentDetail() {
                   <div key={msg.id} style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                     <div style={{
                       width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: msg.role === 'user' ? '#00d4ff' : '#7b68ee', color: '#fff', fontSize: 14, flexShrink: 0,
-                    }}>
+                      background: msg.role === 'user' ? '#00d4ff' : '#7b68ee', color: '#fff', fontSize: 14, flexShrink: 0}}>
                       {msg.role === 'user' ? <span style={{fontSize:16}}>👤</span> : <span style={{fontSize:16}}>🤖</span>}
                     </div>
                     <div style={{ flex: 1, background: 'rgba(0, 212, 255, 0.04)', borderRadius: 12, padding: '12px 16px', border: '1px solid rgba(0, 212, 255, 0.08)' }}>
@@ -165,8 +164,4 @@ export default function AgentDetail() {
   )
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('agent-token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, type CSSProperties } from 'react'
+﻿import React, { useRef, useEffect, type CSSProperties } from 'react'
 import { Card, type CardProps } from 'antd'
 import { motion, type MotionProps } from 'framer-motion'
 
@@ -71,3 +71,5 @@ export const IceCrystalCard: React.FC<IceCrystalCardProps> = ({
     </motion.div>
   )
 }
+
+

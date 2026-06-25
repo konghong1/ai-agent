@@ -3,6 +3,8 @@ import { PlusOutlined, BookOutlined, DeleteOutlined, EditOutlined } from '@ant-d
 import { useNavigate } from 'react-router-dom'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 
+import { authHeaders, authHeadersRaw } from '@/services/auth'
+
 const { Title, Text } = Typography
 
 interface KB {
@@ -35,8 +37,7 @@ export default function KnowledgeBaseList() {
       const method = editing ? 'PATCH' : 'POST'
       const res = await fetch(url, {
         method, headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(values),
-      })
+        body: JSON.stringify(values)})
       if (!res.ok) throw new Error('保存失败')
       message.success(editing ? '更新成功' : '创建成功')
       setModalOpen(false)
@@ -54,13 +55,12 @@ export default function KnowledgeBaseList() {
       onOk: async () => {
         const res = await fetch(`/api/knowledge-bases/${id}`, { method: 'DELETE', headers: authHeaders() })
         if (res.ok) { message.success('已删除'); fetchKbs() }
-      },
-    })
+      }})
   }
 
   return (
     <div>
-      <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)', padding: 24 }}>
+      <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>知识库管理</Title>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setModalOpen(true) }}>
@@ -77,7 +77,7 @@ export default function KnowledgeBaseList() {
           <Row gutter={[16, 16]}>
             {kbs.map((kb) => (
               <Col span={8} key={kb.id}>
-                <IceCrystalCard hoverEffect="glow" animation="fadeInUp" style={{ background: 'rgba(17, 24, 39, 0.85)' }}>
+                <IceCrystalCard hoverEffect="glow" animation="fadeInUp" style={{ }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                     <div>
                       <Title level={5} style={{ color: '#e8f4f8', margin: 0 }}>{kb.name}</Title>
@@ -136,10 +136,6 @@ export default function KnowledgeBaseList() {
   )
 }
 
-function authHeaders(): Record<string, string> {
-  const token = localStorage.getItem('agent-token')
-  return token ? { Authorization: `Bearer ${token}` } : {}
-}
 
 
 
