@@ -36,7 +36,7 @@ KnowledgeBaseService, UserService, SystemSettingService,
 from app.settings import get_settings
 
 
-router = APIRouter()
+router = APIRouter(prefix="/api")
 
 
 # ============================================================
