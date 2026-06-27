@@ -1,7 +1,8 @@
-import React from 'react'
+﻿import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ConfigProvider } from 'antd'
 import { useAuthStore } from '@/stores/auth'
+import { useLayoutStore } from '@/stores/layout'
 import BasicLayout from '@/layouts/BasicLayout'
 import LoginLayout from '@/layouts/LoginLayout'
 import Login from '@/pages/Login'
@@ -22,13 +23,42 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
 }
 
+const themeToClass: Record<string, string> = {
+  techBlue: 'theme-tech-blue',
+  naturalGreen: 'theme-natural-green',
+  elegantPurple: 'theme-elegant-purple',
+}
+
+const themeToPrimary: Record<string, string> = {
+  techBlue: '#2563EB',
+  naturalGreen: '#22C55E',
+  elegantPurple: '#7C3AED',
+}
+
+const themeToCardBg: Record<string, string> = {
+  techBlue: 'var(--ice-bg-card)',
+  naturalGreen: 'var(--ice-bg-card)',
+  elegantPurple: 'var(--ice-bg-card)',
+}
+
 export default function App() {
+  const theme = useLayoutStore((s) => s.theme)
+  const darkMode = useLayoutStore((s) => s.darkMode)
+
+  useEffect(() => {
+    const root = document.documentElement
+    root.classList.remove('theme-tech-blue', 'theme-natural-green', 'theme-elegant-purple', 'dark')
+    const cls = themeToClass[theme] || ''
+    if (cls) root.classList.add(cls)
+    if (darkMode) root.classList.add('dark')
+  }, [theme, darkMode])
+
   return (
     <ConfigProvider
       theme={{
         token: {
-          colorPrimary: '#00d4ff',
-          colorBgContainer: 'rgba(22, 27, 34, 0.85)',
+          colorPrimary: themeToPrimary[theme] || '#22C55E',
+          colorBgContainer: themeToCardBg[theme] || 'var(--ice-bg-card)',
           borderRadius: 12,
           fontFamily: 'Inter, system-ui, sans-serif',
         },
@@ -64,6 +94,3 @@ export default function App() {
     </ConfigProvider>
   )
 }
-
-
-

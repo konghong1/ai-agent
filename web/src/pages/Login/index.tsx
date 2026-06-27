@@ -1,9 +1,10 @@
-import React, { useState } from 'react'
+﻿import { useState } from 'react'
 import { Form, Input, Button, Tabs, Card, Typography, message } from 'antd'
 import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth'
 import { ParticleBg } from '@/components/ParticleBg'
+import { useLayoutStore } from '@/stores/layout'
 import './index.css'
 
 const { Title, Text } = Typography
@@ -14,6 +15,14 @@ export default function Login() {
   const register = useAuthStore((s) => s.register)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const theme = useLayoutStore((s) => s.theme)
+
+  const themeColorMap: Record<string, string> = {
+    techBlue: '#2563EB',
+    naturalGreen: '#22C55E',
+    elegantPurple: '#7C3AED',
+  }
+  const primaryColor = themeColorMap[theme] || '#22C55E'
 
   const handleSubmit = async (values: any) => {
     setLoading(true)
@@ -40,7 +49,7 @@ export default function Login() {
       <ParticleBg count={20} speed={0.15} opacity={0.2} />
       <Card className="login-card" bordered={false}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Title level={3} style={{ color: '#00d4ff', marginBottom: 4 }}>AI Agent 管理平台</Title>
+          <Title level={3} style={{ color: primaryColor, marginBottom: 4 }}>AI Agent 管理平台</Title>
           <Text type="secondary">智能体 · 知识库 · 一体化管理</Text>
         </div>
         <Tabs defaultActiveKey="login" items={[
@@ -54,7 +63,7 @@ export default function Login() {
                 <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" size="large" />
               </Form.Item>
               {error && <Text type="danger" style={{ display: 'block', marginBottom: 8 }}>{error}</Text>}
-              <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large" className="login-btn">登录</Button></Form.Item>
+              <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large" className="login-btn" style={{ background: primaryColor, borderColor: primaryColor }}>登录</Button></Form.Item>
             </Form>
           )},
           { key: 'register', label: '注册', children: (
@@ -70,7 +79,7 @@ export default function Login() {
                 <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" size="large" />
               </Form.Item>
               {error && <Text type="danger" style={{ display: 'block', marginBottom: 8 }}>{error}</Text>}
-              <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large" className="login-btn">注册</Button></Form.Item>
+              <Form.Item><Button type="primary" htmlType="submit" loading={loading} block size="large" className="login-btn" style={{ background: primaryColor, borderColor: primaryColor }}>注册</Button></Form.Item>
             </Form>
           )},
         ]} />

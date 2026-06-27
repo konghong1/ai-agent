@@ -1,6 +1,6 @@
-﻿import React, { useRef, useEffect, type CSSProperties } from 'react'
+﻿import { useRef, type CSSProperties, useState } from 'react'
 import { Card, type CardProps } from 'antd'
-import { motion, type MotionProps } from 'framer-motion'
+import { motion } from 'framer-motion'
 
 export interface IceCrystalCardProps extends CardProps {
   hoverEffect?: 'tilt' | 'glow' | 'float' | 'none'
@@ -20,14 +20,14 @@ export const IceCrystalCard: React.FC<IceCrystalCardProps> = ({
   hoverEffect = 'glow',
   glassmorphism = true,
   animation = 'fadeInUp',
-  glowColor = '#00d4ff',
+  glowColor,
   style,
   className,
   children,
   ...rest
 }) => {
   const divRef = useRef<HTMLDivElement>(null)
-  const [transform, setTransform] = React.useState('')
+  const [transform, setTransform] = useState('')
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (hoverEffect !== 'tilt' || !divRef.current) return
@@ -44,12 +44,6 @@ export const IceCrystalCard: React.FC<IceCrystalCardProps> = ({
   const anim = animations[animation] || animations.fadeInUp
   const floatStyle: CSSProperties = hoverEffect === 'float' ? { animation: 'float 4s ease-in-out infinite' } : {}
 
-  const cardStyle: CSSProperties = {
-    ...floatStyle,
-    transition: 'all 0.3s ease',
-    '--glow-color': glowColor,
-  }
-
   return (
     <motion.div
       ref={divRef}
@@ -62,7 +56,7 @@ export const IceCrystalCard: React.FC<IceCrystalCardProps> = ({
     >
       <Card
         {...rest}
-        style={{ ...cardStyle, ...style }}
+        style={floatStyle}
         className={`ice-crystal-card ${glassmorphism ? 'glass' : ''} ${className || ''}`}
         data-effect={hoverEffect}
       >
@@ -71,5 +65,3 @@ export const IceCrystalCard: React.FC<IceCrystalCardProps> = ({
     </motion.div>
   )
 }
-
-

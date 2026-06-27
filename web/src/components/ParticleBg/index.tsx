@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react'
+﻿import { useRef, useEffect, useCallback } from 'react'
 
 interface ParticleBgProps {
   count?: number
@@ -51,6 +51,16 @@ export const ParticleBg: React.FC<ParticleBgProps> = ({ count = 40, speed = 0.3,
     canvas.addEventListener('mousemove', handleMouseMove)
     canvas.addEventListener('mouseleave', handleMouseLeave)
 
+    // Read primary color from CSS variable and convert to RGB
+    const computeRGB = (hex: string): [number, number, number] => {
+      const m = hex.replace('#', '').match(/.{2}/g)
+      return m ? [parseInt(m[0], 16), parseInt(m[1], 16), parseInt(m[2], 16)] : [0, 212, 255]
+    }
+
+    const style = getComputedStyle(document.documentElement)
+    const primaryHex = style.getPropertyValue('--ice-primary').trim() || '#00d4ff'
+    const [pr, pg, pb] = computeRGB(primaryHex)
+
     particlesRef.current = Array.from({ length: count }, () => ({
       x: Math.random() * canvas.width,
       y: Math.random() * canvas.height,
@@ -65,7 +75,6 @@ export const ParticleBg: React.FC<ParticleBgProps> = ({ count = 40, speed = 0.3,
       const mouse = mouseRef.current
 
       particlesRef.current.forEach((p) => {
-        // Mouse repulsion force
         if (mouse.active) {
           const dx = p.x - mouse.x
           const dy = p.y - mouse.y
@@ -77,23 +86,19 @@ export const ParticleBg: React.FC<ParticleBgProps> = ({ count = 40, speed = 0.3,
           }
         }
 
-        // Gentle damping to return to normal movement
         p.vx *= 0.96
         p.vy *= 0.96
-
-        // Restore base drift
         p.vx += (Math.random() - 0.5) * 0.02
         p.vy -= 0.005
 
         p.x += p.vx
         p.y += p.vy
 
-        // Wrap around edges with padding
         if (p.y < -10) { p.y = canvas.height + 10; p.x = Math.random() * canvas.width }
         if (p.x < -10) p.x = canvas.width + 10
         if (p.x > canvas.width + 10) p.x = -10
 
-        // Draw glow when near mouse
+        // Glow when near mouse
         if (mouse.active) {
           const dx = p.x - mouse.x
           const dy = p.y - mouse.y
@@ -102,7 +107,7 @@ export const ParticleBg: React.FC<ParticleBgProps> = ({ count = 40, speed = 0.3,
             const glowAlpha = ((MOUSE_RADIUS - dist) / MOUSE_RADIUS) * 0.6
             ctx.beginPath()
             ctx.arc(p.x, p.y, p.size + 2, 0, Math.PI * 2)
-            ctx.fillStyle = `rgba(100, 220, 255, ${glowAlpha})`
+            ctx.fillStyle = `rgba(${Math.min(255, pr + 50)}, ${Math.min(255, pg + 40)}, ${Math.min(255, pb + 50)}, ${glowAlpha})`
             ctx.fill()
           }
         }
@@ -110,11 +115,11 @@ export const ParticleBg: React.FC<ParticleBgProps> = ({ count = 40, speed = 0.3,
         // Normal particle
         ctx.beginPath()
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
-        ctx.fillStyle = `rgba(0, 212, 255, ${p.alpha})`
+        ctx.fillStyle = `rgba(${pr}, ${pg}, ${pb}, ${p.alpha})`
         ctx.fill()
       })
 
-      // Draw subtle connection lines between nearby particles when mouse is active
+      // Connection lines
       if (mouse.active) {
         for (let i = 0; i < particlesRef.current.length; i++) {
           for (let j = i + 1; j < particlesRef.current.length; j++) {
@@ -128,7 +133,7 @@ export const ParticleBg: React.FC<ParticleBgProps> = ({ count = 40, speed = 0.3,
               ctx.beginPath()
               ctx.moveTo(a.x, a.y)
               ctx.lineTo(b.x, b.y)
-              ctx.strokeStyle = `rgba(0, 212, 255, ${lineAlpha})`
+              ctx.strokeStyle = `rgba(${pr}, ${pg}, ${pb}, ${lineAlpha})`
               ctx.lineWidth = 0.5
               ctx.stroke()
             }
@@ -155,5 +160,3 @@ export const ParticleBg: React.FC<ParticleBgProps> = ({ count = 40, speed = 0.3,
     />
   )
 }
-
-

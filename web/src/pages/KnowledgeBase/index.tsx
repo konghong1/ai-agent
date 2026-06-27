@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { PlusOutlined, BookOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
-import { Typography, Form, Input, Button, Space, Modal, message, Tag } from 'antd'
-
-import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { Typography, Form, Input, Button, Space, Modal, message, Tag, Row, Col, Switch } from 'antd'
+import { useLayoutStore } from '@/stores/layout'
+import { authHeaders } from '@/services/auth'
 
 const { Title, Text } = Typography
 
@@ -16,11 +16,19 @@ interface KB {
 
 export default function KnowledgeBaseList() {
   const navigate = useNavigate()
+  const theme = useLayoutStore((s) => s.theme)
   const [kbs, setKbs] = useState<KB[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<KB | null>(null)
   const [form] = Form.useForm()
+
+  const themeColorMap: Record<string, string> = {
+    techBlue: '#2563EB',
+    naturalGreen: '#22C55E',
+    elegantPurple: '#7C3AED',
+  }
+  const primaryColor = themeColorMap[theme] || '#22C55E'
 
   const fetchKbs = async () => {
     try {
@@ -63,14 +71,14 @@ export default function KnowledgeBaseList() {
     <div>
       <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-          <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>知识库管理</Title>
+          <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>知识库管理</Title>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields(); setModalOpen(true) }}>
             新建知识库
           </Button>
         </div>
 
         {kbs.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: 48, color: '#556677' }}>
+          <div style={{ textAlign: 'center', padding: 48, color: 'var(--ice-text-muted)' }}>
             <BookOutlined style={{ fontSize: 48, opacity: 0.3 }} />
             <p style={{ marginTop: 12 }}>暂无知识库，点击"新建知识库"开始</p>
           </div>
@@ -78,15 +86,15 @@ export default function KnowledgeBaseList() {
           <Row gutter={[16, 16]}>
             {kbs.map((kb) => (
               <Col span={8} key={kb.id}>
-                <IceCrystalCard hoverEffect="glow" animation="fadeInUp" style={{ }}>
+                <IceCrystalCard hoverEffect="glow" animation="fadeInUp">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                     <div>
-                      <Title level={5} style={{ color: '#e8f4f8', margin: 0 }}>{kb.name}</Title>
+                      <Title level={5} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>{kb.name}</Title>
                       <Text type="secondary" style={{ fontSize: 13 }}>{kb.description || '暂无描述'}</Text>
                     </div>
                     <Space>
                       <Button type="text" size="small" icon={<EditOutlined />} onClick={() => { setEditing(kb); form.setFieldsValue(kb); setModalOpen(true) }} />
-                      <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: '#ff6b6b' }} onClick={() => handleDelete(kb.id)} />
+                      <Button type="text" size="small" icon={<DeleteOutlined />} style={{ color: 'var(--ice-danger)' }} onClick={() => handleDelete(kb.id)} />
                     </Space>
                   </div>
                   <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -95,7 +103,7 @@ export default function KnowledgeBaseList() {
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Tag color={kb.enabled ? 'green' : 'red'}>{kb.enabled ? '已启用' : '已禁用'}</Tag>
-                    <Button type="link" size="small" onClick={() => navigate(`/knowledge-bases/${kb.id}`)} style={{ color: '#00d4ff' }}>
+                    <Button type="link" size="small" onClick={() => navigate(`/knowledge-bases/${kb.id}`)} style={{ color: primaryColor }}>
                       进入管理 →
                     </Button>
                   </div>
@@ -136,7 +144,3 @@ export default function KnowledgeBaseList() {
     </div>
   )
 }
-
-
-
-

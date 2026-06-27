@@ -1,5 +1,4 @@
-import React from 'react'
-import { ParticleBg } from '@/components/ParticleBg'
+﻿import { ParticleBg } from '@/components/ParticleBg'
 
 export default function LoginLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -8,7 +7,7 @@ export default function LoginLayout({ children }: { children: React.ReactNode })
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #0d1117 0%, #161b22 50%, #1a2332 100%)',
+      background: 'var(--ice-bg-primary)',
       position: 'relative',
       overflow: 'hidden',
     }}>

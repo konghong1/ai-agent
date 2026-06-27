@@ -1,9 +1,8 @@
-import React, { useEffect, useState } from 'react'
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
+﻿import { useEffect, useState } from 'react'
+import { EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { Typography, Form, Input, Button, Space, Table, Modal, Select, Switch, message } from 'antd'
-
-import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { authHeaders } from '@/services/auth'
 
 const { Title, Text } = Typography
 
@@ -52,8 +51,8 @@ export default function UserManagement() {
   const roleColor: Record<string, string> = { admin: 'green', editor: 'blue', user: 'orange' }
 
   const columns = [
-    { title: '用户名', dataIndex: 'username', key: 'username', render: (t: string) => <Text strong style={{ color: '#e8f4f8' }}>{t}</Text> },
-    { title: '邮箱', dataIndex: 'email', key: 'email', render: (t: string) => <Text style={{ color: '#8899aa' }}>{t}</Text> },
+    { title: '用户名', dataIndex: 'username', key: 'username', render: (t: string) => <Text strong style={{ color: 'var(--ice-text-primary)' }}>{t}</Text> },
+    { title: '邮箱', dataIndex: 'email', key: 'email', render: (t: string) => <Text style={{ color: 'var(--ice-text-secondary)' }}>{t}</Text> },
     { title: '角色', dataIndex: 'role', key: 'role', width: 100,
       render: (r: string) => <Tag color={roleColor[r] || 'default'}>{r}</Tag> },
     { title: '状态', dataIndex: 'enabled', key: 'enabled', width: 80,
@@ -62,14 +61,14 @@ export default function UserManagement() {
       render: (_: any, u: User) => (
         <Space>
           <a onClick={() => { setEditing(u); form.setFieldsValue(u); setModalOpen(true) }}><EditOutlined /></a>
-          <a onClick={() => handleDelete(u)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
+          <a onClick={() => handleDelete(u)} style={{ color: 'var(--ice-danger)' }}><DeleteOutlined /></a>
         </Space>
       )}]
 
   return (
     <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>用户管理</Title>
+        <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>用户管理</Title>
       </div>
       <Table columns={columns} dataSource={users} rowKey="id" pagination={false} />
 
@@ -90,7 +89,3 @@ export default function UserManagement() {
     </IceCrystalCard>
   )
 }
-
-
-
-

@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react'
+﻿import { useCallback, useEffect, useState } from 'react'
 import { Table, Tag, Switch, Button, Space, Modal, Form, Input, Slider, message, Typography, Tooltip } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
-
-import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { useLayoutStore } from '@/stores/layout'
+import { authHeaders } from '@/services/auth'
 
 const { Title, Text } = Typography
 
@@ -15,11 +15,19 @@ interface Agent {
 
 export default function AgentList() {
   const navigate = useNavigate()
+  const theme = useLayoutStore((s) => s.theme)
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null)
   const [form] = Form.useForm()
+
+  const themeColorMap: Record<string, string> = {
+    techBlue: '#2563EB',
+    naturalGreen: '#22C55E',
+    elegantPurple: '#7C3AED',
+  }
+  const primaryColor = themeColorMap[theme] || '#22C55E'
 
   const fetchAgents = useCallback(async () => {
     try { const res = await fetch('/api/agents', { headers: authHeaders() }); setAgents(await res.json()) } catch {}
@@ -52,7 +60,7 @@ export default function AgentList() {
 
   const columns = [
     { title: '名称', dataIndex: 'name', key: 'name', width: 160,
-      render: (name: string, r: Agent) => <a onClick={() => navigate('/agents/' + r.id)} style={{ color: '#00d4ff' }}>{name}</a> },
+      render: (name: string, r: Agent) => <a onClick={() => navigate('/agents/' + r.id)} style={{ color: primaryColor }}>{name}</a> },
     { title: '描述', dataIndex: 'description', key: 'description', ellipsis: true,
       render: (d: string) => d && d.length > 40 ? <Tooltip title={d}>{d.slice(0, 40)}...</Tooltip> : d },
     { title: '模型', dataIndex: 'model_name', key: 'model_name', width: 120, render: (m: string) => <Tag color="cyan">{m}</Tag> },
@@ -62,14 +70,14 @@ export default function AgentList() {
         <Space>
           <a onClick={() => navigate('/agents/' + r.id)}><EyeOutlined /></a>
           <a onClick={() => { setEditingAgent(r); form.setFieldsValue(r); setDrawerOpen(true) }}><EditOutlined /></a>
-          <a onClick={() => handleDelete(r.id)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
+          <a onClick={() => handleDelete(r.id)} style={{ color: 'var(--ice-danger)' }}><DeleteOutlined /></a>
         </Space>
       )}]
 
   return (
     <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>Agent 目录</Title>
+        <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>Agent 目录</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingAgent(null); form.resetFields({ temperature: 0.7, enabled: true }); setDrawerOpen(true) }}>新建 Agent</Button>
       </div>
       <Table columns={columns} dataSource={agents} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: 800 }} />
@@ -78,7 +86,7 @@ export default function AgentList() {
         <Form form={form} layout="vertical" onFinish={handleSave} initialValues={{ temperature: 0.7, enabled: true }}>
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}><Input placeholder="例如: 代码助手" /></Form.Item>
           <Form.Item name="description" label="描述"><Input.TextArea placeholder="简短描述" /></Form.Item>
-          <Form.Item name="system_prompt" label="系统提示词"><Input.TextArea rows={4} placeholder="Agent 的系统指令..." /></Form.Item>
+          <Form.Item name="system_prompt" label="系统提示词"><Input.TextArea rows={4} placeholder="Agent 的系统指令.." /></Form.Item>
           <Form.Item name="model_name" label="模型名称"><Input placeholder="例如: gpt-4o-mini" /></Form.Item>
           <Form.Item name="temperature" label="温度" rules={[{ type: 'number', min: 0, max: 2 }]}>
             <Slider min={0} max={2} step={0.1} marks={{ 0: '0', 1: '1', 2: '2' }} />
@@ -93,4 +101,3 @@ export default function AgentList() {
     </IceCrystalCard>
   )
 }
-

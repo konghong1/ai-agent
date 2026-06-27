@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react'
-import { PlusOutlined, EditOutlined, DeleteOutlined, SettingOutlined, KeyOutlined } from '@ant-design/icons'
+﻿import { useEffect, useState } from 'react'
+import { PlusOutlined, EditOutlined, DeleteOutlined, SettingOutlined, KeyOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
-import { Typography, Form, Input, Button, Space, Table, Modal, message } from 'antd'
-
+import { Typography, Form, Input, Button, Space, Table, Modal, message, Tabs, Switch } from 'antd'
 import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { useLayoutStore } from '@/stores/layout'
 
 const { Title, Text } = Typography
 
@@ -12,6 +12,7 @@ export default function SettingsPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
+  const { darkMode, toggleDarkMode, theme, setTheme } = useLayoutStore()
 
   const fetch = async () => {
     try { const r = await fetch('/api/settings', { headers: authHeaders() }); setSettings(await r.json()) } catch {}
@@ -32,24 +33,30 @@ export default function SettingsPage() {
   }
 
   const columns = [
-    { title: '键', dataIndex: 'key', key: 'key', width: 200, render: (t: string) => <Text style={{ color: '#00d4ff', fontFamily: 'monospace' }}>{t}</Text> },
-    { title: '值', dataIndex: 'value', key: 'value', ellipsis: true, render: (t: string) => <Text style={{ color: '#e8f4f8' }}>{t}</Text> },
+    { title: '键', dataIndex: 'key', key: 'key', width: 200, render: (t: string) => <Text style={{ color: 'var(--ice-primary)', fontFamily: 'monospace' }}>{t}</Text> },
+    { title: '值', dataIndex: 'value', key: 'value', ellipsis: true, render: (t: string) => <Text style={{ color: 'var(--ice-text-primary)' }}>{t}</Text> },
     { title: '描述', dataIndex: 'description', key: 'desc', ellipsis: true, render: (t: string) => <Text type="secondary">{t}</Text> },
     { title: '操作', key: 'action', width: 100,
       render: (_: any, r: any) => (
         <Space>
           <a onClick={() => { setEditing(r); form.setFieldsValue({ key: r.key, value: r.value, description: r.description }); setModalOpen(true) }}><EditOutlined /></a>
-          <a onClick={() => handleDelete(r.key)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
+          <a onClick={() => handleDelete(r.key)} style={{ color: 'var(--ice-danger)' }}><DeleteOutlined /></a>
         </Space>
       )}]
 
+  const themeOptions = [
+    { name: '自然绿', key: 'naturalGreen', color: '#22C55E', desc: '护眼舒适，适合长时间办公' },
+    { name: '科技蓝', key: 'techBlue', color: '#2563EB', desc: '专业稳重，适合企业后台' },
+    { name: '优雅紫', key: 'elegantPurple', color: '#7C3AED', desc: 'AI 科技高级风' },
+  ]
+
   return (
     <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
-      <Title level={4} style={{ color: '#e8f4f8', marginBottom: 16 }}>系统设置</Title>
+      <Title level={4} style={{ color: 'var(--ice-text-primary)', marginBottom: 16 }}>系统设置</Title>
 
       <Tabs items={[
         {
-          key: 'global', label: '⚙ 全局配置',
+          key: 'global', label: <><SettingOutlined /> 全局配置</>,
           children: (
             <>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -60,45 +67,72 @@ export default function SettingsPage() {
             </>
           )},
         {
-          key: 'api', label: '🔑 API 配置',
+          key: 'api', label: <><KeyOutlined /> API 配置</>,
           children: (
             <div style={{ maxWidth: 600 }}>
               <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>配置 OpenAI 兼容 API 的连接信息</Text>
               <Form layout="vertical">
                 <Form.Item label="OpenAI API Key">
-                  <Input.Password placeholder="sk-..." style={{ background: 'rgba(0, 212, 255, 0.04)', borderColor: 'rgba(0, 212, 255, 0.12)' }} />
+                  <Input.Password placeholder="sk-..." style={{ background: 'var(--ice-bg-card)', borderColor: 'var(--ice-border)' }} />
                 </Form.Item>
                 <Form.Item label="OpenAI Base URL">
-                  <Input placeholder="https://api.openai.com/v1" style={{ background: 'rgba(0, 212, 255, 0.04)', borderColor: 'rgba(0, 212, 255, 0.12)' }} />
+                  <Input placeholder="https://api.openai.com/v1" style={{ background: 'var(--ice-bg-card)', borderColor: 'var(--ice-border)' }} />
                 </Form.Item>
                 <Form.Item label="默认模型">
-                  <Input placeholder="gpt-4o-mini" style={{ background: 'rgba(0, 212, 255, 0.04)', borderColor: 'rgba(0, 212, 255, 0.12)' }} />
+                  <Input placeholder="gpt-4o-mini" style={{ background: 'var(--ice-bg-card)', borderColor: 'var(--ice-border)' }} />
                 </Form.Item>
-                <Button type="primary" style={{ background: 'linear-gradient(135deg, rgba(0, 212, 255, 0.3), rgba(0, 255, 213, 0.15))', borderColor: 'rgba(0, 212, 255, 0.4)' }}>保存 API 配置</Button>
+                <Button type="primary" style={{ background: 'var(--ice-primary)', borderColor: 'var(--ice-primary)' }}>保存 API 配置</Button>
               </Form>
             </div>
           )},
         {
           key: 'theme', label: '🎨 主题',
           children: (
-            <div style={{ maxWidth: 400 }}>
-              <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>选择界面主题风格</Text>
-              {[
-                { name: '冰晶默认', color: '#00d4ff', desc: '冰蓝色调，科技感' },
-                { name: '深邃星空', color: '#7b68ee', desc: '紫色调，神秘感' },
-                { name: '清新薄荷', color: '#00ffd5', desc: '绿色调，清爽感' }].map((t) => (
-                <div key={t.name} style={{
-                  display: 'flex', alignItems: 'center', gap: 16, padding: 16, marginBottom: 12,
-                  borderRadius: 12, background: 'rgba(0, 212, 255, 0.04)',
-                  border: `1px solid ${t.color}33`, cursor: 'pointer'}}>
-                  <div style={{ width: 40, height: 40, borderRadius: '50%', background: t.color }} />
-                  <div>
-                    <Text strong style={{ color: '#e8f4f8' }}>{t.name}</Text>
-                    <br />
-                    <Text type="secondary" style={{ fontSize: 12 }}>{t.desc}</Text>
-                  </div>
+            <div style={{ maxWidth: 500 }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: 16, marginBottom: 20, borderRadius: 12,
+                background: 'var(--ice-bg-card)', border: '1px solid var(--ice-border)',
+              }}>
+                <div>
+                  <Text strong style={{ color: 'var(--ice-text-primary)', display: 'block' }}>深色 / 浅色模式</Text>
+                  <Text type="secondary" style={{ fontSize: 12 }}>切换界面明暗风格</Text>
                 </div>
-              ))}
+                <Switch checked={darkMode} onChange={toggleDarkMode}
+                  checkedChildren={<MoonOutlined />} unCheckedChildren={<SunOutlined />} />
+              </div>
+
+              <Text strong style={{ color: 'var(--ice-text-primary)', display: 'block', marginBottom: 12 }}>选择主题风格</Text>
+              {themeOptions.map((t) => {
+                const isActive = theme === t.key
+                return (
+                  <div
+                    key={t.key}
+                    onClick={() => { setTheme(t.key); message.success('主题已切换: ' + t.name) }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 16, padding: 16, marginBottom: 12,
+                      borderRadius: 12,
+                      background: isActive ? t.color + '18' : 'var(--ice-bg-card)',
+                      border: '1px solid ' + (isActive ? t.color + '88' : 'var(--ice-border)'),
+                      cursor: 'pointer',
+                      boxShadow: isActive ? '0 0 20px ' + t.color + '22' : 'none',
+                    }}
+                  >
+                    <div style={{
+                      width: 40, height: 40, borderRadius: '50%',
+                      background: t.color,
+                      boxShadow: '0 0 12px ' + t.color + '44',
+                      border: isActive ? '3px solid var(--ice-text-primary)' : '3px solid transparent',
+                    }} />
+                    <div>
+                      <Text strong style={{ color: isActive ? t.color : 'var(--ice-text-primary)' }}>{t.name}</Text>
+                      <br />
+                      <Text type="secondary" style={{ fontSize: 12 }}>{t.desc}</Text>
+                    </div>
+                    {isActive && <Text style={{ color: t.color, fontSize: 13, fontWeight: 600 }}>✓ 当前</Text>}
+                  </div>
+                )
+              })}
             </div>
           )}]} />
 
@@ -116,7 +150,3 @@ export default function SettingsPage() {
     </IceCrystalCard>
   )
 }
-
-
-
-

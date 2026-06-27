@@ -1,10 +1,10 @@
-import React from 'react'
-import { Outlet, useNavigate, useLocation } from 'react-router-dom'
+﻿import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Layout, Menu, Avatar, Dropdown, Button, Space, Typography } from 'antd'
 import {
   DashboardOutlined, RobotOutlined, BookOutlined, TeamOutlined,
   LinkOutlined, ThunderboltOutlined, SettingOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, UserOutlined, LogoutOutlined,
+  SunOutlined, MoonOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/stores/auth'
 import { useLayoutStore } from '@/stores/layout'
@@ -27,11 +27,12 @@ export default function BasicLayout() {
   const navigate = useNavigate()
   const location = useLocation()
   const { collapsed, toggleCollapsed } = useLayoutStore()
+  const { darkMode, toggleDarkMode } = useLayoutStore()
   const { user, logout } = useAuthStore()
 
   const userMenu = {
     items: [
-      { key: 'username', label: <Text style={{ color: '#e8f4f8' }}>{user?.username}</Text>, disabled: true },
+      { key: 'username', label: <Text style={{ color: 'var(--ice-text-primary)' }}>{user?.username}</Text>, disabled: true },
       { type: 'divider' as const },
       { key: 'logout', icon: <LogoutOutlined />, label: '退出登录',
         onClick: () => { logout(); navigate('/login') } },
@@ -44,13 +45,13 @@ export default function BasicLayout() {
       <Sider
         collapsible collapsed={collapsed} onCollapse={toggleCollapsed} width={256}
         style={{
-          background: 'rgba(17, 25, 47, 0.92)',
-          borderRight: '1px solid rgba(0, 212, 255, 0.12)',
+          background: 'var(--ice-bg-secondary)',
+          borderRight: '1px solid var(--ice-border)',
           zIndex: 10,
         }}
       >
-        <div style={{ padding: '24px 16px', textAlign: 'center', borderBottom: '1px solid rgba(0, 212, 255, 0.08)' }}>
-          <Text strong style={{ fontSize: 20, color: '#00d4ff', letterSpacing: 1 }}>AI Agent</Text>
+        <div style={{ padding: '24px 16px', textAlign: 'center', borderBottom: '1px solid var(--ice-border)' }}>
+          <Text strong style={{ fontSize: 20, color: 'var(--ice-primary)', letterSpacing: 1 }}>AI Agent</Text>
           <br /><Text type="secondary" style={{ fontSize: 12 }}>管理平台</Text>
         </div>
         <Menu
@@ -65,19 +66,27 @@ export default function BasicLayout() {
       </Sider>
       <Layout>
         <Header style={{
-          background: 'rgba(17, 25, 47, 0.85)', backdropFilter: 'blur(20px)',
-          borderBottom: '1px solid rgba(0, 212, 255, 0.12)',
+          background: 'var(--ice-bg-card)', backdropFilter: 'blur(20px)',
+          borderBottom: '1px solid var(--ice-border)',
           padding: '0 24px', display: 'flex', alignItems: 'center',
           justifyContent: 'space-between', zIndex: 10,
         }}>
-          <Button type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-            onClick={toggleCollapsed} style={{ color: '#e8f4f8', fontSize: 16, padding: '4px' }} />
-          <Dropdown menu={userMenu} placement="bottomRight" arrow>
-            <Space style={{ cursor: 'pointer' }}>
-              <Avatar icon={<UserOutlined />} style={{ backgroundColor: '#00d4ff', color: '#0a0e17' }} />
-              <Text style={{ color: '#e8f4f8' }}>{user?.username}</Text>
-            </Space>
-          </Dropdown>
+          <Space>
+            <Button type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+              onClick={toggleCollapsed} style={{ color: 'var(--ice-text-primary)', fontSize: 16, padding: '4px' }} />
+          </Space>
+          <Space style={{ gap: 12 }}>
+            {/* Dark/Light toggle next to user */}
+            <Button type="text" icon={darkMode ? <SunOutlined /> : <MoonOutlined />}
+              onClick={toggleDarkMode} title={darkMode ? '切换到亮色模式' : '切换到深色模式'}
+              style={{ color: 'var(--ice-text-primary)', fontSize: 16, padding: '4px' }} />
+            <Dropdown menu={userMenu} placement="bottomRight" arrow>
+              <Space style={{ cursor: 'pointer' }}>
+                <Avatar icon={<UserOutlined />} style={{ backgroundColor: 'var(--ice-primary)', color: 'var(--ice-text-inverse)' }} />
+                <Text style={{ color: 'var(--ice-text-primary)' }}>{user?.username}</Text>
+              </Space>
+            </Dropdown>
+          </Space>
         </Header>
         <Content style={{
           margin: 24, background: 'transparent', minHeight: 'calc(100vh - 64px)',

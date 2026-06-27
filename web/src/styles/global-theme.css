@@ -1,33 +1,134 @@
-﻿:root {
-  --color-primary: #00d4ff;
-  --color-primary-light: rgba(0, 212, 255, 0.15);
-  --color-text-primary: #e6edf3;
-  --color-text-secondary: #8b949e;
-  --color-bg-page: #0d1117;
-  --color-bg-card: rgba(30, 35, 45, 0.8);
-  --color-border: rgba(48, 54, 61, 0.7);
-}
+﻿/* Ant Design overrides using CSS variables */
 html, body, #root {
-  background: var(--color-bg-page) !important;
-  color: var(--color-text-primary) !important;
+  background: var(--ice-bg-primary) !important;
+  color: var(--ice-text-primary) !important;
 }
-.ant-card { background: var(--color-bg-card) !important; border: 1px solid var(--color-border) !important; color: var(--color-text-primary) !important; }
-.ant-table, .ant-table-thead > tr > th, .ant-table-tbody > tr > td { color: var(--color-text-primary) !important; }
-.ant-input, .ant-select-selector { background: rgba(0,0,0,0.2) !important; border: 1px solid var(--color-border) !important; color: var(--color-text-primary) !important; }
-.ant-modal-content { background: var(--color-bg-card) !important; color: var(--color-text-primary) !important; }
-.ant-dropdown-menu { background: rgba(22,27,34,0.98) !important; }
-.ant-menu-light .ant-menu-item { color: var(--color-text-primary) !important; }
-.ant-menu-light .ant-menu-item-selected { background: rgba(0,212,255,0.15) !important; color: #00d4ff !important; }
-.ant-layout-sider { background: rgba(13,17,23,0.95) !important; }
-.ant-layout-header { background: rgba(22,27,34,0.9) !important; }
-.ant-typography { color: var(--color-text-primary) !important; }
-.ant-typography-secondary { color: var(--color-text-secondary) !important; }
-.ant-statistic-title { color: var(--color-text-secondary) !important; }
-.ant-statistic-content { color: var(--color-text-primary) !important; }
-.ant-tag { border: 1px solid var(--color-border) !important; color: var(--color-text-primary) !important; }
-.ant-switch { background: rgba(0,212,255,0.25) !important; }
-.ant-switch-checked { background: #00d4ff !important; }
-.ant-pagination-item { background: var(--color-bg-card) !important; border-color: var(--color-border) !important; }
-.ant-pagination-item a { color: var(--color-text-secondary) !important; }
-.ant-pagination-item-active { border-color: #00d4ff !important; }
-.ant-pagination-item-active a { color: #00d4ff !important; }
+.ant-card {
+  background: var(--ice-bg-card) !important;
+  border: 1px solid var(--ice-border) !important;
+  color: var(--ice-text-primary) !important;
+}
+.ant-table, .ant-table-thead > tr > th, .ant-table-tbody > tr > td {
+  color: var(--ice-text-primary) !important;
+}
+.ant-table-thead > tr > th {
+  background: var(--ice-bg-secondary) !important;
+  color: var(--ice-text-primary) !important;
+}
+.ant-table-tbody > tr > td {
+  border-color: var(--ice-border) !important;
+}
+.ant-input, .ant-select-selector {
+  background: var(--ice-bg-card) !important;
+  border: 1px solid var(--ice-border) !important;
+  color: var(--ice-text-primary) !important;
+}
+.ant-input::placeholder, .ant-select-selector .ant-select-placeholder {
+  color: var(--ice-text-secondary) !important;
+  opacity: 0.5;
+}
+.ant-modal-content {
+  background: var(--ice-bg-card) !important;
+  color: var(--ice-text-primary) !important;
+}
+.ant-modal-header {
+  color: var(--ice-text-primary) !important;
+  border-bottom: 1px solid var(--ice-border) !important;
+}
+.ant-dropdown-menu {
+  background: var(--ice-bg-card) !important;
+  border: 1px solid var(--ice-border) !important;
+}
+.ant-menu-light .ant-menu-item {
+  color: var(--ice-text-primary) !important;
+}
+.ant-menu-light .ant-menu-item:hover {
+  background: var(--ice-bg-hover) !important;
+}
+.ant-menu-light .ant-menu-item-selected {
+  background: var(--ice-primary-10) !important;
+  color: var(--ice-primary) !important;
+}
+.ant-menu-light .ant-menu-item-selected::after {
+  border-right-color: var(--ice-primary) !important;
+}
+.ant-layout-sider {
+  background: var(--ice-bg-secondary) !important;
+}
+.ant-layout-header {
+  background: var(--ice-bg-card) !important;
+  border-bottom: 1px solid var(--ice-border) !important;
+}
+.ant-typography {
+  color: var(--ice-text-primary) !important;
+}
+.ant-typography-secondary {
+  color: var(--ice-text-secondary) !important;
+}
+.ant-statistic-title {
+  color: var(--ice-text-secondary) !important;
+}
+.ant-statistic-content {
+  color: var(--ice-text-primary) !important;
+}
+.ant-tag {
+  border: 1px solid var(--ice-border) !important;
+  color: var(--ice-text-primary) !important;
+  background: var(--ice-bg-card) !important;
+}
+.ant-switch {
+  background: var(--ice-primary-10) !important;
+}
+.ant-switch-checked {
+  background: var(--ice-primary) !important;
+}
+.ant-pagination-item {
+  background: var(--ice-bg-card) !important;
+  border-color: var(--ice-border) !important;
+}
+.ant-pagination-item a {
+  color: var(--ice-text-secondary) !important;
+}
+.ant-pagination-item:hover {
+  border-color: var(--ice-primary) !important;
+}
+.ant-pagination-item-active {
+  border-color: var(--ice-primary) !important;
+  background: var(--ice-primary-10) !important;
+}
+.ant-pagination-item-active a {
+  color: var(--ice-primary) !important;
+}
+.ant-btn-primary {
+  background: var(--ice-primary) !important;
+  border-color: var(--ice-primary) !important;
+}
+.ant-btn-primary:hover {
+  background: var(--ice-primary-dark) !important;
+  border-color: var(--ice-primary-dark) !important;
+}
+.ant-input-number, .ant-input-number-input {
+  background: var(--ice-bg-card) !important;
+  border: 1px solid var(--ice-border) !important;
+  color: var(--ice-text-primary) !important;
+}
+.ant-form-item-label > label {
+  color: var(--ice-text-primary) !important;
+}
+.ant-descriptions-title {
+  color: var(--ice-text-primary) !important;
+}
+.ant-descriptions-item-label {
+  color: var(--ice-text-secondary) !important;
+}
+.ant-descriptions-item-content {
+  color: var(--ice-text-primary) !important;
+}
+
+/* Table row hover */
+.ant-table-tbody > tr:hover > td {
+  background: var(--ice-bg-hover) !important;
+}
+.ant-table-tbody > tr.ant-table-row-hover > td {
+  background: var(--ice-bg-hover) !important;
+}

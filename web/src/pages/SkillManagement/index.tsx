@@ -1,17 +1,25 @@
-import React, { useEffect, useState } from 'react'
-import { PlusOutlined, EditOutlined, DeleteOutlined, ThunderboltOutlined } from '@ant-design/icons'
+﻿import { useEffect, useState } from 'react'
+import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { Typography, Form, Input, Button, Space, Table, Modal, Select, Switch, Tag, message } from 'antd'
-
-import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { useLayoutStore } from '@/stores/layout'
+import { authHeaders } from '@/services/auth'
 
 const { Title, Text } = Typography
 
 export default function SkillManagement() {
+  const theme = useLayoutStore((s) => s.theme)
   const [items, setItems] = useState<any[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
+
+  const themeColorMap: Record<string, string> = {
+    techBlue: '#2563EB',
+    naturalGreen: '#22C55E',
+    elegantPurple: '#7C3AED',
+  }
+  const primaryColor = themeColorMap[theme] || '#22C55E'
 
   const fetch = async () => {
     try { const r = await fetch('/api/skills', { headers: authHeaders() }); setItems(await r.json()) } catch {}
@@ -31,8 +39,8 @@ export default function SkillManagement() {
   }
 
   const columns = [
-    { title: '名称', dataIndex: 'name', key: 'name', render: (t: string) => <Text strong style={{ color: '#e8f4f8' }}>{t}</Text> },
-    { title: '标题', dataIndex: 'title', key: 'title', render: (t: string) => <Text style={{ color: '#8899aa' }}>{t}</Text> },
+    { title: '名称', dataIndex: 'name', key: 'name', render: (t: string) => <Text strong style={{ color: 'var(--ice-text-primary)' }}>{t}</Text> },
+    { title: '标题', dataIndex: 'title', key: 'title', render: (t: string) => <Text style={{ color: 'var(--ice-text-secondary)' }}>{t}</Text> },
     { title: '类型', dataIndex: 'source_type', key: 'type', width: 100, render: (t: string) => <Tag>{t}</Tag> },
     { title: '状态', dataIndex: 'enabled', key: 'enabled', width: 80,
       render: (e: boolean, r: any) => <Switch checked={e} onChange={(v) => fetch(`/api/skills/${r.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ enabled: v }) })} size="small" /> },
@@ -40,14 +48,14 @@ export default function SkillManagement() {
       render: (_: any, r: any) => (
         <Space>
           <a onClick={() => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }}><EditOutlined /></a>
-          <a onClick={() => handleDelete(r.id)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
+          <a onClick={() => handleDelete(r.id)} style={{ color: 'var(--ice-danger)' }}><DeleteOutlined /></a>
         </Space>
       )}]
 
   return (
     <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>Skill 管理</Title>
+        <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>Skill 管理</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields({ source_type: 'local', enabled: true }); setModalOpen(true) }}>添加 Skill</Button>
       </div>
       <Table columns={columns} dataSource={items} rowKey="id" pagination={false} />
@@ -71,7 +79,3 @@ export default function SkillManagement() {
     </IceCrystalCard>
   )
 }
-
-
-
-

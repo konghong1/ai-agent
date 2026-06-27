@@ -1,10 +1,10 @@
-import React, { useEffect, useState, useCallback } from 'react'
+﻿import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeftOutlined, PlusOutlined, UploadOutlined, SearchOutlined, DeleteOutlined } from '@ant-design/icons'
-import { Typography, Form, Input, Button, Space, Table, Modal, Select, Tag, message } from 'antd'
+import { Typography, Form, Input, Button, Space, Table, Modal, Select, Tag, message, Row, Col, Tabs, Badge } from 'antd'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
-
-import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { useLayoutStore } from '@/stores/layout'
+import { authHeaders } from '@/services/auth'
 
 const { Text, Title } = Typography
 
@@ -21,6 +21,7 @@ function flattenFolders(folders: KBFolder[]): KBFolder[] {
 export default function KBDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const theme = useLayoutStore((s) => s.theme)
   const [kb, setKb] = useState<any>(null)
   const [folders, setFolders] = useState<KBFolder[]>([])
   const [activeFolderId, setActiveFolderId] = useState<number | null>(null)
@@ -34,6 +35,13 @@ export default function KBDetail() {
   const [selectedFolder, setSelectedFolder] = useState<number | null>(null)
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [form] = Form.useForm()
+
+  const themeColorMap: Record<string, string> = {
+    techBlue: '#2563EB',
+    naturalGreen: '#22C55E',
+    elegantPurple: '#7C3AED',
+  }
+  const primaryColor = themeColorMap[theme] || '#22C55E'
 
   useEffect(() => {
     Promise.all([
@@ -112,7 +120,7 @@ export default function KBDetail() {
   const docColumns = [
     { title: '文件名', dataIndex: 'original_filename', key: 'name',
       render: (name: string, record: KBDoc) => (
-        <Space><span style={{ color: '#e8f4f8' }}>{name}</span><Tag>{record.file_type}</Tag></Space>
+        <Space><span style={{ color: 'var(--ice-text-primary)' }}>{name}</span><Tag>{record.file_type}</Tag></Space>
       )},
     { title: '大小', dataIndex: 'file_size', key: 'size', width: 100, render: (s: number) => `${(s / 1024).toFixed(1)} KB` },
     { title: '状态', dataIndex: 'status', key: 'status', width: 120, render: (s: string) => statusTag(s) },
@@ -125,11 +133,11 @@ export default function KBDetail() {
     items.map(f => (
       <div key={f.id} style={{ paddingLeft: depth * 20, cursor: 'pointer', padding: '4px 8px', borderRadius: 4 }}
         onClick={() => setActiveFolderId(f.id)}
-        onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'rgba(0,212,255,0.06)' }}
+        onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'var(--ice-bg-hover)' }}
         onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'transparent' }}>
         <Space>
-          <span style={{ color: activeFolderId === f.id ? '#00d4ff' : '#8899aa' }}>📁</span>
-          <Text style={{ color: '#e8f4f8', fontWeight: activeFolderId === f.id ? 600 : 400 }}>{f.name}</Text>
+          <span style={{ color: activeFolderId === f.id ? primaryColor : 'var(--ice-text-secondary)' }}>📁</span>
+          <Text style={{ color: 'var(--ice-text-primary)', fontWeight: activeFolderId === f.id ? 600 : 400 }}>{f.name}</Text>
           {f.document_count > 0 && <Tag color="blue">{f.document_count}</Tag>}
         </Space>
         {f.children && renderFolderTree(f.children, depth + 1)}
@@ -139,11 +147,11 @@ export default function KBDetail() {
   return (
     <div>
       <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/knowledge-bases')}
-        style={{ color: '#e8f4f8', marginBottom: 16 }}>返回知识库列表</Button>
+        style={{ color: 'var(--ice-text-primary)', marginBottom: 16 }}>返回知识库列表</Button>
 
       {kb && (
         <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ marginBottom: 16 }}>
-          <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>📚 {kb.name}</Title>
+          <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>📚 {kb.name}</Title>
           <Text type="secondary">{kb.description}</Text>
         </IceCrystalCard>
       )}
@@ -152,7 +160,7 @@ export default function KBDetail() {
         <Col span={6}>
           <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ minHeight: 300 }}>
             <div style={{ padding: 8 }}>
-              <Title level={5} style={{ color: '#e8f4f8', marginBottom: 12 }}>📂 文件夹</Title>
+              <Title level={5} style={{ color: 'var(--ice-text-primary)', marginBottom: 12 }}>📂 文件夹</Title>
               <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setFolderModal(true)} style={{ marginBottom: 12 }}>新建文件夹</Button>
               {renderFolderTree(folders)}
             </div>
@@ -164,7 +172,7 @@ export default function KBDetail() {
             {
               key: 'docs', label: '📄 文档管理',
               children: (
-                <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ }}>
+                <IceCrystalCard hoverEffect="none" animation="fadeInUp">
                   <Space style={{ marginBottom: 16 }}>
                     <Button icon={<UploadOutlined />} onClick={() => setUploadModal(true)}>上传文件</Button>
                     <Select placeholder="选择文件夹" value={selectedFolder || undefined} onChange={setSelectedFolder} style={{ width: 200 }}
@@ -176,19 +184,19 @@ export default function KBDetail() {
             {
               key: 'search', label: '🔍 检索测试',
               children: (
-                <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ }}>
+                <IceCrystalCard hoverEffect="none" animation="fadeInUp">
                   <Space.Compact style={{ marginBottom: 16 }}>
-                    <Input placeholder="输入检索问题..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                    <Input placeholder="输入检索问题.." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
                       onPressEnter={handleSearch} style={{ flex: 1 }} />
                     <Button type="primary" icon={<SearchOutlined />} loading={searchLoading} onClick={handleSearch}>检索</Button>
                   </Space.Compact>
                   {searchResults.map((r: any, i: number) => (
-                    <div key={i} style={{ padding: 12, marginBottom: 8, background: 'rgba(0, 212, 255, 0.04)', borderRadius: 8, border: '1px solid rgba(0, 212, 255, 0.08)' }}>
+                    <div key={i} style={{ padding: 12, marginBottom: 8, background: 'var(--ice-bg-hover)', borderRadius: 8, border: '1px solid var(--ice-border)' }}>
                       <Space style={{ marginBottom: 4 }}>
                         <Tag color="cyan">{r.document_name}</Tag>
-                        <Tag color="green">相关度: {(r.score * 100).toFixed(0)}%</Tag>
+                        <Tag color="green">相关度 {(r.score * 100).toFixed(0)}%</Tag>
                       </Space>
-                      <Text style={{ color: '#e8f4f8', fontSize: 13 }}>{r.content?.substring(0, 200)}...</Text>
+                      <Text style={{ color: 'var(--ice-text-primary)', fontSize: 13 }}>{r.content?.substring(0, 200)}...</Text>
                     </div>
                   ))}
                   {searchResults.length === 0 && searchQuery && <Text type="secondary">暂无检索结果</Text>}
@@ -215,10 +223,10 @@ export default function KBDetail() {
 
       <Modal title="上传文件" open={uploadModal} onCancel={() => setUploadModal(false)} footer={null}>
         <div onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setUploadedFiles(Array.from(e.dataTransfer.files)) }}
-          style={{ border: '2px dashed rgba(0, 212, 255, 0.3)', borderRadius: 12, padding: 32, textAlign: 'center', cursor: 'pointer', marginBottom: 16 }}>
-          <UploadOutlined style={{ fontSize: 32, color: '#00d4ff' }} />
-          <p style={{ color: '#8899aa', marginTop: 8 }}>拖拽文件到此处 或 点击选择</p>
-          <p style={{ color: '#556677', fontSize: 12 }}>支持 PDF, DOCX, TXT, MD, Code · 最大 50MB</p>
+          style={{ border: '2px dashed var(--ice-border)', borderRadius: 12, padding: 32, textAlign: 'center', cursor: 'pointer', marginBottom: 16 }}>
+          <UploadOutlined style={{ fontSize: 32, color: primaryColor }} />
+          <p style={{ color: 'var(--ice-text-secondary)', marginTop: 8 }}>拖拽文件到此处 或 点击选择</p>
+          <p style={{ color: 'var(--ice-text-muted)', fontSize: 12 }}>支持 PDF, DOCX, TXT, MD, Code · 最大 50MB</p>
           <input type="file" multiple accept=".pdf,.docx,.txt,.md,.csv,.json,.py,.js,.ts,.java,.go,.rs"
             style={{ display: 'none' }}
             onChange={(e) => e.target.files && setUploadedFiles(Array.from(e.target.files))}
@@ -227,8 +235,8 @@ export default function KBDetail() {
         {uploadedFiles.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             {uploadedFiles.map((f, i) => (
-              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                <Text style={{ color: '#e8f4f8' }}>{f.name}</Text>
+              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--ice-border)' }}>
+                <Text style={{ color: 'var(--ice-text-primary)' }}>{f.name}</Text>
                 <Text type="secondary">{(f.size / 1024).toFixed(1)} KB</Text>
               </div>
             ))}
@@ -239,8 +247,3 @@ export default function KBDetail() {
     </div>
   )
 }
-
-
-
-
-

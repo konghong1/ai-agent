@@ -1,12 +1,12 @@
-import React, { useEffect, useState, useRef } from 'react'
+﻿import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Row, Col, Card, Typography, Input, Button, Space, Tag, Collapse, Divider, message, Spin } from 'antd'
-import { ArrowLeftOutlined, SendOutlined, UserOutlined } from '@ant-design/icons'
+import { Row, Col, Typography, Space, Tag, Collapse, Divider, message, Spin, Input } from 'antd'
+import { ArrowLeftOutlined, SendOutlined } from '@ant-design/icons'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
-
-import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { useLayoutStore } from '@/stores/layout'
+import { authHeaders } from '@/services/auth'
 
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -23,6 +23,7 @@ interface Message {
 export default function AgentDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const theme = useLayoutStore((s) => s.theme)
   const [agent, setAgent] = useState<Agent | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -30,6 +31,14 @@ export default function AgentDetail() {
   const [sending, setSending] = useState(false)
   const [threadId, setThreadId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const themeColorMap: Record<string, string> = {
+    techBlue: '#2563EB',
+    naturalGreen: '#22C55E',
+    elegantPurple: '#7C3AED',
+  }
+  const primaryColor = themeColorMap[theme] || '#22C55E'
+  const secondaryColor = theme === 'elegantPurple' ? '#b388ff' : theme === 'naturalGreen' ? '#86efac' : '#818cf8'
 
   useEffect(() => {
     Promise.all([
@@ -87,14 +96,14 @@ export default function AgentDetail() {
         type="text"
         icon={<ArrowLeftOutlined />}
         onClick={() => navigate('/agents')}
-        style={{ color: '#e8f4f8', marginBottom: 16, padding: '4px 0' }}
+        style={{ color: 'var(--ice-text-primary)', marginBottom: 16, padding: '4px 0' }}
       >
         返回 Agent 列表
       </Button>
 
       <Row gutter={24}>
         <Col span={8}>
-          <IceCrystalCard hoverEffect="glow" animation="fadeInUp" title={agent?.name} style={{ }}>
+          <IceCrystalCard hoverEffect="glow" animation="fadeInUp" title={agent?.name}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div>
                 <Text type="secondary" style={{ fontSize: 12 }}>模型</Text>
@@ -102,11 +111,11 @@ export default function AgentDetail() {
               </div>
               <div>
                 <Text type="secondary" style={{ fontSize: 12 }}>温度</Text>
-                <div style={{ marginTop: 4, color: '#00d4ff' }}>{agent?.temperature}</div>
+                <div style={{ marginTop: 4, color: primaryColor }}>{agent?.temperature}</div>
               </div>
               <div>
                 <Text type="secondary" style={{ fontSize: 12 }}>描述</Text>
-                <div style={{ marginTop: 4, color: '#e8f4f8' }}>{agent?.description || '-'}</div>
+                <div style={{ marginTop: 4, color: 'var(--ice-text-primary)' }}>{agent?.description || '-'}</div>
               </div>
               <Collapse items={[{ key: 'sp', label: '系统提示词', children: <Text style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{agent?.system_prompt}</Text> }]} />
             </div>
@@ -117,8 +126,8 @@ export default function AgentDetail() {
           <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0', minHeight: 400 }}>
               {messages.length === 0 ? (
-                <div style={{ textAlign: 'center', paddingTop: 120, color: '#556677' }}>
-                  <BotOutlined style={{ fontSize: 48, opacity: 0.3 }} />
+                <div style={{ textAlign: 'center', paddingTop: 120, color: 'var(--ice-text-muted)' }}>
+                  <div style={{ fontSize: 48, opacity: 0.3 }}>🤖</div>
                   <p style={{ marginTop: 12 }}>开始与 Agent 对话</p>
                 </div>
               ) : (
@@ -126,14 +135,14 @@ export default function AgentDetail() {
                   <div key={msg.id} style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                     <div style={{
                       width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: msg.role === 'user' ? '#00d4ff' : '#7b68ee', color: '#fff', fontSize: 14, flexShrink: 0}}>
+                      background: msg.role === 'user' ? primaryColor : secondaryColor, color: '#fff', fontSize: 14, flexShrink: 0}}>
                       {msg.role === 'user' ? <span style={{fontSize:16}}>👤</span> : <span style={{fontSize:16}}>🤖</span>}
                     </div>
-                    <div style={{ flex: 1, background: 'rgba(0, 212, 255, 0.04)', borderRadius: 12, padding: '12px 16px', border: '1px solid rgba(0, 212, 255, 0.08)' }}>
+                    <div style={{ flex: 1, background: 'var(--ice-bg-hover)', borderRadius: 12, padding: '12px 16px', border: '1px solid var(--ice-border)' }}>
                       {msg.role === 'assistant' ? (
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                       ) : (
-                        <Text style={{ color: '#e8f4f8' }}>{msg.content}</Text>
+                        <Text style={{ color: 'var(--ice-text-primary)' }}>{msg.content}</Text>
                       )}
                     </div>
                   </div>
@@ -153,7 +162,7 @@ export default function AgentDetail() {
                 disabled={sending}
                 style={{ flex: 1 }}
               />
-              <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={handleSend} style={{ alignSelf: 'flex-end' }}>
+              <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={handleSend} style={{ alignSelf: 'flex-end', background: primaryColor, borderColor: primaryColor }}>
                 发送
               </Button>
             </div>
@@ -163,5 +172,4 @@ export default function AgentDetail() {
     </div>
   )
 }
-
 

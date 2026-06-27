@@ -1,17 +1,25 @@
-import React, { useEffect, useState } from 'react'
-import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined } from '@ant-design/icons'
+﻿import { useEffect, useState } from 'react'
+import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { Typography, Form, Input, Button, Space, Table, Modal, Select, Switch, Tag, message } from 'antd'
-
-import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { useLayoutStore } from '@/stores/layout'
+import { authHeaders } from '@/services/auth'
 
 const { Title, Text } = Typography
 
 export default function MCPManagement() {
+  const theme = useLayoutStore((s) => s.theme)
   const [items, setItems] = useState<any[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
+
+  const themeColorMap: Record<string, string> = {
+    techBlue: '#2563EB',
+    naturalGreen: '#22C55E',
+    elegantPurple: '#7C3AED',
+  }
+  const primaryColor = themeColorMap[theme] || '#22C55E'
 
   const fetch = async () => {
     try { const r = await fetch('/api/mcp-servers', { headers: authHeaders() }); setItems(await r.json()) } catch {}
@@ -31,7 +39,7 @@ export default function MCPManagement() {
   }
 
   const columns = [
-    { title: '名称', dataIndex: 'name', key: 'name', render: (t: string) => <Text style={{ color: '#e8f4f8', fontWeight: 600 }}>{t}</Text> },
+    { title: '名称', dataIndex: 'name', key: 'name', render: (t: string) => <Text style={{ color: 'var(--ice-text-primary)', fontWeight: 600 }}>{t}</Text> },
     { title: '传输方式', dataIndex: 'transport', key: 'transport', width: 100, render: (t: string) => <Tag color="cyan">{t}</Tag> },
     { title: '命令/URL', dataIndex: editing ? 'command' : 'url', key: 'cmd', ellipsis: true,
       render: (_: any, r: any) => <Text type="secondary" style={{ fontSize: 12 }}>{r.transport === 'http' ? r.url : r.command}</Text> },
@@ -41,14 +49,14 @@ export default function MCPManagement() {
       render: (_: any, r: any) => (
         <Space>
           <a onClick={() => { setEditing(r); form.setFieldsValue(r); setModalOpen(true) }}><EditOutlined /></a>
-          <a onClick={() => handleDelete(r.id)} style={{ color: '#ff6b6b' }}><DeleteOutlined /></a>
+          <a onClick={() => handleDelete(r.id)} style={{ color: 'var(--ice-danger)' }}><DeleteOutlined /></a>
         </Space>
       )}]
 
   return (
     <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={4} style={{ color: '#e8f4f8', margin: 0 }}>MCP Server 管理</Title>
+        <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>MCP Server 管理</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields({ transport: 'stdio', enabled: true }); setModalOpen(true) }}>添加 MCP</Button>
       </div>
       <Table columns={columns} dataSource={items} rowKey="id" pagination={false} />
@@ -80,7 +88,3 @@ export default function MCPManagement() {
     </IceCrystalCard>
   )
 }
-
-
-
-
