@@ -132,3 +132,51 @@ html, body, #root {
 .ant-table-tbody > tr.ant-table-row-hover > td {
   background: var(--ice-bg-hover) !important;
 }
+
+/* =========================================================
+   Responsive overrides for mobile/tablet
+   ========================================================= */
+
+/* Tablet: <= 1024px */
+@media (max-width: 1024px) {
+  .main-layout .ant-layout-sider {
+    width: 200px !important;
+  }
+}
+
+/* Mobile: <= 768px */
+@media (max-width: 768px) {
+  .main-layout {
+    flex-direction: column;
+  }
+  .main-layout .ant-layout-sider {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 1000;
+    width: 260px !important;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+  .main-layout .ant-layout-sider-mobile-open {
+    transform: translateX(0);
+  }
+  .main-layout .ant-layout-header {
+    padding: 0 12px !important;
+  }
+  .main-layout .ant-layout-content {
+    margin: 12px !important;
+  }
+}
+
+/* Small mobile: <= 480px */
+@media (max-width: 480px) {
+  .main-layout .ant-layout-content {
+    margin: 8px !important;
+  }
+  .login-card {
+    margin: 8px !important;
+    width: calc(100vw - 16px) !important;
+  }
+}

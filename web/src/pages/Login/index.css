@@ -3,30 +3,36 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0a0e17;
+  background: var(--ice-bg-primary);
   position: relative;
   overflow: hidden;
+  padding: 16px;
+  transition: background 0.3s ease;
 }
 
 .login-card {
-  background: rgba(17, 24, 39, 0.92) !important;
+  background: var(--ice-bg-card) !important;
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(0, 212, 255, 0.12) !important;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--ice-border) !important;
+  box-shadow: 0 8px 40px var(--ice-shadow-lg);
   padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  transition: background 0.3s ease, border-color 0.3s ease;
 }
 
 .login-btn {
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.3), rgba(0, 255, 213, 0.15)) !important;
-  border: 1px solid rgba(0, 212, 255, 0.4) !important;
-  color: #e8f4f8 !important;
+  background: var(--ice-primary) !important;
+  border: 1px solid var(--ice-primary) !important;
+  color: var(--ice-text-inverse) !important;
   font-weight: 600;
+  transition: all 0.2s ease;
 }
 
 .login-btn:hover {
-  background: linear-gradient(135deg, rgba(0, 212, 255, 0.5), rgba(0, 255, 213, 0.25)) !important;
-  border-color: #00d4ff !important;
-  box-shadow: 0 0 20px rgba(0, 212, 255, 0.2) !important;
+  background: var(--ice-primary-dark) !important;
+  border-color: var(--ice-primary-dark) !important;
+  box-shadow: 0 0 20px var(--ice-glow);
 }
 
 .login-card .ant-tabs-nav {
@@ -34,39 +40,49 @@
 }
 
 .ant-tabs-tab {
-  color: #8899aa !important;
+  color: var(--ice-text-secondary) !important;
 }
 
 .ant-tabs-tab-active .ant-tabs-tab-btn {
-  color: #00d4ff !important;
+  color: var(--ice-primary) !important;
 }
 
 .ant-tabs-ink-bar {
-  background: #00d4ff !important;
+  background: var(--ice-primary) !important;
 }
 
 .login-card .ant-form-item-label > label {
-  color: #8899aa !important;
+  color: var(--ice-text-primary) !important;
 }
 
 .login-card .ant-input-affix-wrapper {
-  background: rgba(17, 24, 39, 0.85) !important;
-  border: 1px solid rgba(0, 212, 255, 0.12) !important;
-  color: #e8f4f8 !important;
+  background: var(--ice-bg-card) !important;
+  border: 1px solid var(--ice-border) !important;
+  color: var(--ice-text-primary) !important;
+  transition: border-color 0.2s ease;
 }
 
 .login-card .ant-input-affix-wrapper:focus,
 .login-card .ant-input-affix-wrapper-focused {
-  border-color: #00d4ff !important;
-  box-shadow: 0 0 0 2px rgba(0, 212, 255, 0.15) !important;
+  border-color: var(--ice-primary) !important;
+  box-shadow: 0 0 0 2px var(--ice-primary-10) !important;
 }
 
 .login-card .ant-input-affix-wrapper .ant-input {
-  color: #e8f4f8 !important;
+  color: var(--ice-text-primary) !important;
   background: transparent !important;
 }
 
 .login-card .ant-input-affix-wrapper .ant-input-prefix {
-  color: #00d4ff !important;
+  color: var(--ice-primary) !important;
   margin-right: 8px;
+}
+
+@media (max-width: 480px) {
+  .login-card {
+    padding: 16px;
+  }
+  .login-card h3 {
+    font-size: 18px !important;
+  }
 }

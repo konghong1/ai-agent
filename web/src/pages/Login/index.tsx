@@ -40,7 +40,7 @@ export default function Login() {
       <ParticleBg count={20} speed={0.15} opacity={0.2} />
       <Card className="login-card" bordered={false}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Title level={3} style={{ color: '#00d4ff', marginBottom: 4 }}>AI Agent 管理平台</Title>
+          <Title level={3} style={{ color: 'var(--ice-primary)', marginBottom: 4 }}>AI Agent 管理平台</Title>
           <Text type="secondary">智能体 · 知识库 · 一体化管理</Text>
         </div>
         <Tabs defaultActiveKey="login" items={[
@@ -78,3 +78,4 @@ export default function Login() {
     </div>
   )
 }
+
