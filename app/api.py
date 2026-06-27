@@ -141,7 +141,20 @@ def list_agent_threads(agent_id: int, current_user: User = Depends(get_current_u
     agent = db.scalar(select(AgentConfig).where(AgentConfig.id == agent_id, AgentConfig.user_id == current_user.id))
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found.")
+
     return list(db.scalars(select(Thread).where(Thread.agent_id == agent_id).order_by(Thread.updated_at.desc())))
+
+
+@router.post('/agents/{agent_id}/threads', response_model=ThreadRead)
+def create_agent_thread(agent_id: int, payload: ThreadCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    agent = db.scalar(select(AgentConfig).where(AgentConfig.id == agent_id, AgentConfig.user_id == current_user.id))
+    if not agent:
+        raise HTTPException(status_code=404, detail='Agent not found.')
+    thread = Thread(id=new_thread_id(), user_id=current_user.id, agent_id=agent.id, title=payload.title)
+    db.add(thread)
+    db.commit()
+    db.refresh(thread)
+    return thread
 
 # Threads & Messages
 # ============================================================
@@ -164,6 +177,16 @@ def create_thread(payload: ThreadCreate, current_user: User = Depends(get_curren
     db.commit()
     db.refresh(thread)
     return thread
+
+
+
+@router.delete("/threads/{thread_id}", status_code=204)
+def delete_thread(thread_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    thread = db.scalar(select(Thread).where(Thread.id == thread_id, Thread.user_id == current_user.id))
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found.")
+    db.delete(thread)
+    db.commit()
 
 
 @router.get("/threads/{thread_id}/messages", response_model=list[MessageRead])

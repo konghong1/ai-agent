@@ -80,8 +80,10 @@ export default function App() {
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
-            <Route path="agents" element={<AgentList />} />
-            <Route path="agents/:id" element={<AgentDetail />} />
+            {/* Agent 聊天页面 */}
+            <Route path="agents/chat" element={<AgentDetail />} />
+            {/* Agent 管理页面 */}
+            <Route path="agents/manage" element={<AgentList />} />
             <Route path="knowledge-bases" element={<KnowledgeBase />} />
             <Route path="knowledge-bases/:id" element={<KBDetail />} />
             <Route path="users" element={<UserManagement />} />

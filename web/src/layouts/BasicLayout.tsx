@@ -15,11 +15,19 @@ const { Text } = Typography
 
 const menuItems = [
   { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
-  { key: '/agents', icon: <RobotOutlined />, label: 'Agent 目录' },
+  {
+    key: '/agents',
+    icon: <RobotOutlined />,
+    label: 'Agent',
+    children: [
+      { key: '/agents/chat', label: '💬 聊天' },
+      { key: '/agents/manage', label: '⚙️ 管理' },
+      { key: '/mcp-servers', label: 'MCP', icon: <LinkOutlined /> },
+      { key: '/skills', label: 'Skill', icon: <ThunderboltOutlined /> },
+    ],
+  },
   { key: '/knowledge-bases', icon: <BookOutlined />, label: '知识库' },
   { key: '/users', icon: <TeamOutlined />, label: '用户管理' },
-  { key: '/mcp-servers', icon: <LinkOutlined />, label: 'MCP 管理' },
-  { key: '/skills', icon: <ThunderboltOutlined />, label: 'Skill 管理' },
   { key: '/settings', icon: <SettingOutlined />, label: '系统设置' },
 ]
 
@@ -76,7 +84,6 @@ export default function BasicLayout() {
               onClick={toggleCollapsed} style={{ color: 'var(--ice-text-primary)', fontSize: 16, padding: '4px' }} />
           </Space>
           <Space style={{ gap: 12 }}>
-            {/* Dark/Light toggle next to user */}
             <Button type="text" icon={darkMode ? <SunOutlined /> : <MoonOutlined />}
               onClick={toggleDarkMode} title={darkMode ? '切换到亮色模式' : '切换到深色模式'}
               style={{ color: 'var(--ice-text-primary)', fontSize: 16, padding: '4px' }} />

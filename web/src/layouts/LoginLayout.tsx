@@ -1,6 +1,7 @@
-﻿import { ParticleBg } from '@/components/ParticleBg'
+﻿import { ReactNode } from 'react'
+import { ParticleBg } from '@/components/ParticleBg'
 
-export default function LoginLayout({ children }: { children: React.ReactNode }) {
+export default function LoginLayout({ children }: { children: ReactNode }) {
   return (
     <div style={{
       height: '100vh',
