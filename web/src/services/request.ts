@@ -5,6 +5,11 @@ function getToken(): string | null {
   return useAuthStore.getState().token
 }
 
+async function jsonSafe(res: Response): Promise<any> {
+  const text = await res.text()
+  return text ? JSON.parse(text) : null
+}
+
 export async function request<T = any>(
   path: string,
   options: RequestInit = {},
@@ -31,12 +36,13 @@ export async function request<T = any>(
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || 'Request failed')
+    const err = await jsonSafe(res)
+    throw new Error(err?.detail || 'Request failed')
   }
 
   if (res.status === 204) return null as T
-  return res.json()
+  const data = await jsonSafe(res)
+  return data as T
 }
 
 export function get<T = any>(path: string): Promise<T> {
@@ -74,8 +80,8 @@ export function upload<T = any>(path: string, formData: FormData): Promise<T> {
       throw new Error('Unauthorized')
     }
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.detail || 'Upload failed')
+      const err = await jsonSafe(res)
+      throw new Error(err?.detail || 'Upload failed')
     }
     return res.json()
   })

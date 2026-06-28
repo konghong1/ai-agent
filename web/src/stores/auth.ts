@@ -18,6 +18,11 @@ interface AuthState {
   setUser: (user: User) => void
 }
 
+async function parseJsonSafe(res: Response): Promise<any> {
+  const text = await res.text()
+  return text ? JSON.parse(text) : {}
+}
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -32,10 +37,10 @@ export const useAuthStore = create<AuthState>()(
           body: JSON.stringify({ email, password }),
         })
         if (!res.ok) {
-          const err = await res.json()
+          const err = await parseJsonSafe(res)
           throw new Error(err.detail || 'Login failed')
         }
-        const data = await res.json()
+        const data = await parseJsonSafe(res)
         set({
           token: data.access_token,
           user: data.user,
@@ -50,10 +55,10 @@ export const useAuthStore = create<AuthState>()(
           body: JSON.stringify(data),
         })
         if (!res.ok) {
-          const err = await res.json()
+          const err = await parseJsonSafe(res)
           throw new Error(err.detail || 'Registration failed')
         }
-        const result = await res.json()
+        const result = await parseJsonSafe(res)
         set({
           token: result.access_token,
           user: result.user,
