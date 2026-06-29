@@ -1,4 +1,4 @@
-﻿import { ReactNode } from 'react'
+import { ReactNode } from 'react'
 import { ParticleBg } from '@/components/ParticleBg'
 
 export default function LoginLayout({ children }: { children: ReactNode }) {

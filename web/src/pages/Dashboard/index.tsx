@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Row, Col, Typography } from 'antd'
 import { RobotOutlined, BookOutlined, FileTextOutlined, TeamOutlined, SettingOutlined, ArrowUpOutlined } from '@ant-design/icons'

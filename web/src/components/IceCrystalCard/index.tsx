@@ -1,4 +1,4 @@
-﻿import React, { useRef, type CSSProperties, useState } from 'react'
+import React, { useRef, type CSSProperties, useState } from 'react'
 import { Card, type CardProps } from 'antd'
 import { motion } from 'framer-motion'
 

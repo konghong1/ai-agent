@@ -1,4 +1,4 @@
-﻿/* =========================================================
+/* =========================================================
    CSS Variables — 4 Themes × Light/Dark
    ========================================================= */
 
@@ -278,5 +278,8 @@ body {
   50% { transform: translateY(-6px); }
 }
 
-
-
+/* AgentDetail full-height layout */
+.agent-detail-container {
+  flex: 1;
+  min-height: 0;
+}

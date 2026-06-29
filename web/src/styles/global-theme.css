@@ -1,7 +1,11 @@
-﻿/* Ant Design overrides using CSS variables */
+/* Ant Design overrides using CSS variables */
 html, body, #root {
   background: var(--ice-bg-primary) !important;
   color: var(--ice-text-primary) !important;
+  overflow: hidden !important;
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 .ant-card {
   background: var(--ice-bg-card) !important;

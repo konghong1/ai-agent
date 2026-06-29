@@ -1,5 +1,4 @@
-﻿import { useEffect, useState, useRef, useCallback } from "react"
-import { useLocation } from "react-router-dom"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { Typography, Input, Button, message, Modal, Avatar } from "antd"
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined,
@@ -41,7 +40,6 @@ const themeColors: Record<string, { primary: string; accent: string }> = {
 
 export default function AgentDetail() {
   // navigate removed - using location for active state
-  const location = useLocation()
   const theme = useLayoutStore((s) => s.theme)
   const [agents, setAgents] = useState<Agent[]>([])
   const [activeAgentId, setActiveAgentId] = useState<number | null>(null)
