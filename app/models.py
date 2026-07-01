@@ -28,8 +28,13 @@ class User(TimestampMixin, Base):
     role: Mapped[str] = mapped_column(String(40), default="user")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    chunking_strategy: Mapped[str] = mapped_column(String(80), default="recursive_character")
+    chunking_config: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+    rag_config: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+
     agents: Mapped[list["AgentConfig"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     knowledge_bases: Mapped[list["KnowledgeBase"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    providers: Mapped[list["Provider"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
 
 # ============================================================
@@ -136,6 +141,46 @@ class AgentKnowledgeBase(Base):
 
 
 # ============================================================
+
+
+# ============================================================
+# Provider & ProviderModel (AI Provider Management)
+# ============================================================
+
+class Provider(TimestampMixin, Base):
+    """An AI provider (e.g. OpenAI, Azure, SiliconFlow)."""
+    __tablename__ = "providers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    base_url: Mapped[str] = mapped_column(String(500), default="")
+    api_key: Mapped[str] = mapped_column(String(500), default="")
+    provider_type: Mapped[str] = mapped_column(String(40), default="openai-compatible")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    user: Mapped[User] = relationship(back_populates="providers")
+    models: Mapped[list["ProviderModel"]] = relationship(back_populates="provider", cascade="all, delete-orphan")
+
+
+class ProviderModel(TimestampMixin, Base):
+    """A model registered under a provider (chat or embedding)."""
+    __tablename__ = "provider_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    provider_id: Mapped[int] = mapped_column(ForeignKey("providers.id", ondelete="CASCADE"), index=True)
+    model_name: Mapped[str] = mapped_column(String(200))
+    model_type: Mapped[str] = mapped_column(String(40))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default_chat: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_default_embedding: Mapped[bool] = mapped_column(Boolean, default=False)
+    description: Mapped[str] = mapped_column(String(300), default="")
+
+    provider: Mapped[Provider] = relationship(back_populates="models")
+
+    __table_args__ = (UniqueConstraint("provider_id", "model_name", name="uq_provider_model"),)
+
 # SystemSetting (Task 3)
 # ============================================================
 
@@ -174,7 +219,7 @@ class KnowledgeBase(TimestampMixin, Base):
 
 
 class KBFolder(TimestampMixin, Base):
-    """Recursive folder inside a knowledge base – forms a tree."""
+    """Recursive folder inside a knowledge base 鈥?forms a tree."""
     __tablename__ = "kb_folders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -265,4 +310,5 @@ class RetrievalLog(Base):
     avg_score: Mapped[float]
     took_ms: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
 

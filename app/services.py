@@ -519,7 +519,7 @@ def new_thread_id() -> str:
 
 
 # ============================================================
-# RAG Core Services (RAG 增强核心)
+# RAG Core Services (RAG 澧炲己鏍稿績)
 # ============================================================
 
 class QueryRewriter:
@@ -528,7 +528,7 @@ class QueryRewriter:
     @staticmethod
     def rewrite(query: str, kb_name: str = "") -> str:
         """Simple rule-based query rewriting."""
-        stop_words = {"怎么", "如何", "什么", "为什么", "呢", "吗", "的", "了", "是", "在", "有", "我", "你", "他", "她", "它", "们", "这", "那", "个", "一", "不", "也", "都", "太", "很", "非常", "比较", "有点", "稍微", "大概", "大约", "也许", "可能", "应该", "可以", "能够", "需要", "必须", "请", "帮", "给", "让", "叫", "把", "被", "从", "向", "朝", "往", "对", "对于", "关于", "至于", "根据", "通过", "经过", "按照", "由于", "因为", "所以", "但是", "可是", "然而", "不过", "虽然", "尽管", "如果", "假如", "只要", "无论", "不管", "即使", "既然", "于是", "因此", "因而", "所以", "总之", "总而言之", "综上所述", "也就是说", "换句话说", "例如", "比如", "譬如", "像", "如同", "仿佛", "似的", "一样", "等等", "之类", "而言", "来说", "而言", "来说", "的话", "方面", "起来", "下来", "出来", "进来", "上去", "下来", "过来", "回去", "回来", "出去", "进去", "起来", "下来"}
+        stop_words = {"怎么", "如何", "什么", "为什么", "呢", "吧", "的", "人", "是", "在", "有", "我", "你", "他", "好", "它", "以", "还", "那", "中", "一", "上", "不", "都", "大", "得", "跟", "下", "对", "关于", "对于", "基于", "根据", "通过", "经过", "按照", "由于", "因为", "所以", "但是", "可是", "然而", "不过", "虽然", "尽管", "如果", "假如", "只要", "无论", "不管", "即使", "既然", "于是", "因此", "总之", "总而言之", "综上所述", "也就是说", "换句话说", "例如", "比如", "诸如", "像", "如同", "仿佛", "似的", "一样", "等等", "之类", "而言", "来说", "的话", "方面", "起来", "下来", "出来", "进来", "上去", "下去", "过来", "回去", "回来", "出去", "进去", "起来", "下来"}
         words = [w for w in query if w not in stop_words]
         return ''.join(words) if words else query
 
@@ -701,7 +701,7 @@ class ContextBuilder:
             # Approximate token count
             token_count = len(content) // 3.5
             if token_count > budget:
-                content = content[:budget * 3] + "... [内容过长，已截断]"
+                content = content[:budget * 3] + "... [鍐呭杩囬暱锛屽凡鎴柇]"
                 token_count = budget
             budget -= token_count
             if budget <= 0:
@@ -711,7 +711,7 @@ class ContextBuilder:
                 doc_name = meta.get('document_name', 'Unknown')
                 score_pct = hit.get('score', 0)
                 folder_path = meta.get('folder_path', '')
-                source_tag = f"[来源: {doc_name}, 相关度: {score_pct:.0%}]"
+                source_tag = f"[鏉ユ簮: {doc_name}, 鐩稿叧搴? {score_pct:.0%}]"
                 if folder_path:
                     source_tag += f" ({folder_path})"
             context_parts.append(f"{source_tag}\n{content}\n")
@@ -722,26 +722,179 @@ class ContextBuilder:
                 'rerank_score': hit.get('rerank_score'),
                 'hit_source': hit.get('hit_source', 'vector'),
             })
-        context = "\n=== 检索到的相关知识 ===\n\n" + "".join(context_parts)
+        context = "\n=== 妫€绱㈠埌鐨勭浉鍏崇煡璇?===\n\n" + "".join(context_parts)
         return context, sources
 
 
 # RAG System Prompt
-RAG_SYSTEM_PROMPT = """你是一个基于知识库的智能问答助手。
+RAG_SYSTEM_PROMPT = """浣犳槸涓€涓熀浜庣煡璇嗗簱鐨勬櫤鑳介棶绛斿姪鎵嬨€?
+## 鍥炵瓟瑙勫垯
 
-## 回答规则
+1. **浼樺厛浣跨敤妫€绱㈠埌鐨勭煡璇?*: 褰撴彁渚涗簡妫€绱㈢粨鏋滄椂锛屽繀椤诲熀浜庤繖浜涘唴瀹瑰洖绛旈棶棰?2. **蹇呴』寮曠敤鏉ユ簮**: 姣忎釜鍏抽敭淇℃伅鍚庨潰鏍囨敞 [鏉ユ簮: 鏂囦欢鍚峕
+3. **涓嶇煡閬撳氨璇翠笉鐭ラ亾**: 濡傛灉妫€绱㈢粨鏋滀腑娌℃湁鐩稿叧淇℃伅锛屾槑纭憡鐭ョ敤鎴?4. **涓嶈缂栭€犵瓟妗?*: 鍗充娇浣犺寰楃煡閬撶瓟妗堬紝涔熻浠ユ绱㈢粨鏋滀负鍑?5. **缁煎悎澶氭潵婧?*: 澶氫釜鏂囨。鏈夌浉鍏充俊鎭椂锛岀患鍚堝悗缁欏嚭瀹屾暣鍥炵瓟
+6. **鎸囧嚭鐭涚浘**: 涓嶅悓鏂囨。鏈夊啿绐佷俊鎭椂锛屽憡鐭ョ敤鎴峰苟鍒楀嚭鍚勬柟璇存硶
 
-1. **优先使用检索到的知识**: 当提供了检索结果时，必须基于这些内容回答问题
-2. **必须引用来源**: 每个关键信息后面标注 [来源: 文件名]
-3. **不知道就说不知道**: 如果检索结果中没有相关信息，明确告知用户
-4. **不要编造答案**: 即使你觉得知道答案，也要以检索结果为准
-5. **综合多来源**: 多个文档有相关信息时，综合后给出完整回答
-6. **指出矛盾**: 不同文档有冲突信息时，告知用户并列出各方说法
+## 鍥炵瓟椋庢牸
 
-## 回答风格
-
-- 结构化，条理清晰
-- 适当使用 Markdown 格式
-- 引用具体数据和事实
-- 如果问题超出知识库范围，告知用户并尝试用通用知识回答
+- 缁撴瀯鍖栵紝鏉＄悊娓呮櫚
+- 閫傚綋浣跨敤 Markdown 鏍煎紡
+- 寮曠敤鍏蜂綋鏁版嵁鍜屼簨瀹?- 濡傛灉闂瓒呭嚭鐭ヨ瘑搴撹寖鍥达紝鍛婄煡鐢ㄦ埛骞跺皾璇曠敤閫氱敤鐭ヨ瘑鍥炵瓟
 """
+
+
+# ============================================================
+# Provider Management Service
+# ============================================================
+
+class ProviderService:
+    @staticmethod
+    def create_provider(db: Session, user_id: int, name: str, base_url: str = "",
+                        api_key: str = "", provider_type: str = "openai-compatible",
+                        enabled: bool = True, is_default: bool = False) -> "Provider":
+        from app.models import Provider
+        if is_default:
+            db.execute(
+                select(Provider).where(
+                    Provider.user_id == user_id, Provider.is_default == True
+                ).update({"is_default": False})
+            )
+        provider = Provider(
+            user_id=user_id, name=name, base_url=base_url, api_key=api_key,
+            provider_type=provider_type, enabled=enabled, is_default=is_default,
+        )
+        db.add(provider)
+        db.commit()
+        db.refresh(provider)
+        return provider
+
+    @staticmethod
+    def get_provider(db: Session, provider_id: int, user_id: int) -> "Provider | None":
+        from app.models import Provider
+        return db.scalar(
+            select(Provider).where(Provider.id == provider_id, Provider.user_id == user_id)
+        )
+
+    @staticmethod
+    def list_providers(db: Session, user_id: int) -> list["Provider"]:
+        from app.models import Provider
+        return list(db.scalars(
+            select(Provider).where(Provider.user_id == user_id).order_by(Provider.created_at)
+        ).all())
+
+    @staticmethod
+    def update_provider(db: Session, provider: "Provider", **kwargs) -> "Provider":
+        for k, v in kwargs.items():
+            if v is not None and hasattr(provider, k):
+                if k == "is_default" and v:
+                    db.execute(
+                        select(Provider).where(
+                            Provider.user_id == provider.user_id,
+                            Provider.id != provider.id,
+                            Provider.is_default == True
+                        ).update({"is_default": False})
+                    )
+                setattr(provider, k, v)
+        db.commit()
+        db.refresh(provider)
+        return provider
+
+    @staticmethod
+    def delete_provider(db: Session, provider: "Provider") -> None:
+        db.delete(provider)
+        db.commit()
+
+    @staticmethod
+    def create_model(db: Session, provider_id: int, model_name: str, model_type: str,
+                     enabled: bool = True, is_default_chat: bool = False,
+                     is_default_embedding: bool = False, description: str = "") -> "ProviderModel":
+        from app.models import ProviderModel
+        if model_type == "chat" and is_default_chat:
+            db.execute(
+                select(ProviderModel).where(
+                    ProviderModel.provider_id == provider_id,
+                    ProviderModel.model_type == "chat",
+                    ProviderModel.is_default_chat == True
+                ).update({"is_default_chat": False})
+            )
+        if model_type == "embedding" and is_default_embedding:
+            db.execute(
+                select(ProviderModel).where(
+                    ProviderModel.provider_id == provider_id,
+                    ProviderModel.model_type == "embedding",
+                    ProviderModel.is_default_embedding == True
+                ).update({"is_default_embedding": False})
+            )
+        pm = ProviderModel(
+            provider_id=provider_id, model_name=model_name, model_type=model_type,
+            enabled=enabled, is_default_chat=is_default_chat,
+            is_default_embedding=is_default_embedding, description=description,
+        )
+        db.add(pm)
+        db.commit()
+        db.refresh(pm)
+        return pm
+
+    @staticmethod
+    def get_provider_models(db: Session, provider_id: int) -> list["ProviderModel"]:
+        from app.models import ProviderModel
+        return list(db.scalars(
+            select(ProviderModel).where(
+                ProviderModel.provider_id == provider_id
+            ).order_by(ProviderModel.model_type, ProviderModel.model_name)
+        ).all())
+
+    @staticmethod
+    def update_model(db: Session, model: "ProviderModel", **kwargs) -> "ProviderModel":
+        for k, v in kwargs.items():
+            if v is not None and hasattr(model, k):
+                setattr(model, k, v)
+        db.commit()
+        db.refresh(model)
+        return model
+
+    @staticmethod
+    def delete_model(db: Session, model: "ProviderModel") -> None:
+        db.delete(model)
+        db.commit()
+
+    @staticmethod
+    def get_default_chat_model(db: Session, provider_id: int) -> str | None:
+        from app.models import ProviderModel
+        return db.scalar(
+            select(ProviderModel.model_name).where(
+                ProviderModel.provider_id == provider_id,
+                ProviderModel.model_type == "chat",
+                ProviderModel.is_default_chat == True,
+                ProviderModel.enabled == True,
+            )
+        )
+
+    @staticmethod
+    def get_default_embedding_model(db: Session, provider_id: int) -> str | None:
+        from app.models import ProviderModel
+        return db.scalar(
+            select(ProviderModel.model_name).where(
+                ProviderModel.provider_id == provider_id,
+                ProviderModel.model_type == "embedding",
+                ProviderModel.is_default_embedding == True,
+                ProviderModel.enabled == True,
+            )
+        )
+
+    @staticmethod
+    def get_default_model(db: Session, user_id: int) -> "DefaultModelResponse":
+        from app.models import Provider, ProviderModel
+        default_provider = db.scalar(
+            select(Provider).where(Provider.user_id == user_id, Provider.is_default == True)
+        )
+        if not default_provider:
+            return DefaultModelResponse(chat_model=None, embedding_model=None, provider_id=None, provider_name=None)
+        chat_model = ProviderService.get_default_chat_model(db, default_provider.id)
+        embedding_model = ProviderService.get_default_embedding_model(db, default_provider.id)
+        return DefaultModelResponse(
+            chat_model=chat_model,
+            embedding_model=embedding_model,
+            provider_id=default_provider.id,
+            provider_name=default_provider.name,
+        )
+

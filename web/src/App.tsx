@@ -15,6 +15,7 @@ import UserManagement from '@/pages/UserManagement'
 import MCPManagement from '@/pages/MCPManagement'
 import SkillManagement from '@/pages/SkillManagement'
 import SettingsPage from '@/pages/Settings'
+import ProviderManagement from '@/pages/ProviderManagement'
 import './styles/variables.css'
 import './styles/global-theme.css'
 
@@ -89,6 +90,7 @@ export default function App() {
             <Route path="users" element={<UserManagement />} />
             <Route path="mcp-servers" element={<MCPManagement />} />
             <Route path="skills" element={<SkillManagement />} />
+            <Route path="providers" element={<ProviderManagement />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

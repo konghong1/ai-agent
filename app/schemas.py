@@ -331,6 +331,84 @@ class SystemSettingRead(BaseModel):
 # RAG Configuration Schemas
 # ============================================================
 
+
+
+# ============================================================
+# Provider Management Schemas
+# ============================================================
+
+class ProviderModelCreate(BaseModel):
+    model_name: str = Field(..., min_length=1, max_length=200)
+    model_type: str = Field(..., pattern="^(chat|embedding)$")
+    enabled: bool = True
+    is_default_chat: bool = False
+    is_default_embedding: bool = False
+    description: str = ""
+
+
+class ProviderModelUpdate(BaseModel):
+    model_name: str | None = Field(default=None, min_length=1, max_length=200)
+    model_type: str | None = None
+    enabled: bool | None = None
+    is_default_chat: bool | None = None
+    is_default_embedding: bool | None = None
+    description: str | None = None
+
+
+class ProviderModelRead(BaseModel):
+    id: int
+    provider_id: int
+    model_name: str
+    model_type: str
+    enabled: bool
+    is_default_chat: bool
+    is_default_embedding: bool
+    description: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProviderCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=120)
+    base_url: str = ""
+    api_key: str = ""
+    provider_type: str = "openai-compatible"
+    enabled: bool = True
+    is_default: bool = False
+
+
+class ProviderUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    base_url: str | None = None
+    api_key: str | None = None
+    provider_type: str | None = None
+    enabled: bool | None = None
+    is_default: bool | None = None
+
+
+class ProviderRead(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    base_url: str
+    api_key: str
+    provider_type: str
+    enabled: bool
+    is_default: bool
+    created_at: datetime
+    updated_at: datetime
+    models: list[ProviderModelRead] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DefaultModelResponse(BaseModel):
+    chat_model: str | None
+    embedding_model: str | None
+    provider_id: int | None
+    provider_name: str | None
+
 class RAGConfigUpdate(BaseModel):
     hybrid_search: bool | None = None
     rerank_enabled: bool | None = None
@@ -373,3 +451,4 @@ class KBStatsResponse(BaseModel):
     avg_chunks_per_doc: float
     status_breakdown: dict
     hot_queries: list[str]
+

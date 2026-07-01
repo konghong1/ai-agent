@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 
-from app.models import AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBChunk, Message, Thread, RetrievalLog, Thread, RetrievalLog
+from app.models import AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBChunk, Message, Provider, ProviderModel, Thread, RetrievalLog
 from app.services import new_thread_id, HybridRetriever, ContextBuilder, RAG_SYSTEM_PROMPT, KnowledgeBaseService
 from app.settings import get_settings
 from app.tools import get_tools
@@ -36,13 +36,39 @@ def _extract_blocks(text: str) -> tuple[str, dict]:
     return text_result.strip(), blocks or {}
 
 
-def build_agent(agent_config: AgentConfig):
+def build_agent(agent_config: AgentConfig, user_id: int | None = None):
+    """Build LLM using provider config if available, falling back to settings."""
+    from app.models import Provider
+    from sqlalchemy import select
+    from app.core.database import SessionLocal
+
     settings = get_settings()
+    api_key = settings.openai_api_key
+    base_url = settings.openai_base_url
+    model_name = agent_config.model_name or settings.openai_model
+
+    if user_id:
+        db = SessionLocal()
+        try:
+            # Try to find the default provider for this user
+            provider = db.scalar(
+                select(Provider).where(
+                    Provider.user_id == user_id,
+                    Provider.enabled == True,
+                    Provider.is_default == True,
+                )
+            )
+            if provider:
+                api_key = provider.api_key or api_key
+                base_url = provider.base_url or base_url
+        finally:
+            db.close()
+
     llm = ChatOpenAI(
-        model=agent_config.model_name or settings.openai_model,
+        model=model_name,
         temperature=agent_config.temperature,
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
+        api_key=api_key,
+        base_url=base_url,
     )
     return create_agent(
         model=llm,
@@ -153,11 +179,28 @@ def ask_agent(db: Session, user_id: int, agent_id: int, message: str, thread_id:
         })
 
     # Call Agent
+    # Re-resolve provider config for the chat LLM
+    chat_api_key = settings.openai_api_key
+    chat_base_url = settings.openai_base_url
+    if user_id:
+        db2 = SessionLocal()
+        try:
+            prov2 = db2.scalar(
+                select(Provider).where(
+                    Provider.user_id == user_id, Provider.enabled == True, Provider.is_default == True
+                )
+            )
+            if prov2:
+                chat_api_key = prov2.api_key or chat_api_key
+                chat_base_url = prov2.base_url or chat_base_url
+        finally:
+            db2.close()
+
     llm = ChatOpenAI(
         model=agent_config.model_name or settings.openai_model,
         temperature=agent_config.temperature,
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
+        api_key=chat_api_key,
+        base_url=chat_base_url,
     )
     agent = create_agent(model=llm, tools=get_tools(), system_prompt="", name=f"agent-{agent_config.id}")
 

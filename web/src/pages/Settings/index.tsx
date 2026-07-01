@@ -14,22 +14,28 @@ export default function SettingsPage() {
   const [form] = Form.useForm()
   const { darkMode, toggleDarkMode, theme, setTheme } = useLayoutStore()
 
-  const fetch = async () => {
-    try { const r = await fetch('/api/settings', { headers: authHeaders() }); setSettings(await r.json()) } catch {}
+  const fetchSettings = async () => {
+    try {
+      const r = await fetch('/api/settings', { headers: authHeaders() })
+      if (r.ok) {
+        const data = await r.json()
+        setSettings(Array.isArray(data) ? data : [])
+      }
+    } catch {}
   }
-  useEffect(() => { fetch() }, [])
+  useEffect(() => { fetchSettings() }, [])
 
   const handleSave = async (values: any) => {
     try {
       const url = editing ? `/api/settings/${editing.key}` : '/api/settings'
       const method = editing ? 'PATCH' : 'POST'
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(values) })
-      if (res.ok) { message.success('保存成功'); setModalOpen(false); fetch() }
+      if (res.ok) { message.success('保存成功'); setModalOpen(false); fetchSettings() }
     } catch (e: any) { message.error(e.message) }
   }
 
   const handleDelete = (key: string) => {
-    fetch(`/api/settings/${key}`, { method: 'DELETE', headers: authHeaders() }).then(() => fetch())
+    fetch(`/api/settings/${key}`, { method: 'DELETE', headers: authHeaders() }).then(() => fetchSettings())
   }
 
   const columns = [

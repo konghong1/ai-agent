@@ -30,7 +30,7 @@ export default function AgentList() {
   const primaryColor = themeColorMap[theme] || '#22C55E'
 
   const fetchAgents = useCallback(async () => {
-    try { const res = await fetch('/api/agents', { headers: authHeaders() }); setAgents(await res.json()) } catch {}
+    try { const res = await fetch("/api/agents", { headers: authHeaders() }); if (!res.ok) { setAgents([]); return }; setAgents(await res.json()) } catch {}
   }, [])
 
   useEffect(() => { fetchAgents() }, [fetchAgents])

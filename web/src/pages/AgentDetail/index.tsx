@@ -88,9 +88,13 @@ export default function AgentDetail() {
 
   useEffect(() => {
     fetch("/api/agents", { headers: authHeaders() })
-      .then(r => r.json())
+      .then(async r => {
+        if (!r.ok) return [];
+        const data = await r.json();
+        return Array.isArray(data) ? data : [];
+      })
       .then(setAgents)
-      .catch(() => {})
+      .catch(() => [])
       .finally(() => setLoading(false))
   }, [])
 

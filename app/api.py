@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
-from sqlalchemy import select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.agent import ask_agent
@@ -11,7 +11,7 @@ from app.deps import get_current_user
 from app.models import (
     KBFeedback, RetrievalLog,
 AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBFolder, KBDocument,
-Message, Skill, Thread, User, McpServer, SystemSetting,
+Message, Provider, ProviderModel, Skill, Thread, User, McpServer, SystemSetting,
 )
 from app.schemas import (
     KBStatsResponse,
@@ -27,11 +27,14 @@ ThreadCreate, ThreadRead,
 TokenResponse, UserCreate, UserLogin, UserRead,
 UserUpdate as UserUpdateSchema, UserManagementRead,
 SystemSettingCreate, SystemSettingRead, SystemSettingUpdate,
+    ProviderCreate, ProviderRead, ProviderUpdate,
+    ProviderModelCreate, ProviderModelRead, ProviderModelUpdate,
+    DefaultModelResponse,
 )
 from app.services import (
     HybridRetriever, ContextBuilder, RAG_SYSTEM_PROMPT, QueryRewriter,
 DEFAULT_SYSTEM_PROMPT, authenticate_user, create_user, new_thread_id,
-KnowledgeBaseService, UserService, SystemSettingService,
+KnowledgeBaseService, UserService, SystemSettingService, ProviderService,
 )
 from app.settings import get_settings
 
@@ -209,6 +212,86 @@ def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), d
 
 
 # ============================================================
+# ============================================================
+# Provider Management
+# ============================================================
+@router.get("/providers", response_model=list[ProviderRead])
+def list_providers(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Provider]:
+    providers = db.scalars(
+        select(Provider).where(Provider.user_id == current_user.id).order_by(Provider.created_at)
+    ).all()
+    result = []
+    for p in providers:
+        pm = ProviderRead.model_validate(p)
+        pm.models = db.scalars(
+            select(ProviderModel).where(
+                ProviderModel.provider_id == p.id
+            ).order_by(ProviderModel.model_type, ProviderModel.model_name)
+        ).all()
+        result.append(pm)
+    return result
+@router.post("/providers", response_model=ProviderRead)
+def create_provider(payload: ProviderCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Provider:
+    provider = Provider(user_id=current_user.id, **payload.model_dump())
+    db.add(provider)
+    db.flush()
+    if payload.is_default:
+        db.execute(
+            select(Provider).where(
+                Provider.user_id == current_user.id, Provider.is_default == True
+            ).update({"is_default": False})
+        )
+    db.commit()
+    db.refresh(provider)
+    return provider
+@router.patch("/providers/{provider_id}", response_model=ProviderRead)
+def update_provider(provider_id: int, payload: ProviderUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Provider:
+    provider = db.scalar(select(Provider).where(Provider.id == provider_id, Provider.user_id == current_user.id))
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    data = payload.model_dump(exclude_unset=True)
+    if "is_default" in data and data["is_default"]:
+        db.execute(
+            select(Provider).where(
+                Provider.user_id == current_user.id, Provider.id != provider_id, Provider.is_default == True
+            ).update({"is_default": False})
+        )
+    provider = ProviderService.update_provider(db, provider, **data)
+    return provider
+@router.delete("/providers/{provider_id}", status_code=204)
+def delete_provider(provider_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    provider = db.scalar(select(Provider).where(Provider.id == provider_id, Provider.user_id == current_user.id))
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    ProviderService.delete_provider(db, provider)
+# ---- Provider Models ----
+@router.get("/providers/{provider_id}/models", response_model=list[ProviderModelRead])
+def list_provider_models(provider_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[ProviderModel]:
+    provider = db.scalar(select(Provider).where(Provider.id == provider_id, Provider.user_id == current_user.id))
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    return ProviderService.get_provider_models(db, provider_id)
+@router.post("/providers/{provider_id}/models", response_model=ProviderModelRead)
+def create_provider_model(provider_id: int, payload: ProviderModelCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ProviderModel:
+    provider = db.scalar(select(Provider).where(Provider.id == provider_id, Provider.user_id == current_user.id))
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    return ProviderService.create_model(db, provider_id=provider_id, **payload.model_dump())
+@router.patch("/providers/{provider_id}/models/{model_id}", response_model=ProviderModelRead)
+def update_provider_model(provider_id: int, model_id: int, payload: ProviderModelUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ProviderModel:
+    model = db.scalar(select(ProviderModel).where(ProviderModel.id == model_id, ProviderModel.provider_id == provider_id))
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found.")
+    return ProviderService.update_model(db, model, **payload.model_dump(exclude_unset=True))
+@router.delete("/providers/{provider_id}/models/{model_id}", status_code=204)
+def delete_provider_model(provider_id: int, model_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    model = db.scalar(select(ProviderModel).where(ProviderModel.id == model_id, ProviderModel.provider_id == provider_id))
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found.")
+    ProviderService.delete_model(db, model)
+@router.get("/providers/default-model", response_model=DefaultModelResponse)
+def get_default_model(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> DefaultModelResponse:
+    return ProviderService.get_default_model(db, current_user.id)
 # MCP Servers
 # ============================================================
 
@@ -573,6 +656,3 @@ def update_kb_rag_config(
     db.commit()
     db.refresh(kb)
     return {"status": "ok", "rag_config": kb.rag_config}
-
-
-

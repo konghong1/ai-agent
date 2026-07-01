@@ -33,7 +33,7 @@ export default function KnowledgeBaseList() {
   const fetchKbs = async () => {
     try {
       const res = await fetch('/api/knowledge-bases', { headers: authHeaders() })
-      setKbs(await res.json())
+      setKbs(res.ok ? await res.json() : [])
     } catch {}
   }
 

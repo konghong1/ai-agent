@@ -17,7 +17,13 @@ export default function UserManagement() {
   const [form] = Form.useForm()
 
   const fetchUsers = async () => {
-    try { const r = await fetch('/api/users', { headers: authHeaders() }); setUsers(await r.json()) } catch {}
+    try {
+      const r = await fetch('/api/users', { headers: authHeaders() })
+      if (r.ok) {
+        const data = await r.json()
+        setUsers(Array.isArray(data) ? data : [])
+      }
+    } catch {}
   }
 
   useEffect(() => { fetchUsers() }, [])

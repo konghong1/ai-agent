@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+﻿import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeftOutlined, PlusOutlined, UploadOutlined, SearchOutlined, DeleteOutlined } from '@ant-design/icons'
 import { Typography, Form, Input, Button, Space, Table, Modal, Select, Tag, message, Row, Col, Tabs, Badge } from 'antd'
@@ -11,6 +11,18 @@ const { Text, Title } = Typography
 interface KBFolder { id: number; name: string; parent_id: number | null; children: KBFolder[]; document_count: number }
 interface KBDoc { id: number; original_filename: string; file_type: string; file_size: number; status: string; error_message: string | null; created_at: string }
 
+interface KB {
+  id: number; name: string; description: string; enabled: boolean
+  chunking_strategy: string; chunking_config: Record<string, unknown>; rag_config: Record<string, unknown>
+  embedding_model: string; created_at: string
+}
+
+const CHUNKING_LABELS: Record<string, string> = {
+  recursive_character: '递归字符分块（推荐）',
+  fixed_size: '固定大小分块',
+  hierarchical: '文档结构分块',
+}
+
 function flattenFolders(folders: KBFolder[]): KBFolder[] {
   const result: KBFolder[] = []
   const walk = (items: KBFolder[]) => items.forEach(f => { result.push(f); f.children && walk(f.children) })
@@ -22,7 +34,7 @@ export default function KBDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const theme = useLayoutStore((s) => s.theme)
-  const [kb, setKb] = useState<any>(null)
+  const [kb, setKb] = useState<KB | null>(null)
   const [folders, setFolders] = useState<KBFolder[]>([])
   const [activeFolderId, setActiveFolderId] = useState<number | null>(null)
   const [documents, setDocuments] = useState<KBDoc[]>([])
@@ -118,59 +130,48 @@ export default function KBDetail() {
   }
 
   const docColumns = [
-    { title: '文件名', dataIndex: 'original_filename', key: 'name',
-      render: (name: string, record: KBDoc) => (
-        <Space><span style={{ color: 'var(--ice-text-primary)' }}>{name}</span><Tag>{record.file_type}</Tag></Space>
-      )},
-    { title: '大小', dataIndex: 'file_size', key: 'size', width: 100, render: (s: number) => `${(s / 1024).toFixed(1)} KB` },
-    { title: '状态', dataIndex: 'status', key: 'status', width: 120, render: (s: string) => statusTag(s) },
-    { title: '创建时间', dataIndex: 'created_at', key: 'time', width: 180, render: (t: string) => new Date(t).toLocaleString('zh-CN') },
-    { title: '操作', key: 'action', width: 80, render: (_: any, r: KBDoc) => (
-      <Button type="text" danger icon={<DeleteOutlined />} size="small" onClick={() => handleDeleteDoc(r.id)} />
-    )}]
+    { title: '文件名', dataIndex: 'original_filename', key: 'name', width: 200 },
+    { title: '类型', dataIndex: 'file_type', key: 'type', width: 80 },
+    { title: '大小', dataIndex: 'file_size', key: 'size', width: 100,
+      render: (v: number) => (v / 1024).toFixed(1) + ' KB' },
+    { title: '状态', dataIndex: 'status', key: 'status', width: 100, render: (v: string) => statusTag(v) },
+    { title: '错误', dataIndex: 'error_message', key: 'error', ellipsis: true,
+      render: (v: string | null) => v || '-' },
+    { title: '操作', key: 'action', width: 80, render: (_: any, record: KBDoc) => (
+      <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => handleDeleteDoc(record.id)} />
+    )},
+  ]
 
-  const renderFolderTree = (items: KBFolder[], depth = 0) =>
-    items.map(f => (
-      <div key={f.id} style={{ paddingLeft: depth * 20, cursor: 'pointer', padding: '4px 8px', borderRadius: 4 }}
-        onClick={() => setActiveFolderId(f.id)}
-        onMouseEnter={(e) => { (e.target as HTMLElement).style.background = 'var(--ice-bg-hover)' }}
-        onMouseLeave={(e) => { (e.target as HTMLElement).style.background = 'transparent' }}>
-        <Space>
-          <span style={{ color: activeFolderId === f.id ? primaryColor : 'var(--ice-text-secondary)' }}>📁</span>
-          <Text style={{ color: 'var(--ice-text-primary)', fontWeight: activeFolderId === f.id ? 600 : 400 }}>{f.name}</Text>
-          {f.document_count > 0 && <Tag color="blue">{f.document_count}</Tag>}
-        </Space>
-        {f.children && renderFolderTree(f.children, depth + 1)}
-      </div>
-    ))
+  const cc = (kb?.chunking_config as Record<string, unknown>) || {}
+  const rc = (kb?.rag_config as Record<string, unknown>) || {}
 
   return (
     <div>
-      <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/knowledge-bases')}
-        style={{ color: 'var(--ice-text-primary)', marginBottom: 16 }}>返回知识库列表</Button>
+      <Button type="link" icon={<ArrowLeftOutlined />} onClick={() => navigate('/knowledge-bases')}
+        style={{ color: 'var(--ice-text-secondary)', marginBottom: 16, paddingLeft: 0 }}>
+        返回知识库列表
+      </Button>
 
       {kb && (
-        <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ marginBottom: 16 }}>
-          <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>📚 {kb.name}</Title>
-          <Text type="secondary">{kb.description}</Text>
+        <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24, marginBottom: 16 }}>
+          <Row gutter={[16, 12]}>
+            <Col span={6}><Title level={4} style={{ margin: 0 }}>{kb.name}</Title></Col>
+            <Col span={18}><Text type="secondary">{kb.description || '暂无描述'}</Text></Col>
+            <Col span={4}><Text type="secondary">切块策略</Text><br/>{CHUNKING_LABELS[kb.chunking_strategy] || kb.chunking_strategy}</Col>
+            <Col span={4}><Text type="secondary">分块大小</Text><br/>{(cc.chunk_size_tokens as number) ?? 512} tokens</Col>
+            <Col span={4}><Text type="secondary">重叠大小</Text><br/>{(cc.chunk_overlap_tokens as number) ?? 64} tokens</Col>
+            <Col span={4}><Text type="secondary">嵌入模型</Text><br/>{kb.embedding_model}</Col>
+            <Col span={4}><Text type="secondary">混合检索</Text><br/><Tag color={(rc.hybrid_search as boolean) ? 'green' : 'default'}>{(rc.hybrid_search as boolean) ? '已启用' : '已禁用'}</Tag></Col>
+            <Col span={4}><Text type="secondary">重排序</Text><br/><Tag color={(rc.rerank_enabled as boolean) ? 'green' : 'default'}>{(rc.rerank_enabled as boolean) ? '已启用' : '已禁用'}</Tag></Col>
+          </Row>
         </IceCrystalCard>
       )}
 
-      <Row gutter={16}>
-        <Col span={6}>
-          <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ minHeight: 300 }}>
-            <div style={{ padding: 8 }}>
-              <Title level={5} style={{ color: 'var(--ice-text-primary)', marginBottom: 12 }}>📂 文件夹</Title>
-              <Button type="dashed" block icon={<PlusOutlined />} onClick={() => setFolderModal(true)} style={{ marginBottom: 12 }}>新建文件夹</Button>
-              {renderFolderTree(folders)}
-            </div>
-          </IceCrystalCard>
-        </Col>
-
-        <Col span={18}>
+      <Row gutter={[16, 16]}>
+        <Col span={16}>
           <Tabs items={[
             {
-              key: 'docs', label: '📄 文档管理',
+              key: 'docs', label: '📁 文档管理',
               children: (
                 <IceCrystalCard hoverEffect="none" animation="fadeInUp">
                   <Space style={{ marginBottom: 16 }}>
@@ -180,13 +181,14 @@ export default function KBDetail() {
                   </Space>
                   <Table columns={docColumns} dataSource={documents} rowKey="id" pagination={{ pageSize: 10 }} scroll={{ x: 800 }} />
                 </IceCrystalCard>
-              )},
+              ),
+            },
             {
               key: 'search', label: '🔍 检索测试',
               children: (
                 <IceCrystalCard hoverEffect="none" animation="fadeInUp">
                   <Space.Compact style={{ marginBottom: 16 }}>
-                    <Input placeholder="输入检索问题.." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                    <Input placeholder="输入检索问题。" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
                       onPressEnter={handleSearch} style={{ flex: 1 }} />
                     <Button type="primary" icon={<SearchOutlined />} loading={searchLoading} onClick={handleSearch}>检索</Button>
                   </Space.Compact>
@@ -201,7 +203,8 @@ export default function KBDetail() {
                   ))}
                   {searchResults.length === 0 && searchQuery && <Text type="secondary">暂无检索结果</Text>}
                 </IceCrystalCard>
-              )}]} />
+              ),
+            }]} />
         </Col>
       </Row>
 
@@ -225,7 +228,7 @@ export default function KBDetail() {
         <div onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); setUploadedFiles(Array.from(e.dataTransfer.files)) }}
           style={{ border: '2px dashed var(--ice-border)', borderRadius: 12, padding: 32, textAlign: 'center', cursor: 'pointer', marginBottom: 16 }}>
           <UploadOutlined style={{ fontSize: 32, color: primaryColor }} />
-          <p style={{ color: 'var(--ice-text-secondary)', marginTop: 8 }}>拖拽文件到此处 或 点击选择</p>
+          <p style={{ color: 'var(--ice-text-secondary)', marginTop: 8 }}>拖拽文件到此区域或 点击选择</p>
           <p style={{ color: 'var(--ice-text-muted)', fontSize: 12 }}>支持 PDF, DOCX, TXT, MD, Code · 最大 50MB</p>
           <input type="file" multiple accept=".pdf,.docx,.txt,.md,.csv,.json,.py,.js,.ts,.java,.go,.rs"
             style={{ display: 'none' }}

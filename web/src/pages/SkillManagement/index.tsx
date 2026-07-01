@@ -21,21 +21,27 @@ export default function SkillManagement() {
   }
   const primaryColor = themeColorMap[theme] || '#22C55E'
 
-  const fetch = async () => {
-    try { const r = await fetch('/api/skills', { headers: authHeaders() }); setItems(await r.json()) } catch {}
+  const fetchItems = async () => {
+    try {
+      const r = await fetch('/api/skills', { headers: authHeaders() })
+      if (r.ok) {
+        const data = await r.json()
+        setItems(Array.isArray(data) ? data : [])
+      }
+    } catch {}
   }
-  useEffect(() => { fetch() }, [])
+  useEffect(() => { fetchItems() }, [])
 
   const handleSave = async (values: any) => {
     try {
       const url = editing ? `/api/skills/${editing.id}` : '/api/skills'
       const res = await fetch(url, { method: editing ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(values) })
-      if (res.ok) { message.success('保存成功'); setModalOpen(false); fetch() }
+      if (res.ok) { message.success('保存成功'); setModalOpen(false); fetchItems() }
     } catch (e: any) { message.error(e.message) }
   }
 
   const handleDelete = (id: number) => {
-    fetch(`/api/skills/${id}`, { method: 'DELETE', headers: authHeaders() }).then(() => fetch())
+    fetch(`/api/skills/${id}`, { method: 'DELETE', headers: authHeaders() }).then(() => fetchItems())
   }
 
   const columns = [
