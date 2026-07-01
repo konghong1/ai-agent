@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { EditOutlined, DeleteOutlined } from '@ant-design/icons'
+import { EditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { Typography, Form, Input, Button, Space, Table, Modal, Select, Switch, Tag, message } from 'antd'
 import { authHeaders } from '@/services/auth'
@@ -74,7 +74,7 @@ export default function UserManagement() {
   return (
     <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>用户管理</Title>
+        <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>用户管理（通过注册接口创建新用户）</Title>
       </div>
       <Table columns={columns} dataSource={users} rowKey="id" pagination={false} />
 

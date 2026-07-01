@@ -33,6 +33,7 @@ class User(TimestampMixin, Base):
     rag_config: Mapped[dict] = mapped_column(SA_JSON, default=dict)
 
     agents: Mapped[list["AgentConfig"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    prompt_templates: Mapped[list["PromptTemplate"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     knowledge_bases: Mapped[list["KnowledgeBase"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     providers: Mapped[list["Provider"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
@@ -70,7 +71,7 @@ class Thread(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(80), primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id", ondelete="SET NULL"), index=True)
     title: Mapped[str] = mapped_column(String(180))
 
     agent: Mapped[AgentConfig] = relationship(back_populates="threads")
@@ -141,6 +142,28 @@ class AgentKnowledgeBase(Base):
 
 
 # ============================================================
+
+
+# ============================================================
+# PromptTemplate (Task: Replace Agent in chat with template selector)
+# ============================================================
+
+class PromptTemplate(TimestampMixin, Base):
+    """A reusable system prompt template."""
+    __tablename__ = "prompt_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    slug: Mapped[str] = mapped_column(String(120), unique=True)
+    system_prompt: Mapped[str] = mapped_column(Text)
+    variables: Mapped[list] = mapped_column(SA_JSON, default=list)
+    category: Mapped[str] = mapped_column(String(80), default="general")
+    description: Mapped[str] = mapped_column(String(300), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    user: Mapped["User"] = relationship(back_populates="prompt_templates")
 
 
 # ============================================================

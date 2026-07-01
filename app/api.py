@@ -12,6 +12,7 @@ from app.models import (
     KBFeedback, RetrievalLog,
 AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBFolder, KBDocument,
 Message, Provider, ProviderModel, Skill, Thread, User, McpServer, SystemSetting,
+PromptTemplate,
 )
 from app.schemas import (
     KBStatsResponse,
@@ -23,10 +24,11 @@ KBDocumentRead, KBSearchRequest, KBSearchResult, KBUploadResponse,
 McpServerCreate, McpServerRead, McpServerUpdate,
 MessageRead,
 SkillCreate, SkillRead, SkillUpdate,
-ThreadCreate, ThreadRead,
+ThreadCreate, ThreadRead, ThreadUpdate,
 TokenResponse, UserCreate, UserLogin, UserRead,
 UserUpdate as UserUpdateSchema, UserManagementRead,
 SystemSettingCreate, SystemSettingRead, SystemSettingUpdate,
+PromptTemplateCreate, PromptTemplateRead, PromptTemplateUpdate,
     ProviderCreate, ProviderRead, ProviderUpdate,
     ProviderModelCreate, ProviderModelRead, ProviderModelUpdate,
     DefaultModelResponse,
@@ -172,10 +174,13 @@ def list_threads(agent_id: int | None = None, current_user: User = Depends(get_c
 
 @router.post("/threads", response_model=ThreadRead)
 def create_thread(payload: ThreadCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Thread:
-    agent = db.scalar(select(AgentConfig).where(AgentConfig.id == payload.agent_id, AgentConfig.user_id == current_user.id))
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found.")
-    thread = Thread(id=new_thread_id(), user_id=current_user.id, agent_id=agent.id, title=payload.title)
+    # Support creating threads without agent (new chat flow)
+    agent = None
+    if payload.agent_id:
+        agent = db.scalar(select(AgentConfig).where(AgentConfig.id == payload.agent_id, AgentConfig.user_id == current_user.id))
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found.")
+    thread = Thread(id=new_thread_id(), user_id=current_user.id, agent_id=agent.id if agent else 0, title=payload.title)
     db.add(thread)
     db.commit()
     db.refresh(thread)
@@ -192,6 +197,19 @@ def delete_thread(thread_id: str, current_user: User = Depends(get_current_user)
     db.commit()
 
 
+
+@router.patch("/threads/{thread_id}", response_model=ThreadRead)
+def rename_thread(thread_id: str, payload: ThreadUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Thread:
+    """Rename a thread (session)."""
+    thread = db.scalar(select(Thread).where(Thread.id == thread_id, Thread.user_id == current_user.id))
+    if not thread:
+        raise HTTPException(status_code=404, detail="Thread not found.")
+    thread.title = payload.title
+    db.commit()
+    db.refresh(thread)
+    return thread
+
+
 @router.get("/threads/{thread_id}/messages", response_model=list[MessageRead])
 def get_thread_messages(thread_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Message]:
     thread = db.scalar(select(Thread).where(Thread.id == thread_id, Thread.user_id == current_user.id))
@@ -203,11 +221,63 @@ def get_thread_messages(thread_id: str, current_user: User = Depends(get_current
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatResponse:
     try:
-        answer, thread_id, blocks = ask_agent(db=db, user_id=current_user.id, agent_id=payload.agent_id, message=payload.message, thread_id=payload.thread_id)
+        # Determine which system prompt and model to use
+        system_prompt = None
+        model_name = None
+        provider_id = None
+        provider_base_url = None
+        
+        # Priority: template > agent
+        if payload.template_id:
+            template = db.get(PromptTemplate, payload.template_id)
+            if template and template.user_id == current_user.id and template.enabled:
+                system_prompt = template.system_prompt
+        
+        if system_prompt is None and payload.agent_id:
+            agent = db.get(AgentConfig, payload.agent_id)
+            if agent and agent.user_id == current_user.id and agent.enabled:
+                system_prompt = agent.system_prompt
+                model_name = agent.model_name
+        
+        # Override with explicit provider/model selection
+        if payload.provider_id:
+            provider = db.get(Provider, payload.provider_id)
+            if provider and provider.user_id == current_user.id and provider.enabled:
+                provider_base_url = provider.base_url
+                if payload.model_name:
+                    model_name = payload.model_name
+                elif provider.is_default:
+                    # Find default model for this provider
+                    default_model = db.scalar(select(ProviderModel).where(
+                        ProviderModel.provider_id == provider.id,
+                        ProviderModel.is_default_chat == True,
+                        ProviderModel.model_type == "chat",
+                        ProviderModel.enabled == True,
+                    ))
+                    if default_model:
+                        model_name = default_model.model_name
+                elif provider.models:
+                    model_name = provider.models[0].model_name if provider.models[0].model_type == "chat" else None
+        
+        # Call ask_agent with the resolved parameters
+        answer, thread_id, blocks = ask_agent(
+            db=db,
+            user_id=current_user.id,
+            agent_id=payload.agent_id,
+            message=payload.message,
+            thread_id=payload.thread_id,
+            system_prompt=system_prompt,
+            model_name=model_name,
+            provider_base_url=provider_base_url,
+        )
         return ChatResponse(answer=answer, thread_id=thread_id, blocks=blocks)
     except HTTPException:
         raise
     except Exception as exc:
+        import traceback
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error("Chat error: %s\n%s", exc, traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
 
 
@@ -548,6 +618,146 @@ def delete_user(user_id: int, current_user: User = Depends(get_current_user), db
         UserService.delete_user(db, target, current_user.id)
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
+
+
+# ============================================================
+# Prompt Template Routes (Task: Replace Agent in chat)
+# ============================================================
+
+@router.get("/prompt-templates", response_model=list[PromptTemplateRead])
+def list_prompt_templates(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> list[PromptTemplate]:
+    return list(db.scalars(
+        select(PromptTemplate).where(
+            PromptTemplate.user_id == current_user.id
+        ).order_by(desc(PromptTemplate.created_at))
+    ))
+
+
+@router.post("/prompt-templates", response_model=PromptTemplateRead, status_code=status.HTTP_201_CREATED)
+def create_prompt_template(
+    payload: PromptTemplateCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> PromptTemplate:
+    # Check slug uniqueness
+    if db.scalar(select(PromptTemplate).where(PromptTemplate.slug == payload.slug)):
+        raise HTTPException(status_code=409, detail="Slug already exists.")
+    
+    template = PromptTemplate(
+        user_id=current_user.id,
+        name=payload.name,
+        slug=payload.slug,
+        system_prompt=payload.system_prompt,
+        variables=payload.variables,
+        category=payload.category,
+        description=payload.description,
+        enabled=payload.enabled,
+        is_default=payload.is_default,
+    )
+    db.add(template)
+    db.flush()
+    return template
+
+
+@router.patch("/prompt-templates/{template_id}", response_model=PromptTemplateRead)
+def update_prompt_template(
+    template_id: int,
+    payload: PromptTemplateUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> PromptTemplate:
+    template = db.get(PromptTemplate, template_id)
+    if not template or template.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(template, key, value)
+    
+    db.flush()
+    return template
+
+
+@router.delete("/prompt-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_prompt_template(
+    template_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> None:
+    template = db.get(PromptTemplate, template_id)
+    if not template or template.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Template not found.")
+    db.delete(template)
+    db.flush()
+
+
+@router.get("/prompt-templates/default", response_model=PromptTemplateRead)
+def get_default_prompt_template(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+) -> PromptTemplate:
+    template = db.scalar(select(PromptTemplate).where(
+        PromptTemplate.user_id == current_user.id,
+        PromptTemplate.is_default == True,
+        PromptTemplate.enabled == True,
+    ))
+    if not template:
+        # Return first enabled template as fallback
+        template = db.scalar(select(PromptTemplate).where(
+            PromptTemplate.user_id == current_user.id,
+            PromptTemplate.enabled == True,
+        ).limit(1))
+    if not template:
+        raise HTTPException(status_code=404, detail="No default template found.")
+    return template
+
+
+# ============================================================
+# Simplified Provider/Model endpoint for chat selector
+# ============================================================
+
+@router.get("/providers-chat")
+def get_providers_for_chat(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Return all enabled providers with their chat models for the chat UI selector."""
+    providers = db.scalars(
+        select(Provider).where(
+            Provider.user_id == current_user.id,
+            Provider.enabled == True,
+        ).order_by(Provider.is_default.desc(), Provider.name)
+    ).all()
+    
+    result = []
+    for p in providers:
+        models = [
+            m for m in p.models 
+            if m.model_type == "chat" and m.enabled
+        ]
+        selected_model = next((m for m in models if m.is_default_chat), models[0] if models else None)
+        result.append({
+            "id": p.id,
+            "name": p.name,
+            "base_url": p.base_url,
+            "models": [
+                {
+                    "id": m.id,
+                    "name": m.model_name,
+                    "is_default": m.is_default_chat,
+                }
+                for m in models
+            ],
+            "selected_model": {
+                "id": selected_model.id if selected_model else None,
+                "name": selected_model.model_name if selected_model else None,
+            } if selected_model else None,
+        })
+    
+    return {"providers": result}
 
 
 # ============================================================

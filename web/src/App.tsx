@@ -8,7 +8,8 @@ import LoginLayout from '@/layouts/LoginLayout'
 import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
 import AgentList from '@/pages/AgentList'
-import AgentDetail from '@/pages/AgentDetail'
+import ChatInterface from '@/pages/ChatInterface'
+import PromptTemplateList from '@/pages/PromptTemplateList'
 import KnowledgeBase from '@/pages/KnowledgeBase'
 import KBDetail from '@/pages/KnowledgeBase/KBDetail'
 import UserManagement from '@/pages/UserManagement'
@@ -81,10 +82,11 @@ export default function App() {
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
-            {/* Agent 聊天页面 */}
-            <Route path="agents/chat" element={<AgentDetail />} />
-            {/* Agent 管理页面 */}
-            <Route path="agents/manage" element={<AgentList />} />
+            {/* 聊天页面 */}
+            <Route path="agents/chat" element={<ChatInterface />} />
+            {/* 提示词模板管理（原 Agent 管理页已替换） */}
+            <Route path="agents/manage" element={<Navigate to="/prompt-templates" replace />} />
+            <Route path="prompt-templates" element={<PromptTemplateList />} />
             <Route path="knowledge-bases" element={<KnowledgeBase />} />
             <Route path="knowledge-bases/:id" element={<KBDetail />} />
             <Route path="users" element={<UserManagement />} />

@@ -36,7 +36,7 @@ const menuItems = [
 
   {
 
-    key: "/agents",
+    key: "/agent",
 
     icon: <RobotOutlined />,
 
@@ -46,11 +46,13 @@ const menuItems = [
 
       { key: "/agents/chat", label: "聊天" },
 
-      { key: "/agents/manage", label: "管理" },
+      { key: "/providers", label: "AI 提供商" },
 
-      { key: "/mcp-servers", label: "MCP" },
+      { key: "/mcp-servers", label: "MCP Server" },
 
       { key: "/skills", label: "Skills" },
+
+      { key: "/prompt-templates", label: "提示词模板" },
 
     ],
 
@@ -67,8 +69,6 @@ const menuItems = [
     children: [
 
       { key: "/knowledge-bases", label: "知识库" },
-
-      { key: "/providers", label: "AI 提供商" },
 
     ],
 

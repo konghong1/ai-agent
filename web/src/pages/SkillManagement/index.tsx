@@ -62,7 +62,7 @@ export default function SkillManagement() {
     <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>Skill 管理</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.resetFields({ source_type: 'local', enabled: true }); setModalOpen(true) }}>添加 Skill</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditing(null); form.setFieldsValue({ source_type: 'local', enabled: true }); form.resetFields(); setModalOpen(true) }}>添加 Skill</Button>
       </div>
       <Table columns={columns} dataSource={items} rowKey="id" pagination={false} />
 

@@ -78,7 +78,7 @@ export default function AgentList() {
     <IceCrystalCard hoverEffect="none" animation="fadeInUp" style={{ padding: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <Title level={4} style={{ color: 'var(--ice-text-primary)', margin: 0 }}>Agent 目录</Title>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingAgent(null); form.resetFields({ temperature: 0.7, enabled: true }); setDrawerOpen(true) }}>新建 Agent</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingAgent(null); form.setFieldsValue({ temperature: 0.7, enabled: true }); form.resetFields(); setDrawerOpen(true) }}>新建 Agent</Button>
       </div>
       <Table columns={columns} dataSource={agents} rowKey="id" loading={loading} pagination={{ pageSize: 10 }} scroll={{ x: 800 }} />
 

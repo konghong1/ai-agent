@@ -195,8 +195,11 @@ class KnowledgeBaseService:
 
     @staticmethod
     def get_folder_tree(db: Session, kb_id: int) -> list[KBFolderTreeNode]:
+        from sqlalchemy.orm import undefer
         folders = db.scalars(
-            select(KBFolder).where(KBFolder.kb_id == kb_id).options(joinedload(KBFolder.children))
+            select(KBFolder)
+            .options(joinedload(KBFolder.children))
+            .where(KBFolder.kb_id == kb_id)
         ).unique().all()
 
         def build_node(folder: KBFolder) -> KBFolderTreeNode:

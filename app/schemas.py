@@ -72,18 +72,22 @@ class AgentRead(BaseModel):
 
 
 class ThreadCreate(BaseModel):
-    agent_id: int
+    agent_id: int | None = None
     title: str = Field(default="New chat", max_length=180)
 
 
 class ThreadRead(BaseModel):
     id: str
-    agent_id: int
+    agent_id: int | None
     title: str
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ThreadUpdate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=180)
 
 
 class MessageRead(BaseModel):
@@ -99,8 +103,11 @@ class MessageRead(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
-    agent_id: int
+    agent_id: int | None = None
     thread_id: str | None = None
+    template_id: int | None = None
+    provider_id: int | None = None
+    model_name: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -331,6 +338,49 @@ class SystemSettingRead(BaseModel):
 # RAG Configuration Schemas
 # ============================================================
 
+
+
+# ============================================================
+# Prompt Template Schemas
+# ============================================================
+
+class PromptTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    slug: str = Field(..., min_length=1, max_length=120)
+    system_prompt: str = Field(..., min_length=1)
+    variables: list[str] = Field(default_factory=list)
+    category: str = "general"
+    description: str = ""
+    enabled: bool = True
+    is_default: bool = False
+
+
+class PromptTemplateUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    slug: str | None = Field(default=None, min_length=1, max_length=120)
+    system_prompt: str | None = None
+    variables: list[str] | None = None
+    category: str | None = None
+    description: str | None = None
+    enabled: bool | None = None
+    is_default: bool | None = None
+
+
+class PromptTemplateRead(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    slug: str
+    system_prompt: str
+    variables: list[str]
+    category: str
+    description: str
+    enabled: bool
+    is_default: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================

@@ -36,8 +36,11 @@ export async function request<T = any>(
   }
 
   if (!res.ok) {
+    if (res.status === 0) {
+      throw new Error('无法连接到后端服务，请确认后端是否已启动在 http://127.0.0.1:8010')
+    }
     const err = await jsonSafe(res)
-    throw new Error(err?.detail || 'Request failed')
+    throw new Error(err?.detail || `HTTP ${res.status}: Request failed`)
   }
 
   if (res.status === 204) return null as T
@@ -80,6 +83,9 @@ export function upload<T = any>(path: string, formData: FormData): Promise<T> {
       throw new Error('Unauthorized')
     }
     if (!res.ok) {
+      if (res.status === 0) {
+        throw new Error('无法连接到后端服务')
+      }
       const err = await jsonSafe(res)
       throw new Error(err?.detail || 'Upload failed')
     }

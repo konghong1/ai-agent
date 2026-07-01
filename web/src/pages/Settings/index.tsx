@@ -76,19 +76,22 @@ export default function SettingsPage() {
           key: 'api', label: <><KeyOutlined /> API 配置</>,
           children: (
             <div style={{ maxWidth: 600 }}>
-              <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>配置 OpenAI 兼容 API 的连接信息</Text>
-              <Form layout="vertical">
-                <Form.Item label="OpenAI API Key">
+              <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>配置 OpenAI 兼容 API 的连接信息（建议通过"全局配置"Tab 管理）</Text>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <Text style={{ display: 'block', marginBottom: 4 }}>OpenAI API Key</Text>
                   <Input.Password placeholder="sk-..." style={{ background: 'var(--ice-bg-card)', borderColor: 'var(--ice-border)' }} />
-                </Form.Item>
-                <Form.Item label="OpenAI Base URL">
+                </div>
+                <div>
+                  <Text style={{ display: 'block', marginBottom: 4 }}>OpenAI Base URL</Text>
                   <Input placeholder="https://api.openai.com/v1" style={{ background: 'var(--ice-bg-card)', borderColor: 'var(--ice-border)' }} />
-                </Form.Item>
-                <Form.Item label="默认模型">
+                </div>
+                <div>
+                  <Text style={{ display: 'block', marginBottom: 4 }}>默认模型</Text>
                   <Input placeholder="gpt-4o-mini" style={{ background: 'var(--ice-bg-card)', borderColor: 'var(--ice-border)' }} />
-                </Form.Item>
+                </div>
                 <Button type="primary" style={{ background: 'var(--ice-primary)', borderColor: 'var(--ice-primary)' }}>保存 API 配置</Button>
-              </Form>
+              </div>
             </div>
           )},
         {

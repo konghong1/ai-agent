@@ -67,7 +67,7 @@ export default function Dashboard() {
   ]
 
   const quickActions = [
-    { label: '新建 Agent', icon: <RobotOutlined />, path: '/agents' },
+    { label: '新建 Agent', icon: <RobotOutlined />, path: '/agents/manage' },
     { label: '新建知识库', icon: <BookOutlined />, path: '/knowledge-bases' },
     { label: '用户管理', icon: <TeamOutlined />, path: '/users' },
     { label: '系统设置', icon: <SettingOutlined />, path: '/settings' }

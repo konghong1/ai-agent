@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from "react"
-import { Typography, Input, Button, message, Modal, Avatar } from "antd"
+import { Typography, Input, Button, message, Modal, Avatar, Space } from "antd"
 import {
-  SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined,
+  SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
   RobotOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
 } from "@ant-design/icons"
 import ReactMarkdown from "react-markdown"
@@ -50,8 +50,6 @@ export default function AgentDetail() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [showNewThreadModal, setShowNewThreadModal] = useState(false)
-  const [newThreadTitle, setNewThreadTitle] = useState("")
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -128,30 +126,6 @@ export default function AgentDetail() {
 
   const activeAgent = agents.find(a => a.id === activeAgentId) || null
 
-  const createThread = async () => {
-    if (!activeAgentId) { message.warning("请先选择一个 Agent"); return }
-    const title = newThreadTitle.trim() || `新会话 ${new Date().toLocaleTimeString()}`
-    try {
-      const res = await fetch(`/api/agents/${activeAgentId}/threads`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ agent_id: activeAgentId, title }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setThreads(prev => [data, ...prev])
-        setActiveThreadId(data.id)
-        setShowNewThreadModal(false)
-        setNewThreadTitle("")
-        message.success("已创建新会话")
-      } else {
-        const err = await res.json().catch(() => ({}))
-        message.error(err.detail || "创建失败")
-      }
-    } catch (e: any) {
-      message.error(e.message || "创建失败")
-    }
-  }
 
   const deleteThread = async (threadId: string) => {
     try {
@@ -177,17 +151,87 @@ export default function AgentDetail() {
     await fetchMessages(activeThreadId)
     message.success("已刷新")
   }
+  const renameThread = async (threadId: string, newTitle: string) => {
+    try {
+      const res = await fetch(`/api/threads/${threadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ title: newTitle }),
+      })
+      if (res.ok) {
+        setThreads(prev => prev.map(t => t.id === threadId ? { ...t, title: newTitle } : t))
+        message.success("重命名成功")
+      }
+    } catch { /* silent */ }
+  }
+
+  const startRename = (thread: Thread) => {
+    setRenamingThreadId(thread.id)
+    setRenameValue(thread.title)
+    setRenameModal(true)
+  }
+
+  const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState("")
+  const [renameModal, setRenameModal] = useState(false)
+
+  const handleRenameSubmit = () => {
+    if (renamingThreadId && renameValue.trim()) {
+      renameThread(renamingThreadId, renameValue.trim())
+    }
+    setRenameModal(false)
+    setRenamingThreadId(null)
+    setRenameValue("")
+  }
+
 
   const handleSend = async () => {
-    if (!inputValue.trim() || sending || !activeThreadId) return
-    const content = inputValue.trim()
+    if (!inputValue.trim() || sending) return
+    const messageContent = inputValue.trim()
     setInputValue("")
     setSending(true)
+
+    // Auto-create thread if no active session
+    let threadId = activeThreadId
+    if (!threadId && activeAgentId) {
+      try {
+        const res = await fetch(`/api/agents/${activeAgentId}/threads`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({
+            agent_id: activeAgentId,
+            title: messageContent.slice(0, 20) || "新会话",
+          }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setThreads(prev => [data, ...prev])
+          threadId = data.id
+          setActiveThreadId(data.id)
+        } else {
+          const _err = await res.json().catch(() => ({}))
+          setMessages(prev => [
+            ...prev,
+          ])
+          setSending(false)
+          return
+        }
+      } catch (e: any) {
+        setMessages(prev => [
+          ...prev,
+          { id: Date.now(), role: "assistant", content: `创建会话失败：${e.message}`, created_at: new Date().toISOString() },
+        ])
+        setSending(false)
+        return
+      }
+    }
+
+    if (!threadId) { setSending(false); return }
 
     const userMsg: Message = {
       id: Date.now(),
       role: "user",
-      content,
+      content: messageContent,
       created_at: new Date().toISOString(),
     }
     setMessages(prev => [...prev, userMsg])
@@ -198,8 +242,8 @@ export default function AgentDetail() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           agent_id: activeAgentId,
-          message: content,
-          thread_id: activeThreadId,
+          message: messageContent,
+          thread_id: threadId,
         }),
       })
       if (res.ok) {
@@ -212,13 +256,13 @@ export default function AgentDetail() {
         }
         setMessages(prev => [...prev, assistantMsg])
       } else {
-        const err = await res.json().catch(() => ({}))
+        const _err = await res.json().catch(() => ({}))
         setMessages(prev => [
           ...prev,
           {
             id: Date.now() + 1,
             role: "assistant",
-            content: `抱歉，暂时无法回复：${err.detail || "服务不可用"}`,
+            content: `抱歉，暂时无法回复：${res.statusText || "服务不可用"}`,
             created_at: new Date().toISOString(),
           },
         ])
@@ -326,7 +370,22 @@ export default function AgentDetail() {
             type="primary"
             icon={<PlusOutlined />}
             block
-            onClick={() => setShowNewThreadModal(true)}
+            disabled={!activeAgentId}
+            onClick={async () => {
+              if (!activeAgentId) return
+              try {
+                const res = await fetch(`/api/agents/${activeAgentId}/threads`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", ...authHeaders() },
+                  body: JSON.stringify({ agent_id: activeAgentId, title: "新会话" }),
+                })
+                if (res.ok) {
+                  const data = await res.json()
+                  setThreads(prev => [data, ...prev])
+                  setActiveThreadId(data.id)
+                }
+              } catch { /* silent */ }
+            }}
             style={{
               background: primaryColor,
               borderColor: primaryColor,
@@ -335,7 +394,7 @@ export default function AgentDetail() {
               fontSize: 13,
             }}
           >
-            新建会话
+            {activeAgentId ? '新会话' : '选择 Agent 后开始对话'}
           </Button>
         </div>
 
@@ -397,19 +456,33 @@ export default function AgentDetail() {
                     {formatDate(t.updated_at)}
                   </div>
                 </div>
-                <Button
-                  type="text"
-                  danger
-                  size="small"
-                  icon={<DeleteOutlined />}
-                  onClick={e => {
-                    e.stopPropagation()
-                    deleteThread(t.id)
-                  }}
-                  style={{ opacity: 0.5, flexShrink: 0 }}
-                  onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
-                  onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
-                />
+                <Space size={2}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<EditOutlined />}
+                    onClick={e => {
+                      e.stopPropagation()
+                      startRename(t)
+                    }}
+                    style={{ opacity: 0.5, flexShrink: 0 }}
+                    onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
+                    onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
+                  />
+                  <Button
+                    type="text"
+                    danger
+                    size="small"
+                    icon={<DeleteOutlined />}
+                    onClick={e => {
+                      e.stopPropagation()
+                      deleteThread(t.id)
+                    }}
+                    style={{ opacity: 0.5, flexShrink: 0 }}
+                    onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
+                    onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
+                  />
+                </Space>
               </div>
             ))
           )}
@@ -800,7 +873,7 @@ export default function AgentDetail() {
               icon={<SendOutlined />}
               loading={sending}
               onClick={handleSend}
-              disabled={!inputValue.trim() || sending || !activeThreadId}
+              disabled={!inputValue.trim() || sending}
               style={{
                 background: primaryColor,
                 borderColor: primaryColor,
@@ -822,9 +895,9 @@ export default function AgentDetail() {
       {/* New thread modal */}
       <Modal
         title="新建会话"
-        open={showNewThreadModal}
-        onCancel={() => { setShowNewThreadModal(false); setNewThreadTitle("") }}
-        onOk={createThread}
+        open={renameModal}
+        onCancel={() => { setRenameModal(false); setRenamingThreadId(null) }}
+        onOk={handleRenameSubmit}
         okText="创建"
         cancelText="取消"
         okButtonProps={{ style: { background: primaryColor, borderColor: primaryColor } }}
@@ -832,9 +905,9 @@ export default function AgentDetail() {
         <Typography.Text>会话标题（可选，留空则自动生成）</Typography.Text>
         <Input
           placeholder="输入会话标题..."
-          value={newThreadTitle}
-          onChange={e => setNewThreadTitle(e.target.value)}
-          onPressEnter={createThread}
+          value={renameValue}
+          onChange={e => setRenameValue(e.target.value)}
+          onPressEnter={handleRenameSubmit}
           autoFocus
           style={{ marginTop: 8 }}
         />
