@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from "react"
+﻿import { useCallback, useEffect, useState, useRef } from "react"
 import { Typography, Input, Button, message, Modal, Avatar, Space } from "antd"
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
@@ -105,7 +105,7 @@ export default function ChatInterface() {
       .catch(() => [])
   }, [])
 
-  useEffect(() => { fetchThreads() }, [])  // Run once on mount
+  useEffect(() => { fetchThreads().finally(() => setLoading(false)) }, [])  // Run once on mount
 
   useEffect(() => {
     if (activeThreadId) {
@@ -356,7 +356,7 @@ export default function ChatInterface() {
       icon={<PlusOutlined />}
       block
       onClick={handleNewThread}
-      disabled={!activeThreadId}
+      disabled={false}
       style={{
         background: primaryColor,
         borderColor: primaryColor,
@@ -770,14 +770,9 @@ export default function ChatInterface() {
             <TextArea
               ref={inputRef}
               value={inputValue}
-              onChange={e => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={
-                activeThreadId
-                  ? "输入消息... (Enter 发送, Shift+Enter 换行)"
-                  : "请先选择或创建会话..."
-              }
-              disabled={sending || !activeThreadId}
+              onChange={e => setInputValue(e.target.value)}
+              placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
               autoSize={{ minRows: 1, maxRows: 5 }}
               style={{
                 flex: 1,
@@ -855,3 +850,6 @@ export default function ChatInterface() {
     </div>
   )
 }
+
+
+
