@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import urllib.request
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session
 
 from app.agent import ask_agent
@@ -31,7 +34,7 @@ SystemSettingCreate, SystemSettingRead, SystemSettingUpdate,
 PromptTemplateCreate, PromptTemplateRead, PromptTemplateUpdate,
     ProviderCreate, ProviderRead, ProviderUpdate,
     ProviderModelCreate, ProviderModelRead, ProviderModelUpdate,
-    DefaultModelResponse,
+    DefaultModelResponse, RemoteModelsResponse, RemoteModelsFetchRequest,
 )
 from app.services import (
     HybridRetriever, ContextBuilder, RAG_SYSTEM_PROMPT, QueryRewriter,
@@ -307,9 +310,9 @@ def create_provider(payload: ProviderCreate, current_user: User = Depends(get_cu
     db.flush()
     if payload.is_default:
         db.execute(
-            select(Provider).where(
+            update(Provider).where(
                 Provider.user_id == current_user.id, Provider.is_default == True
-            ).update({"is_default": False})
+            ).values(is_default=False)
         )
     db.commit()
     db.refresh(provider)
@@ -322,9 +325,9 @@ def update_provider(provider_id: int, payload: ProviderUpdate, current_user: Use
     data = payload.model_dump(exclude_unset=True)
     if "is_default" in data and data["is_default"]:
         db.execute(
-            select(Provider).where(
+            update(Provider).where(
                 Provider.user_id == current_user.id, Provider.id != provider_id, Provider.is_default == True
-            ).update({"is_default": False})
+            ).values(is_default=False)
         )
     provider = ProviderService.update_provider(db, provider, **data)
     return provider
@@ -359,6 +362,53 @@ def delete_provider_model(provider_id: int, model_id: int, current_user: User = 
     if not model:
         raise HTTPException(status_code=404, detail="Model not found.")
     ProviderService.delete_model(db, model)
+@router.get("/providers/{provider_id}/remote-models", response_model=RemoteModelsResponse)
+def fetch_remote_models(provider_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> RemoteModelsResponse:
+    """Fetch available model names from a provider's /v1/models endpoint."""
+    provider = db.scalar(select(Provider).where(Provider.id == provider_id, Provider.user_id == current_user.id))
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    if not provider.base_url or not provider.api_key:
+        return RemoteModelsResponse(error="请先配置 Base URL 和 API Key")
+
+    models_url = provider.base_url.rstrip("/") + "/models"
+    try:
+        req = urllib.request.Request(
+            models_url,
+            headers={"Authorization": f"Bearer {provider.api_key}"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode())
+            model_names = [m["id"] for m in body.get("data", []) if m.get("id")]
+            return RemoteModelsResponse(models=model_names)
+    except Exception as e:
+        return RemoteModelsResponse(error=f"无法连接: {e}")
+
+
+@router.post("/providers/fetch-remote-models", response_model=RemoteModelsResponse)
+def fetch_remote_models_preview(payload: RemoteModelsFetchRequest) -> RemoteModelsResponse:
+    """Fetch available model names from an arbitrary /v1/models endpoint before saving a provider."""
+    base_url = payload.base_url.strip()
+    api_key = payload.api_key.strip()
+    if not base_url or not api_key:
+        return RemoteModelsResponse(error="请先填写 Base URL 和 API Key")
+
+    models_url = base_url.rstrip("/") + "/models"
+    try:
+        req = urllib.request.Request(
+            models_url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            method="GET",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode())
+            model_names = [m["id"] for m in body.get("data", []) if m.get("id")]
+            return RemoteModelsResponse(models=model_names)
+    except Exception as e:
+        return RemoteModelsResponse(error=f"无法连接: {e}")
+
+
 @router.get("/providers/default-model", response_model=DefaultModelResponse)
 def get_default_model(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> DefaultModelResponse:
     return ProviderService.get_default_model(db, current_user.id)

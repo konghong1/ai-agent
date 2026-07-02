@@ -751,22 +751,36 @@ export default function ChatInterface() {
           )}
         </div>
 
-        {/* Input area */}
+        {/* Input area — single unified input box */}
         <div style={{
-          padding: "12px 24px 16px",
-          borderTop: "1px solid var(--ice-border)",
-          background: "var(--ice-bg-card)",
+          padding: "0 16px 12px",
+          background: "#F8FAFC",
         }}>
           <div style={{
             display: "flex",
-            gap: 10,
-            alignItems: "flex-end",
-            background: "var(--ice-bg-primary)",
-            borderRadius: 14,
-            padding: "10px 14px",
-            border: "1px solid var(--ice-border)",
-            boxShadow: "0 2px 8px var(--ice-shadow-sm)",
+            flexDirection: "column",
+            border: "1px solid #d0d0d0",
+            borderRadius: 12,
+            background: "#fff",
+            padding: "12px 16px",
           }}>
+            {/* Kill the TextArea border/focus ring so it looks seamless inside the outer box */}
+            <style>{`
+              .chat-input-textarea,
+              .chat-input-textarea.ant-input,
+              .chat-input-textarea:hover,
+              .chat-input-textarea.ant-input:hover,
+              .chat-input-textarea:focus,
+              .chat-input-textarea.ant-input:focus,
+              .chat-input-textarea-focused,
+              .chat-input-textarea.ant-input-focused {
+                border: none !important;
+                box-shadow: none !important;
+                outline: none !important;
+                background: transparent !important;
+              }
+            `}</style>
+
             <TextArea
               ref={inputRef}
               value={inputValue}
@@ -774,43 +788,52 @@ export default function ChatInterface() {
               onChange={e => setInputValue(e.target.value)}
               placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
               autoSize={{ minRows: 1, maxRows: 5 }}
+              className="chat-input-textarea"
               style={{
-                flex: 1,
+                width: "100%",
                 background: "transparent",
                 border: "none",
-                color: "var(--ice-text-primary)",
+                color: "#333",
                 resize: "none",
                 fontSize: 14,
+                padding: 0,
+                marginBottom: 8,
               }}
             />
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              loading={sending}
-              onClick={handleSend}
-              disabled={!inputValue.trim() || sending}
-              style={{
-                background: primaryColor,
-                borderColor: primaryColor,
-                borderRadius: 10,
-                width: 38,
-                height: 38,
-                flexShrink: 0,
-              }}
-            />
+
+            {/* Toolbar: selectors (left) + send button (right) */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}>
+              <ChatSelector
+                providerId={providerId}
+                modelName={modelName}
+                templateId={templateId}
+                templates={templates}
+                onProviderChange={(pid, mname) => setProviderAndModel(pid, mname)}
+                onTemplateChange={(tid) => setTemplateId(tid)}
+              />
+              <span style={{ flex: 1 }} />
+              <Button
+                type="primary"
+                icon={<SendOutlined />}
+                loading={sending}
+                onClick={handleSend}
+                disabled={!inputValue.trim() || sending}
+                style={{
+                  background: primaryColor,
+                  borderColor: primaryColor,
+                  borderRadius: "50%",
+                  width: 38,
+                  height: 38,
+                  flexShrink: 0,
+                }}
+              />
+            </div>
           </div>
-          
-          {/* ChatSelector below input */}
-          <ChatSelector
-            providerId={providerId}
-            modelName={modelName}
-            templateId={templateId}
-            templates={templates}
-            onProviderChange={(pid, mname) => setProviderAndModel(pid, mname)}
-            onTemplateChange={(tid) => setTemplateId(tid)}
-            onNewThread={handleNewThread}
-          />
-          
+
           <div style={{ textAlign: "center", marginTop: 8 }}>
             <Text type="secondary" style={{ fontSize: 11 }}>
               AI 生成内容仅供参考

@@ -459,6 +459,17 @@ class DefaultModelResponse(BaseModel):
     provider_id: int | None
     provider_name: str | None
 
+class RemoteModelsResponse(BaseModel):
+    """Response from fetching available models from a provider's /v1/models API."""
+    models: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
+class RemoteModelsFetchRequest(BaseModel):
+    """Request to fetch models using arbitrary base_url + api_key (e.g. before a provider is saved)."""
+    base_url: str
+    api_key: str
+
 class RAGConfigUpdate(BaseModel):
     hybrid_search: bool | None = None
     rerank_enabled: bool | None = None

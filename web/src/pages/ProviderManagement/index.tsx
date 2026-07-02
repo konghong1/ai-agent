@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import {
   PlusOutlined, EditOutlined, DeleteOutlined,
-  CloudServerOutlined, StarOutlined,
+  CloudServerOutlined, StarOutlined, CloudDownloadOutlined,
 } from "@ant-design/icons"
 import { IceCrystalCard } from "@/components/IceCrystalCard"
 import {
@@ -65,6 +65,22 @@ export default function ProviderManagement() {
   const [providerForm] = Form.useForm()
   const [modelForm] = Form.useForm()
 
+  // ── Remote model fetching (scoped per provider) ──
+  const [remoteModels, setRemoteModels] = useState<string[]>([])
+  const [selectedRemoteModels, setSelectedRemoteModels] = useState<Set<string>>(new Set())
+  const [defaultModelName, setDefaultModelName] = useState("")
+  const [activeKeys, setActiveKeys] = useState<string[]>([])
+  const [fetchingModels, setFetchingModels] = useState<number | null>(null)
+  const [remoteModelError, setRemoteModelError] = useState<string | null>(null)
+  const [remoteModelsForProvider, setRemoteModelsForProvider] = useState<number | null>(null) // which provider the fetched models belong to
+
+  // ── Remote model fetching inside the Add Provider modal ──
+  const [modalRemoteModels, setModalRemoteModels] = useState<string[]>([])
+  const [modalSelectedModels, setModalSelectedModels] = useState<Set<string>>(new Set())
+  const [modalDefaultModel, setModalDefaultModel] = useState("")
+  const [modalFetchingModels, setModalFetchingModels] = useState(false)
+  const [modalRemoteError, setModalRemoteError] = useState<string | null>(null)
+
   const fetchProviders = async () => {
     try {
       const res = await fetch("/api/providers", { headers: authHeaders() })
@@ -93,10 +109,42 @@ export default function ProviderManagement() {
         body: JSON.stringify(values),
       })
       if (!res.ok) throw new Error("保存失败")
-      message.success(editingProvider ? "更新成功" : "创建成功")
+
+      // After creating a new provider, batch-add selected remote models
+      if (!editingProvider) {
+        const newProvider: Provider = await res.json()
+        const selected = Array.from(modalSelectedModels) as string[]
+        if (selected.length > 0) {
+          let addedCount = 0
+          for (const name of selected) {
+            const modelRes = await fetch(`/api/providers/${newProvider.id}/models`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({
+                model_name: name,
+                model_type: "chat",
+                enabled: true,
+                is_default_chat: name === modalDefaultModel.trim(),
+                description: "",
+              }),
+            })
+            if (modelRes.ok) addedCount++
+          }
+          message.success(`创建成功，已添加 ${addedCount} 个模型`)
+        } else {
+          message.success("创建成功")
+        }
+      } else {
+        message.success("更新成功")
+      }
+
       setProviderModal(false)
       setEditingProvider(null)
       providerForm.resetFields()
+      setModalRemoteModels([])
+      setModalSelectedModels(new Set())
+      setModalDefaultModel("")
+      setModalRemoteError(null)
       fetchProviders()
     } catch (e: any) {
       message.error(e.message || "操作失败")
@@ -189,7 +237,145 @@ export default function ProviderManagement() {
     })
   }
 
-  // ---- Render helpers ----
+  // ---- Remote model fetching & batch add ----
+
+  const fetchRemoteModels = async (providerId: number) => {
+    setFetchingModels(providerId)
+    setRemoteModelError(null)
+    setSelectedRemoteModels(new Set())
+    setDefaultModelName("")
+    setRemoteModelsForProvider(providerId)
+    // auto-expand the panel
+    setActiveKeys(prev => {
+      const key = String(providerId)
+      return prev.includes(key) ? prev : [...prev, key]
+    })
+    try {
+      const res = await fetch(`/api/providers/${providerId}/remote-models`, { headers: authHeaders() })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        setRemoteModelError(data.error || "获取失败")
+        setRemoteModels([])
+        return
+      }
+      setRemoteModels(data.models || [])
+      // auto-select all by default
+      setSelectedRemoteModels(new Set(data.models || []))
+    } catch (e: any) {
+      setRemoteModelError(e.message || "网络错误")
+      setRemoteModels([])
+    } finally {
+      setFetchingModels(null)
+    }
+  }
+
+  const toggleRemoteModel = (name: string) => {
+    setSelectedRemoteModels(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const toggleAllRemoteModels = () => {
+    if (selectedRemoteModels.size === remoteModels.length) {
+      setSelectedRemoteModels(new Set())
+    } else {
+      setSelectedRemoteModels(new Set(remoteModels))
+    }
+  }
+
+  const batchAddModels = async (providerId: number) => {
+    const selected = Array.from(selectedRemoteModels)
+    if (selected.length === 0) {
+      message.warning("请至少选择一个模型")
+      return
+    }
+    setLoading(true)
+    try {
+      let addedCount = 0
+      for (const name of selected) {
+        const res = await fetch(`/api/providers/${providerId}/models`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({
+            model_name: name,
+            model_type: "chat",
+            enabled: true,
+            is_default_chat: name === defaultModelName.trim(),
+            description: "",
+          }),
+        })
+        if (res.ok) addedCount++
+      }
+      message.success(`成功添加 ${addedCount} 个模型`)
+      setRemoteModels([])
+      setSelectedRemoteModels(new Set())
+      setDefaultModelName("")
+      setRemoteModelsForProvider(null)
+      fetchProviders()
+    } catch (e: any) {
+      message.error(e.message || "批量添加失败")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── Fetch remote models inside the Add Provider modal ──
+  const fetchModalRemoteModels = async () => {
+    const values = providerForm.getFieldsValue()
+    const base_url = (values.base_url || "").trim()
+    const api_key = (values.api_key || "").trim()
+    if (!base_url || !api_key) {
+      message.warning("请先填写 Base URL 和 API Key")
+      return
+    }
+    setModalFetchingModels(true)
+    setModalRemoteError(null)
+    setModalRemoteModels([])
+    setModalSelectedModels(new Set())
+    setModalDefaultModel("")
+    try {
+      const res = await fetch("/api/providers/fetch-remote-models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ base_url, api_key }),
+      })
+      const data = await res.json()
+      if (!res.ok || data.error) {
+        setModalRemoteError(data.error || "获取失败")
+        return
+      }
+      const models = data.models || []
+      setModalRemoteModels(models)
+      setModalSelectedModels(new Set(models))
+      if (models.length > 0) {
+        setModalDefaultModel(models[0])
+      }
+    } catch (e: any) {
+      setModalRemoteError(e.message || "网络错误")
+    } finally {
+      setModalFetchingModels(false)
+    }
+  }
+
+  const toggleModalRemoteModel = (name: string) => {
+    setModalSelectedModels(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const toggleAllModalRemoteModels = () => {
+    if (modalSelectedModels.size === modalRemoteModels.length) {
+      setModalSelectedModels(new Set())
+    } else {
+      setModalSelectedModels(new Set(modalRemoteModels))
+    }
+  }
 
   const renderModelTag = (model: ProviderModel) => {
     const isDefault =
@@ -332,6 +518,10 @@ export default function ProviderManagement() {
             setEditingProvider(null)
             providerForm.resetFields()
             providerForm.setFieldsValue({ enabled: true, is_default: false })
+            setModalRemoteModels([])
+            setModalSelectedModels(new Set())
+            setModalDefaultModel("")
+            setModalRemoteError(null)
             setProviderModal(true)
           }}
         >
@@ -358,6 +548,8 @@ export default function ProviderManagement() {
         <Collapse
           bordered={false}
           expandIconPosition="right"
+          activeKey={activeKeys}
+          onChange={(keys) => setActiveKeys(Array.isArray(keys) ? keys as string[] : [])}
           style={{ background: "transparent" }}
           items={providers.map((p) => ({
             key: String(p.id),
@@ -390,6 +582,17 @@ export default function ProviderManagement() {
                   )}
                 </Space>
                 <Space>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CloudDownloadOutlined />}
+                    title="从 API 获取模型列表"
+                    loading={fetchingModels === p.id}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      fetchRemoteModels(p.id)
+                    }}
+                  />
                   <Button
                     type="text"
                     size="small"
@@ -450,6 +653,122 @@ export default function ProviderManagement() {
                   </div>
                 </div>
 
+                {/* ═══ Remote model fetching ═══ */}
+                {remoteModelsForProvider === p.id && (
+                  <div
+                    style={{
+                      marginTop: 16,
+                      padding: "16px 20px",
+                      borderRadius: 10,
+                      background: "var(--ice-bg-hover)",
+                      border: "1px dashed var(--ice-primary)",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                      <Space>
+                        <CloudDownloadOutlined style={{ color: "var(--ice-primary)", fontSize: 16 }} />
+                        <Text strong style={{ color: "var(--ice-text-primary)", fontSize: 14 }}>
+                          从 {p.base_url || "API"} 获取到 {remoteModels.length} 个模型
+                        </Text>
+                      </Space>
+                      <Button
+                        size="small"
+                        icon={<CloudServerOutlined />}
+                        loading={fetchingModels === p.id}
+                        onClick={() => fetchRemoteModels(p.id)}
+                      >
+                        重新获取
+                      </Button>
+                    </div>
+
+                    {remoteModelError && (
+                      <Text type="danger" style={{ fontSize: 13, display: "block", marginBottom: 8 }}>错误: {remoteModelError}</Text>
+                    )}
+
+                    {remoteModels.length > 0 && (
+                      <>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: 6,
+                            marginBottom: 12,
+                          }}
+                        >
+                          <Tag
+                            color={selectedRemoteModels.size === remoteModels.length ? "blue" : "default"}
+                            style={{ cursor: "pointer", fontWeight: 500 }}
+                            onClick={toggleAllRemoteModels}
+                          >
+                            {selectedRemoteModels.size === remoteModels.length ? "取消全选" : "全选"} ({remoteModels.length})
+                          </Tag>
+                          {remoteModels.map((name) => {
+                            const checked = selectedRemoteModels.has(name)
+                            const existingModels = p.models.map(m => m.model_name)
+                            const alreadyAdded = existingModels.includes(name)
+                            return (
+                              <Tag
+                                key={name}
+                                color={alreadyAdded ? "default" : (checked ? "blue" : undefined)}
+                                style={{
+                                  cursor: alreadyAdded ? "not-allowed" : "pointer",
+                                  opacity: alreadyAdded ? 0.5 : 1,
+                                  marginRight: 0,
+                                  textDecoration: alreadyAdded ? "line-through" : "none",
+                                }}
+                                onClick={() => { if (!alreadyAdded) toggleRemoteModel(name) }}
+                              >
+                                {name}
+                              </Tag>
+                            )
+                          })}
+                        </div>
+
+                        <div style={{
+                          display: "flex",
+                          gap: 12,
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                        }}>
+                          <Text style={{ fontSize: 13, whiteSpace: "nowrap", color: "var(--ice-text-primary)" }}>
+                            默认聊天模型:
+                          </Text>
+                          <Input
+                            size="small"
+                            placeholder="输入默认模型名称，如 gpt-4o"
+                            value={defaultModelName}
+                            onChange={e => setDefaultModelName(e.target.value)}
+                            style={{ flex: 1, minWidth: 200, maxWidth: 320 }}
+                          />
+                          <Button
+                            type="primary"
+                            size="small"
+                            loading={loading}
+                            onClick={() => batchAddModels(p.id)}
+                          >
+                            批量添加 ({selectedRemoteModels.size})
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {remoteModelsForProvider !== p.id && (
+                  <div style={{ marginTop: 12 }}>
+                    <Button
+                      size="small"
+                      type="primary"
+                      ghost
+                      icon={<CloudDownloadOutlined />}
+                      loading={fetchingModels === p.id}
+                      onClick={() => fetchRemoteModels(p.id)}
+                    >
+                      从 API 获取模型列表
+                    </Button>
+                  </div>
+                )}
+
                 <Divider style={{ margin: "16px 0 12px" }} />
 
                 <div
@@ -496,6 +815,10 @@ export default function ProviderManagement() {
         onCancel={() => {
           setProviderModal(false)
           setEditingProvider(null)
+          setModalRemoteModels([])
+          setModalSelectedModels(new Set())
+          setModalDefaultModel("")
+          setModalRemoteError(null)
         }}
         footer={null}
         width={560}
@@ -530,6 +853,69 @@ export default function ProviderManagement() {
           <Form.Item name="api_key" label="API Key">
             <Input.Password placeholder="sk-..." />
           </Form.Item>
+
+          {/* Only show remote model fetching when adding a new provider */}
+          {!editingProvider && (
+            <>
+              <div style={{ marginBottom: 16 }}>
+                <Button
+                  type="primary"
+                  ghost
+                  icon={<CloudDownloadOutlined />}
+                  loading={modalFetchingModels}
+                  onClick={fetchModalRemoteModels}
+                >
+                  获取模型列表
+                </Button>
+                <Text type="secondary" style={{ marginLeft: 12, fontSize: 13 }}>
+                  填写 Base URL 和 API Key 后拉取可用模型
+                </Text>
+              </div>
+
+              {modalRemoteError && (
+                <div style={{ marginBottom: 16 }}>
+                  <Text type="danger" style={{ fontSize: 13 }}>{modalRemoteError}</Text>
+                </div>
+              )}
+
+              {modalRemoteModels.length > 0 && (
+                <Form.Item label="选择要添加的模型">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
+                    <Tag
+                      color={modalSelectedModels.size === modalRemoteModels.length ? "blue" : "default"}
+                      style={{ cursor: "pointer", fontWeight: 500 }}
+                      onClick={toggleAllModalRemoteModels}
+                    >
+                      {modalSelectedModels.size === modalRemoteModels.length ? "取消全选" : "全选"} ({modalRemoteModels.length})
+                    </Tag>
+                    {modalRemoteModels.map((name) => {
+                      const checked = modalSelectedModels.has(name)
+                      return (
+                        <Tag
+                          key={name}
+                          color={checked ? "blue" : undefined}
+                          style={{ cursor: "pointer", marginRight: 0 }}
+                          onClick={() => toggleModalRemoteModel(name)}
+                        >
+                          {name}
+                        </Tag>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+                    <Text style={{ fontSize: 13, whiteSpace: "nowrap" }}>默认聊天模型:</Text>
+                    <Input
+                      placeholder="例如: gpt-4o"
+                      value={modalDefaultModel}
+                      onChange={(e) => setModalDefaultModel(e.target.value)}
+                      style={{ flex: 1, minWidth: 180 }}
+                    />
+                  </div>
+                </Form.Item>
+              )}
+            </>
+          )}
+
           <Form.Item
             name="enabled"
             valuePropName="checked"
