@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from "react"
-import { Typography, Input, Button, message, Modal, Avatar, Space } from "antd"
+import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown } from "antd"
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
   RobotOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
@@ -7,7 +7,7 @@ import {
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useLayoutStore } from "@/stores/layout"
-import { authHeaders } from "@/services/auth"
+import { authHeaders, getToken } from "@/services/auth"
 import ChatSelector from "@/components/ChatSelector"
 import { useChatSelectors } from "@/stores/useChatSelectors"
 import MediaCard, { MediaCardStyles } from "@/components/MediaCard"
@@ -123,8 +123,10 @@ export default function ChatInterface() {
     const { task_id, provider_id, video_id } = msg.blocks!;
     if (!task_id || !provider_id) return;
 
+    const token = getToken();
     const params = new URLSearchParams({ provider_id: String(provider_id) });
     if (video_id) params.append("video_id", video_id as string);
+    if (token) params.append("token", token);
 
     const url = `/api/videos/${task_id}/watch?${params}`;
     const es = new EventSource(url);
@@ -316,7 +318,7 @@ export default function ChatInterface() {
       const res = await fetch(`/api/threads`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ title: messageContent.slice(0, 20) || "新会话" }),
+        body: JSON.stringify({ title: messageContent.slice(0, 8) || "新会话" }),
       })
         if (res.ok) {
           const data = await res.json()
@@ -551,81 +553,91 @@ export default function ChatInterface() {
             </div>
           ) : (
             threads.map(t => (
-              <div
+              <Dropdown
                 key={t.id}
-                onClick={() => selectThread(t.id)}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  marginBottom: 4,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  background: activeThreadId === t.id ? `${primaryColor}15` : "transparent",
-                  border: activeThreadId === t.id
-                    ? `1px solid ${primaryColor}33`
-                    : "1px solid transparent",
-                  transition: "all 0.15s ease",
-                }}
-                onMouseEnter={e => {
-                  if (activeThreadId !== t.id) {
-                    (e.currentTarget as HTMLDivElement).style.background = "var(--ice-bg-hover)"
-                  }
-                }}
-                onMouseLeave={e => {
-                  if (activeThreadId !== t.id) {
-                    (e.currentTarget as HTMLDivElement).style.background = "transparent"
-                  }
+                trigger={["contextMenu"]}
+                menu={{
+                  items: [
+                    { key: "rename", label: "重命名", icon: <EditOutlined />, onClick: () => startRename(t) },
+                    { key: "delete", label: "删除", icon: <DeleteOutlined />, danger: true, onClick: () => deleteThread(t.id) },
+                  ],
                 }}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontSize: 13,
-                    color: activeThreadId === t.id ? primaryColor : "var(--ice-text-primary)",
-                    fontWeight: activeThreadId === t.id ? 500 : 400,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}>
-                    {t.title}
+                <div
+                  onClick={() => selectThread(t.id)}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 8,
+                    marginBottom: 4,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: activeThreadId === t.id ? `${primaryColor}15` : "transparent",
+                    border: activeThreadId === t.id
+                      ? `1px solid ${primaryColor}33`
+                      : "1px solid transparent",
+                    transition: "all 0.15s ease",
+                  }}
+                  onMouseEnter={e => {
+                    if (activeThreadId !== t.id) {
+                      (e.currentTarget as HTMLDivElement).style.background = "var(--ice-bg-hover)"
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (activeThreadId !== t.id) {
+                      (e.currentTarget as HTMLDivElement).style.background = "transparent"
+                    }
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13,
+                      color: activeThreadId === t.id ? primaryColor : "var(--ice-text-primary)",
+                      fontWeight: activeThreadId === t.id ? 500 : 400,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}>
+                      {t.title}
+                    </div>
+                    <div style={{
+                      fontSize: 11,
+                      color: "var(--ice-text-muted)",
+                      marginTop: 2,
+                    }}>
+                      {formatDate(t.updated_at)}
+                    </div>
                   </div>
-                  <div style={{
-                    fontSize: 11,
-                    color: "var(--ice-text-muted)",
-                    marginTop: 2,
-                  }}>
-                    {formatDate(t.updated_at)}
-                  </div>
+                  <Space size={2}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EditOutlined />}
+                      onClick={e => {
+                        e.stopPropagation()
+                        startRename(t)
+                      }}
+                      style={{ opacity: 0.5, flexShrink: 0 }}
+                      onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
+                      onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
+                    />
+                    <Button
+                      type="text"
+                      danger
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      onClick={e => {
+                        e.stopPropagation()
+                        deleteThread(t.id)
+                      }}
+                      style={{ opacity: 0.5, flexShrink: 0 }}
+                      onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
+                      onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
+                    />
+                  </Space>
                 </div>
-                <Space size={2}>
-                  <Button
-                    type="text"
-                    size="small"
-                    icon={<EditOutlined />}
-                    onClick={e => {
-                      e.stopPropagation()
-                      startRename(t)
-                    }}
-                    style={{ opacity: 0.5, flexShrink: 0 }}
-                    onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
-                    onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
-                  />
-                  <Button
-                    type="text"
-                    danger
-                    size="small"
-                    icon={<DeleteOutlined />}
-                    onClick={e => {
-                      e.stopPropagation()
-                      deleteThread(t.id)
-                    }}
-                    style={{ opacity: 0.5, flexShrink: 0 }}
-                    onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
-                    onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
-                  />
-                </Space>
-              </div>
+              </Dropdown>
             ))
           )}
         </div>

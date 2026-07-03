@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.agent import ask_agent, _get_or_create_thread
 from app.core.database import get_db
 from app.core.security import create_access_token
-from app.deps import get_current_user
+from app.deps import get_current_user, get_current_user_sse
 from app.media import MediaService
 from app.models import (
     KBFeedback, RetrievalLog,
@@ -1183,7 +1183,7 @@ def watch_video_status(
     task_id: str,
     provider_id: int,
     video_id: str | None = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_sse),
     db: Session = Depends(get_db),
 ):
     """SSE endpoint that pushes video status changes in real time.
