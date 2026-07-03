@@ -10,6 +10,8 @@ import { useLayoutStore } from "@/stores/layout"
 import { authHeaders } from "@/services/auth"
 import ChatSelector from "@/components/ChatSelector"
 import { useChatSelectors } from "@/stores/useChatSelectors"
+import MediaCard, { MediaCardStyles } from "@/components/MediaCard"
+import MediaLightbox, { type LightboxImage } from "@/components/MediaLightbox"
 
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -31,6 +33,17 @@ interface Message {
   role: string
   content: string
   created_at: string
+  blocks?: {
+    type: string
+    image_url?: string
+    images?: { url: string }[]
+    task_id?: string
+    video_id?: string
+    status?: string
+    provider_id?: number
+    error?: string
+    video_url?: string
+  } | null
 }
 
 const themeColors: Record<string, { primary: string; accent: string }> = {
@@ -83,7 +96,12 @@ export default function ChatInterface() {
       const res = await fetch(`/api/threads/${threadId}/messages`, { headers: authHeaders() })
       if (res.ok) {
         const data = await res.json()
-        setMessages(data)
+        // 后端返回 extra.blocks，拍平到顶层 msg.blocks
+        const mapped = (data as any[]).map((msg: any) => ({
+          ...msg,
+          blocks: msg.extra?.blocks ?? msg.blocks ?? null,
+        }))
+        setMessages(mapped)
       } else {
         setMessages([])
       }
@@ -91,6 +109,98 @@ export default function ChatInterface() {
       setMessages([])
     }
   }, [])  // No deps - fetches always use fresh URL
+
+  // ── Lightbox state ──────────────────────────────────────────────
+  const [lightboxState, setLightboxState] = useState<{
+    images: LightboxImage[]
+    index: number
+  } | null>(null)
+
+  // ── Video status — SSE real-time push ────────────────────────────
+  const esRef = useRef<Map<number, EventSource>>(new Map())  // msgId → EventSource
+
+  const watchVideo = useCallback((msg: Message) => {
+    const { task_id, provider_id, video_id } = msg.blocks!;
+    if (!task_id || !provider_id) return;
+
+    const params = new URLSearchParams({ provider_id: String(provider_id) });
+    if (video_id) params.append("video_id", video_id as string);
+
+    const url = `/api/videos/${task_id}/watch?${params}`;
+    const es = new EventSource(url);
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status === "completed") {
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === msg.id
+                ? { ...m, blocks: { ...m.blocks!, status: "completed", video_url: data.video_url || "" }, content: "视频已生成" }
+                : m
+            )
+          );
+          es.close();
+          esRef.current.delete(msg.id);
+        } else if (data.status === "failed") {
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === msg.id
+                ? { ...m, blocks: { ...m.blocks!, status: "failed", error: data.error || "" }, content: "视频生成失败" }
+                : m
+            )
+          );
+          es.close();
+          esRef.current.delete(msg.id);
+        }
+        // "processing" / "queued" — keep ES open, no state change needed
+      } catch { /* ignore malformed events */ }
+    };
+
+    es.onerror = () => {
+      es.close();
+      esRef.current.delete(msg.id);
+    };
+
+    esRef.current.set(msg.id, es);
+  }, []);
+
+  // Cleanup EventSources on unmount
+  useEffect(() => {
+    return () => {
+      esRef.current.forEach(es => es.close());
+      esRef.current.clear();
+    };
+  }, []);
+
+  // Auto-connect SSE for new "processing" video messages
+  useEffect(() => {
+    messages.forEach(msg => {
+      if (
+        msg.blocks?.type === "video" &&
+        msg.blocks?.status === "processing" &&
+        msg.blocks?.task_id &&
+        !esRef.current.has(msg.id)
+      ) {
+        watchVideo(msg);
+      }
+    });
+  }, [messages, watchVideo]);
+
+  // Cleanup completed/failed ES connections when state updates
+  useEffect(() => {
+    messages.forEach(msg => {
+      if (
+        msg.blocks?.type === "video" &&
+        (msg.blocks?.status === "completed" || msg.blocks?.status === "failed") &&
+        esRef.current.has(msg.id)
+      ) {
+        esRef.current.get(msg.id)?.close();
+        esRef.current.delete(msg.id);
+      }
+    });
+  }, [messages]);
+  // ── End video SSE watching ────────────────────────────────────────
 
   useEffect(() => {
     fetch("/api/prompt-templates", { headers: authHeaders() })
@@ -186,6 +296,14 @@ export default function ChatInterface() {
   }
 
   const handleSend = async () => {
+    if (!providerId || !modelName) {
+      Modal.warning({
+        title: '请先选择模型',
+        content: '请在上方选择一个 AI 模型后再发送消息',
+        okText: '知道了',
+      })
+      return
+    }
     if (!inputValue.trim() || sending) return
     const messageContent = inputValue.trim()
     setInputValue("")
@@ -249,41 +367,46 @@ export default function ChatInterface() {
         // SSE streaming handler
         const reader = fetchRes.body?.getReader()
         const decoder = new TextDecoder()
-        let assistantContent = ""
-        let finalThreadId = threadId
+            let assistantContent = ""
+            let finalThreadId = threadId
+            let assistantBlocks: any = null
 
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
+            if (reader) {
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
 
-            const chunk = decoder.decode(value, { stream: true })
-            const lines = chunk.split('\n')
+                const chunk = decoder.decode(value, { stream: true })
+                const lines = chunk.split('\n')
 
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const data = JSON.parse(line.slice(6))
-                  if (data.answer !== undefined) {
-                    // Final response
-                    assistantContent = data.answer
-                    finalThreadId = data.thread_id
+                for (const line of lines) {
+                  if (line.startsWith('data: ')) {
+                    try {
+                      const data = JSON.parse(line.slice(6))
+                      if (data.answer !== undefined) {
+                        // Final response
+                        assistantContent = data.answer
+                        finalThreadId = data.thread_id
+                        if (data.blocks) {
+                          assistantBlocks = data.blocks
+                        }
+                      }
+                    } catch {
+                      // Ignore parse errors for partial SSE messages
+                    }
                   }
-                } catch {
-                  // Ignore parse errors for partial SSE messages
                 }
               }
-            }
-          }
 
-          // Send assistant message
-          if (assistantContent) {
-            const assistantMsg: Message = {
-              id: Date.now() + 1,
-              role: "assistant",
-              content: assistantContent,
-              created_at: new Date().toISOString(),
-            }
+              // Send assistant message
+              if (assistantContent) {
+                const assistantMsg: Message = {
+                  id: Date.now() + 1,
+                  role: "assistant",
+                  content: assistantContent,
+                  created_at: new Date().toISOString(),
+                  blocks: assistantBlocks,
+                }
             setMessages(prev => [...prev, assistantMsg])
             
             // Update thread list with new thread if created
@@ -648,6 +771,69 @@ export default function ChatInterface() {
                           fontSize: 14,
                           lineHeight: 1.7,
                         }}>
+                          {/* ── Media Card (Image or Video) ── */}
+                          {(msg.blocks?.type === "image" || msg.blocks?.type === "video") && (
+                            <div
+                              style={{
+                                cursor: msg.blocks.type === "image" ? "pointer" : "default",
+                                position: "relative",
+                              }}
+                              onClick={() => {
+                                if (msg.blocks?.type === "image" && msg.blocks.image_url) {
+                                  const allImages: LightboxImage[] = [
+                                    { url: msg.blocks.image_url, alt: "生成图片" },
+                                    ...(msg.blocks.images?.map((img) => ({
+                                      url: img.url,
+                                      alt: "生成图片",
+                                    })) || []),
+                                  ]
+                                  setLightboxState({ images: allImages, index: 0 })
+                                }
+                              }}
+                            >
+                              <MediaCard
+                                block={
+                                  msg.blocks.type === "image"
+                                    ? {
+                                        type: "image" as const,
+                                        image_url: msg.blocks.image_url!,
+                                        images: msg.blocks.images,
+                                      }
+                                    : {
+                                        type: "video" as const,
+                                        task_id: msg.blocks.task_id!,
+                                        status: (msg.blocks.status || "processing") as any,
+                                        video_url: msg.blocks.video_url,
+                                        error: msg.blocks.error,
+                                        provider_id: msg.blocks.provider_id,
+                                      }
+                                }
+                                primaryColor={primaryColor}
+                                accentColor={accentColor}
+                                isUserMessage={false}
+                                onContentLoaded={() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })}
+                                onThumbnailClick={(index) => {
+                                  if (msg.blocks?.type === "image" && msg.blocks.image_url) {
+                                    const allImages: LightboxImage[] = [
+                                      { url: msg.blocks.image_url, alt: "生成图片" },
+                                      ...(msg.blocks.images?.map((img) => ({
+                                        url: img.url,
+                                        alt: "生成图片",
+                                      })) || []),
+                                    ]
+                                    setLightboxState({ images: allImages, index })
+                                  }
+                                }}
+                              />
+                              {/* Multi-image thumb clicks handled by lightbox */}
+                              {msg.blocks.type === "image" && msg.blocks.images && msg.blocks.images.length > 1 && (
+                                <div style={{ position: "relative" }}>
+                                  {/* Invisible click targets for thumbnails rendered by MediaCard */}
+                                  {/* We intercept clicks via event delegation */}
+                                </div>
+                              )}
+                            </div>
+                          )}
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
@@ -725,6 +911,8 @@ export default function ChatInterface() {
                                   {children}
                                 </p>
                               ),
+                              // 屏蔽 markdown 原生图片渲染（MediaCard 已处理）
+                              img: () => null,
                             }}
                           >
                             {msg.content}
@@ -870,7 +1058,7 @@ export default function ChatInterface() {
                 icon={<SendOutlined />}
                 loading={sending}
                 onClick={handleSend}
-                disabled={!inputValue.trim() || sending}
+                disabled={!inputValue.trim() || sending || !providerId || !modelName}
                 style={{
                   background: primaryColor,
                   borderColor: primaryColor,
@@ -919,6 +1107,20 @@ export default function ChatInterface() {
           40% { opacity: 1; transform: scale(1); }
         }
       `}</style>
+
+      {/* MediaCard styles */}
+      <MediaCardStyles />
+
+      {/* Media Lightbox */}
+      {lightboxState && (
+        <MediaLightbox
+          images={lightboxState.images}
+          currentIndex={lightboxState.index}
+          primaryColor={primaryColor}
+          onClose={() => setLightboxState(null)}
+          onNavigate={(idx) => setLightboxState(s => s ? { ...s, index: idx } : null)}
+        />
+      )}
     </div>
   )
 }

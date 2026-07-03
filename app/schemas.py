@@ -390,10 +390,12 @@ class PromptTemplateRead(BaseModel):
 
 class ProviderModelCreate(BaseModel):
     model_name: str = Field(..., min_length=1, max_length=200)
-    model_type: str = Field(..., pattern="^(chat|embedding)$")
+    model_type: str = Field(..., pattern="^(chat|embedding|video|image)$")
     enabled: bool = True
     is_default_chat: bool = False
     is_default_embedding: bool = False
+    is_default_video: bool = False
+    is_default_image: bool = False
     description: str = ""
 
 
@@ -403,6 +405,8 @@ class ProviderModelUpdate(BaseModel):
     enabled: bool | None = None
     is_default_chat: bool | None = None
     is_default_embedding: bool | None = None
+    is_default_video: bool | None = None
+    is_default_image: bool | None = None
     description: str | None = None
 
 
@@ -414,6 +418,8 @@ class ProviderModelRead(BaseModel):
     enabled: bool
     is_default_chat: bool
     is_default_embedding: bool
+    is_default_video: bool
+    is_default_image: bool
     description: str
     created_at: datetime
 
@@ -457,12 +463,20 @@ class ProviderRead(BaseModel):
 class DefaultModelResponse(BaseModel):
     chat_model: str | None
     embedding_model: str | None
+    video_model: str | None = None
+    image_model: str | None = None
     provider_id: int | None
     provider_name: str | None
 
+class RemoteModelEntry(BaseModel):
+    """A single model entry with its suggested type."""
+    name: str
+    suggested_type: str = "chat"  # chat | image | video | embedding
+
+
 class RemoteModelsResponse(BaseModel):
     """Response from fetching available models from a provider's /v1/models API."""
-    models: list[str] = Field(default_factory=list)
+    models: list[RemoteModelEntry] = Field(default_factory=list)
     error: str | None = None
 
 

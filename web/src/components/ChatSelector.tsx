@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Select } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import { authHeaders } from '@/services/auth'
 
 // ─── Custom SVG Icons ───────────────────────────────────────────────
@@ -69,23 +70,53 @@ const ChevronDownIcon = ({ muted = false }: { muted?: boolean }) => (
 
 // ─── Types ──────────────────────────────────────────────────────────
 
+interface ModelInfo {
+  id: number
+  name: string
+  is_default: boolean
+}
+
+interface TypeGroup {
+  models: ModelInfo[]
+  default: { id: number; name: string } | null
+}
+
 interface ProviderData {
   id: number
   name: string
-  provider_type: string  // 新增
-  models: { id: number; name: string; is_default: boolean }[]
-  selected_model: { id: number; name: string } | null
+  provider_type: string
+  models_by_type: {
+    chat: TypeGroup
+    video: TypeGroup
+    image: TypeGroup
+  }
 }
 
 interface ChatSelectorProps {
   providerId: number | null
-  providerType: string | null  // 新增
+  providerType: string | null
   modelName: string | null
   templateId: number | null
   templates: { id: number; name: string; variables: string[] }[]
   onProviderChange: (providerId: number, modelName: string | null, providerType: string | null) => void
   onTemplateChange: (templateId: number) => void
 }
+
+// ─── Constants ──────────────────────────────────────────────────────
+
+const TYPE_LABELS: Record<string, string> = {
+  chat: '对话模型',
+  video: '视频模型',
+  image: '图片模型',
+}
+
+const TYPE_COLORS: Record<string, string> = {
+  chat: '#2563EB',
+  video: '#7C3AED',
+  image: '#059669',
+}
+
+const TYPE_ORDER = ['chat', 'video', 'image'] as const
 
 // ─── Component ──────────────────────────────────────────────────────
 
@@ -100,6 +131,7 @@ export default function ChatSelector({
 }: ChatSelectorProps) {
   const [providers, setProviders] = useState<ProviderData[]>([])
   const [loading, setLoading] = useState(true)
+  const navigate = useNavigate()
 
   useEffect(() => {
     fetch('/api/providers-chat', { headers: authHeaders() })
@@ -108,52 +140,107 @@ export default function ChatSelector({
         const data = await r.json()
         return data.providers || []
       })
-      .then(setProviders)
+      .then((list) => {
+        setProviders(list)
+        // Auto-select default chat model if none selected yet
+        if (!providerId) {
+          for (const prov of list) {
+            const chatGroup = prov.models_by_type?.chat
+            if (chatGroup?.default) {
+              onProviderChange(prov.id, chatGroup.default.name, prov.provider_type)
+              break
+            }
+          }
+        }
+      })
       .catch(() => [])
       .finally(() => setLoading(false))
   }, [])
 
-  // ── Build model options grouped by provider (OptGroup) ──
+  // ── Build model options grouped by provider → type ──
   const modelOptions = providers.map((provider) => {
     const colorMap = ['#2563EB', '#7C3AED', '#059669', '#D97706', '#DC2626', '#0891B2']
     const colorIndex = provider.id % colorMap.length
 
-    return {
-      label: (
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-          <span
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: '50%',
-              background: colorMap[colorIndex],
-              flexShrink: 0,
-            }}
-          />
-          <span style={{ fontWeight: 500, color: 'var(--ice-text-secondary)' }}>
-            {provider.name}
-          </span>
-          {/* Show provider type badge */}
-          <span style={{ fontSize: 10, color: '#999', marginLeft: 2 }}>
-            {provider.provider_type === 'qwen' ? '通义千问' : provider.provider_type === 'openai-compatible' ? 'OpenAI' : provider.provider_type}
-          </span>
+    // Provider header label
+    const providerLabel = (
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+        <span
+          style={{
+            width: 7,
+            height: 7,
+            borderRadius: '50%',
+            background: colorMap[colorIndex],
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ fontWeight: 600, color: '#333' }}>{provider.name}</span>
+        <span style={{ fontSize: 10, color: '#999' }}>
+          {provider.provider_type === 'qwen' ? '通义千问' : provider.provider_type === 'openai-compatible' ? 'OpenAI' : provider.provider_type}
         </span>
-      ),
-      options: provider.models.map((m) => ({
-        value: `${provider.id}::${m.name}::${provider.provider_type}`,
-        label: m.name,
-      })),
+      </span>
+    )
+
+    // Build model options with type group separators
+    const options: any[] = []
+    for (const mtype of TYPE_ORDER) {
+      const group = provider.models_by_type?.[mtype]
+      if (!group || group.models.length === 0) continue
+
+      // Type header (non-selectable separator)
+      options.push({
+        type: 'type-header',
+        label: (
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 6, paddingLeft: 4,
+            fontSize: 11, color: TYPE_COLORS[mtype], fontWeight: 600,
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 6, height: 6, borderRadius: 2,
+              background: TYPE_COLORS[mtype],
+            }} />
+            {TYPE_LABELS[mtype]}
+            <span style={{ fontWeight: 400, color: '#aaa', fontSize: 10 }}>
+              ({group.models.length})
+            </span>
+          </span>
+        ),
+        value: `__header__${provider.id}__${mtype}`,
+        disabled: true,
+      })
+
+      // Model options
+      for (const m of group.models) {
+        options.push({
+          value: `${provider.id}::${m.name}::${provider.provider_type}::${mtype}`,
+          label: (
+            <span style={{ display: "flex", alignItems: "center", gap: 6, paddingLeft: 10 }}>
+              <span>{m.name}</span>
+              {m.is_default && (
+                <span style={{
+                  fontSize: 10, color: "#faad14", fontWeight: 500,
+                  background: "rgba(250,173,20,0.1)", padding: "0 4px", borderRadius: 3,
+                }}>
+                  默认
+                </span>
+              )}
+            </span>
+          ),
+        })
+      }
     }
+
+    return { label: providerLabel, options }
   })
 
+  // ── Parse selection value ──
   const handleModelSelect = (value: string) => {
-    const sep = value.indexOf('::')
-    if (sep === -1) return
-    const provId = Number(value.slice(0, sep))
-    const rest = value.slice(sep + 2)
-    const nextSep = rest.indexOf('::')
-    const mName = nextSep !== -1 ? rest.slice(nextSep + 2) : rest
-    const pType = nextSep !== -1 ? rest.slice(0, nextSep) : 'openai-compatible'
+    const parts = value.split('::')
+    if (parts.length < 3) return
+    const provId = Number(parts[0])
+    const mName = parts[1]
+    const pType = parts[2]
     onProviderChange(provId, mName, pType)
   }
 
@@ -162,8 +249,9 @@ export default function ChatSelector({
   }
 
   // ── Derived state ──
+  const currentProviderType = providerType || providers.find((p) => p.id === providerId)?.provider_type
   const modelValue =
-    providerId && modelName ? `${providerId}::${modelName || ''}::${providerType || 'openai-compatible'}` : undefined
+    providerId && modelName ? `${providerId}::${modelName}::${currentProviderType || 'openai-compatible'}` : undefined
   const hasModel = !!modelValue
   const hasTemplate = !!templateId
 
@@ -210,9 +298,40 @@ export default function ChatSelector({
     .chat-selector-tmpl-dropdown {
       z-index: 1050 !important;
     }
+    /* Style disabled type-header options */
+    .chat-selector-model-dropdown .ant-select-item-option-disabled {
+      cursor: default !important;
+      padding-top: 8px !important;
+      padding-bottom: 2px !important;
+    }
+    .chat-selector-model-dropdown .ant-select-item-option-disabled + .ant-select-item-option {
+      padding-top: 2px !important;
+    }
   `
 
   if (loading) return null
+
+  const noProviders = providers.length === 0
+
+  if (noProviders) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          fontSize: 12,
+          color: 'var(--ice-text-muted)',
+          cursor: 'pointer',
+        }}
+        onClick={() => navigate('/agents/providers')}
+      >
+        <ModelIcon muted />
+        <span>请先配置 AI 提供商</span>
+        <ChevronDownIcon muted />
+      </div>
+    )
+  }
 
   return (
     <>
@@ -240,10 +359,21 @@ export default function ChatSelector({
             getPopupContainer={() => document.body}
             popupClassName="chat-selector-model-dropdown"
             dropdownMatchSelectWidth={false}
-            dropdownStyle={{ minWidth: 210 }}
-            optionRender={(opt: any) => (
-              <span style={{ fontSize: 13 }}>{opt.label}</span>
-            )}
+            dropdownStyle={{ minWidth: 220 }}
+            filterOption={(input: string, option: any) => {
+              if (!input || !option?.value) return true
+              const val = String(option.value)
+              // Allow filtering by model name (skip type headers)
+              if (val.startsWith('__header__')) return false
+              return val.toLowerCase().includes(input.toLowerCase())
+            }}
+            labelRender={(props: any) => {
+              const val = props.value as string || ''
+              const parts = val.split('::')
+              const name = parts.length >= 2 ? parts[1] : ''
+              if (!name) return <span style={{ color: '#666' }}>模型</span>
+              return <span style={{ color: '#1a1a1a' }}>{name}</span>
+            }}
           />
           <ChevronDownIcon muted={!hasModel} />
         </div>

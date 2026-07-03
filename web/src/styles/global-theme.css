@@ -111,6 +111,24 @@ html, body, #root {
   background: var(--ice-primary-dark) !important;
   border-color: var(--ice-primary-dark) !important;
 }
+/* Ghost 按钮 (primary) — 提升文字可读性 */
+.ant-btn-background-ghost.ant-btn-primary {
+  color: var(--ice-primary) !important;
+  border-color: var(--ice-primary) !important;
+  background: var(--ice-primary-10) !important;
+}
+.ant-btn-background-ghost.ant-btn-primary:hover,
+.ant-btn-background-ghost.ant-btn-primary:focus {
+  color: #fff !important;
+  background: var(--ice-primary) !important;
+  border-color: var(--ice-primary) !important;
+}
+.ant-btn-background-ghost.ant-btn-primary:disabled {
+  color: var(--ice-text-muted) !important;
+  border-color: var(--ice-border) !important;
+  background: transparent !important;
+  cursor: not-allowed;
+}
 .ant-input-number, .ant-input-number-input {
   background: var(--ice-bg-card) !important;
   border: 1px solid var(--ice-border) !important;

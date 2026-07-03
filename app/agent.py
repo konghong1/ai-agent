@@ -45,6 +45,7 @@ def _resolve_llm_config(
     model_name: str | None,
     agent_config: AgentConfig | None,
     temperature: float | None = None,
+    model_type: str = "chat",
 ) -> LLMConfig:
     """Resolve LLM configuration from various sources (provider, agent, settings).
 
@@ -83,18 +84,25 @@ def _resolve_llm_config(
                 base_url = provider_base_url or provider.base_url or base_url
                 
                 if not resolved_model:
-                    # Find default chat model for this provider
+                    # Find default model for this provider matching the requested type
+                    type_to_flag = {
+                        "chat": ProviderModel.is_default_chat,
+                        "image": ProviderModel.is_default_image,
+                        "video": ProviderModel.is_default_video,
+                        "embedding": ProviderModel.is_default_embedding,
+                    }
+                    flag = type_to_flag.get(model_type, ProviderModel.is_default_chat)
                     default_model = db.scalar(select(ProviderModel).where(
                         ProviderModel.provider_id == provider.id,
-                        ProviderModel.is_default_chat == True,
-                        ProviderModel.model_type == "chat",
+                        flag == True,
+                        ProviderModel.model_type == model_type,
                         ProviderModel.enabled == True,
                     ))
                     if default_model:
                         resolved_model = default_model.model_name
                     elif provider.models:
-                        chat_models = [m for m in provider.models if m.model_type == "chat" and m.enabled]
-                        resolved_model = chat_models[0].model_name if chat_models else None
+                        matching = [m for m in provider.models if m.model_type == model_type and m.enabled]
+                        resolved_model = matching[0].model_name if matching else None
         finally:
             db.close()
 
@@ -110,6 +118,13 @@ def _resolve_llm_config(
     # Determine provider_type based on base_url
     provider_type = "openai-compatible"  # default
 
+    import logging as _llm_logging
+    _llm_log = _llm_logging.getLogger(__name__)
+    _llm_log.info(
+        "Resolved LLM config: model=%s base_url=%s provider_type=%s api_key_prefix=%s",
+        resolved_model, base_url, provider_type, (api_key or "")[:8] + "..." if api_key else "None"
+    )
+
     return LLMConfig(
         provider_type=provider_type,
         model_name=resolved_model,
@@ -121,6 +136,18 @@ def _resolve_llm_config(
 
 def _create_llm_from_config(config: LLMConfig):
     """Create an LLM instance (either via factory or legacy ChatOpenAI)."""
+    import logging
+    _log = logging.getLogger(__name__)
+    _log.info("Creating LLM — model=%s base_url=%s provider_type=%s api_key=%s...",
+              config.model_name, config.base_url, config.provider_type,
+              (config.api_key or "")[:8])
+    
+    # Enable OpenAI client debug logging
+    _openai_log = logging.getLogger("openai")
+    _openai_log.setLevel(logging.DEBUG)
+    _httpx_log = logging.getLogger("httpx")
+    _httpx_log.setLevel(logging.DEBUG)
+    
     # Try factory first
     try:
         adapter = LLMFactory.create(config)
@@ -133,7 +160,8 @@ def _create_llm_from_config(config: LLMConfig):
             api_key=config.api_key,
             base_url=config.base_url,
         )
-    except Exception:
+    except Exception as e:
+        _log.error("Factory create failed: %s, falling back to ChatOpenAI directly", e)
         # Fallback to direct ChatOpenAI
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
@@ -302,11 +330,22 @@ def ask_agent(
         resolved_config.provider_type = provider_type
 
     llm = _create_llm_from_config(resolved_config)
-    agent_name = f"agent-{agent_config.id}" if agent_config else "chat"
-    agent = create_agent(model=llm, tools=get_tools(), system_prompt="", name=agent_name)
 
-    result = agent.invoke({"messages": langchain_messages})
-    answer_raw = result["messages"][-1].content
+    # Convert dict messages to LangChain message objects for direct invoke
+    from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+    lc_messages = []
+    for m in langchain_messages:
+        role = m.get("role", "")
+        content = m.get("content", "")
+        if role == "system":
+            lc_messages.append(SystemMessage(content=content))
+        elif role == "assistant":
+            lc_messages.append(AIMessage(content=content))
+        else:
+            lc_messages.append(HumanMessage(content=content))
+
+    response = llm.invoke(lc_messages)
+    answer_raw = response.content
     answer_text, blocks = _extract_blocks(answer_raw)
 
     msg = Message(

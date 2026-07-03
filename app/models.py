@@ -198,6 +198,8 @@ class ProviderModel(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     is_default_chat: Mapped[bool] = mapped_column(Boolean, default=False)
     is_default_embedding: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_default_video: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_default_image: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[str] = mapped_column(String(300), default="")
 
     provider: Mapped[Provider] = relationship(back_populates="models")

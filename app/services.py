@@ -809,28 +809,65 @@ class ProviderService:
     @staticmethod
     def create_model(db: Session, provider_id: int, model_name: str, model_type: str,
                      enabled: bool = True, is_default_chat: bool = False,
-                     is_default_embedding: bool = False, description: str = "") -> "ProviderModel":
+                     is_default_embedding: bool = False,
+                     is_default_video: bool = False,
+                     is_default_image: bool = False,
+                     description: str = "") -> "ProviderModel":
         from app.models import ProviderModel
-        if model_type == "chat" and is_default_chat:
-            db.execute(
-                select(ProviderModel).where(
-                    ProviderModel.provider_id == provider_id,
-                    ProviderModel.model_type == "chat",
-                    ProviderModel.is_default_chat == True
-                ).update({"is_default_chat": False})
+        # Check if model already exists — if so, update it (idempotent batch add)
+        existing = db.scalar(
+            select(ProviderModel).where(
+                ProviderModel.provider_id == provider_id,
+                ProviderModel.model_name == model_name
             )
-        if model_type == "embedding" and is_default_embedding:
-            db.execute(
-                select(ProviderModel).where(
-                    ProviderModel.provider_id == provider_id,
-                    ProviderModel.model_type == "embedding",
-                    ProviderModel.is_default_embedding == True
-                ).update({"is_default_embedding": False})
-            )
+        )
+        if existing:
+            existing.model_type = model_type
+            existing.enabled = enabled
+            existing.description = description or existing.description
+            # Only flip default flags if the caller explicitly wants this model as default
+            _default_flags = {
+                "chat": "is_default_chat",
+                "embedding": "is_default_embedding",
+                "video": "is_default_video",
+                "image": "is_default_image",
+            }
+            if any(getattr(existing, v) for v in _default_flags.values() if v in _default_flags):
+                pass  # keep existing defaults if already set
+            elif is_default_chat or is_default_embedding or is_default_video or is_default_image:
+                # Apply caller's default flags only if none are already set
+                existing.is_default_chat = is_default_chat
+                existing.is_default_embedding = is_default_embedding
+                existing.is_default_video = is_default_video
+                existing.is_default_image = is_default_image
+            db.commit()
+            db.refresh(existing)
+            return existing
+        # Reset other defaults of the same type
+        _default_flags_map = {
+            "chat": ("is_default_chat", is_default_chat),
+            "embedding": ("is_default_embedding", is_default_embedding),
+            "video": ("is_default_video", is_default_video),
+            "image": ("is_default_image", is_default_image),
+        }
+        if model_type in _default_flags_map:
+            flag_name, flag_value = _default_flags_map[model_type]
+            if flag_value:
+                flag_col = getattr(ProviderModel, flag_name)
+                db.execute(
+                    select(ProviderModel).where(
+                        ProviderModel.provider_id == provider_id,
+                        ProviderModel.model_type == model_type,
+                        flag_col == True
+                    ).update({flag_name: False})
+                )
         pm = ProviderModel(
             provider_id=provider_id, model_name=model_name, model_type=model_type,
             enabled=enabled, is_default_chat=is_default_chat,
-            is_default_embedding=is_default_embedding, description=description,
+            is_default_embedding=is_default_embedding,
+            is_default_video=is_default_video,
+            is_default_image=is_default_image,
+            description=description,
         )
         db.add(pm)
         db.commit()
@@ -885,18 +922,49 @@ class ProviderService:
         )
 
     @staticmethod
+    def get_default_model_by_type(db: Session, provider_id: int, model_type: str) -> str | None:
+        """Get the default model name for a specific model type from a provider."""
+        from app.models import ProviderModel
+        type_to_flag = {
+            "chat": ProviderModel.is_default_chat,
+            "image": ProviderModel.is_default_image,
+            "video": ProviderModel.is_default_video,
+            "embedding": ProviderModel.is_default_embedding,
+        }
+        flag = type_to_flag.get(model_type)
+        if flag is None:
+            return None
+        return db.scalar(
+            select(ProviderModel.model_name).where(
+                ProviderModel.provider_id == provider_id,
+                ProviderModel.model_type == model_type,
+                flag == True,
+                ProviderModel.enabled == True,
+            )
+        )
+
+    @staticmethod
     def get_default_model(db: Session, user_id: int) -> "DefaultModelResponse":
         from app.models import Provider, ProviderModel
+        from app.schemas import DefaultModelResponse
         default_provider = db.scalar(
             select(Provider).where(Provider.user_id == user_id, Provider.is_default == True)
         )
         if not default_provider:
-            return DefaultModelResponse(chat_model=None, embedding_model=None, provider_id=None, provider_name=None)
+            return DefaultModelResponse(
+                chat_model=None, embedding_model=None,
+                video_model=None, image_model=None,
+                provider_id=None, provider_name=None,
+            )
         chat_model = ProviderService.get_default_chat_model(db, default_provider.id)
         embedding_model = ProviderService.get_default_embedding_model(db, default_provider.id)
+        video_model = ProviderService.get_default_model_by_type(db, default_provider.id, "video")
+        image_model = ProviderService.get_default_model_by_type(db, default_provider.id, "image")
         return DefaultModelResponse(
             chat_model=chat_model,
             embedding_model=embedding_model,
+            video_model=video_model,
+            image_model=image_model,
             provider_id=default_provider.id,
             provider_name=default_provider.name,
         )

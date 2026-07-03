@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.request
 
+# Enable debug logging for troubleshooting
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session
 
-from app.agent import ask_agent
+from app.agent import ask_agent, _get_or_create_thread
 from app.core.database import get_db
 from app.core.security import create_access_token
 from app.deps import get_current_user
+from app.media import MediaService
 from app.models import (
     KBFeedback, RetrievalLog,
 AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBFolder, KBDocument,
@@ -34,7 +40,7 @@ SystemSettingCreate, SystemSettingRead, SystemSettingUpdate,
 PromptTemplateCreate, PromptTemplateRead, PromptTemplateUpdate,
     ProviderCreate, ProviderRead, ProviderUpdate,
     ProviderModelCreate, ProviderModelRead, ProviderModelUpdate,
-    DefaultModelResponse, RemoteModelsResponse, RemoteModelsFetchRequest,
+    DefaultModelResponse, RemoteModelsResponse, RemoteModelEntry, RemoteModelsFetchRequest,
 )
 from app.services import (
     HybridRetriever, ContextBuilder, RAG_SYSTEM_PROMPT, QueryRewriter,
@@ -221,9 +227,120 @@ def get_thread_messages(thread_id: str, current_user: User = Depends(get_current
     return list(db.scalars(select(Message).where(Message.thread_id == thread.id).order_by(Message.created_at)))
 
 
+# ============================================================
+# Media generation helpers (image / video)
+# ============================================================
+
+def _resolve_provider_model(db: Session, provider_id: int, model_name: str) -> ProviderModel | None:
+    """Look up a ProviderModel by provider_id + model_name."""
+    return db.scalar(
+        select(ProviderModel).where(
+            ProviderModel.provider_id == provider_id,
+            ProviderModel.model_name == model_name,
+        )
+    )
+
+
+def _handle_image_generation(
+    db: Session,
+    provider: Provider,
+    model: ProviderModel,
+    payload: ChatRequest,
+    current_user: User,
+) -> ChatResponse:
+    """Generate an image and store the result as a chat message."""
+    result = MediaService.generate_image(
+        provider=provider,
+        model_name=model.model_name,
+        prompt=payload.message,
+    )
+
+    images = result.get("data", [])
+    image_url = images[0].get("url", "") if images else ""
+    error = result.get("error", "")
+
+    thread = _get_or_create_thread(db, current_user.id, payload.agent_id, payload.message, payload.thread_id)
+    db.add(Message(thread_id=thread.id, role="user", content=payload.message))
+
+    if error:
+        answer = f"Image generation failed: {error}"
+        blocks = {"type": "image", "error": error}
+    elif image_url:
+        answer = f"![Generated Image]({image_url})"
+        blocks = {"type": "image", "image_url": image_url, "images": images}
+    else:
+        answer = "Image generation completed but no image URL returned."
+        blocks = {"type": "image", "raw_result": result}
+
+    db.add(Message(
+        thread_id=thread.id, role="assistant", content=answer,
+        extra={"blocks": blocks},
+    ))
+    db.commit()
+    return ChatResponse(answer=answer, thread_id=thread.id, blocks=blocks)
+
+
+def _handle_video_generation(
+    db: Session,
+    provider: Provider,
+    model: ProviderModel,
+    payload: ChatRequest,
+    current_user: User,
+) -> ChatResponse:
+    """Submit a video generation task and store the result as a chat message."""
+    result = MediaService.generate_video(
+        provider=provider,
+        model_name=model.model_name,
+        prompt=payload.message,
+    )
+
+    task_id = result.get("id") or result.get("task_id", "")
+    video_id = result.get("video_id", "")
+    error = result.get("error", "")
+
+    thread = _get_or_create_thread(db, current_user.id, payload.agent_id, payload.message, payload.thread_id)
+    db.add(Message(thread_id=thread.id, role="user", content=payload.message))
+
+    if error:
+        answer = f"Video generation failed: {error}"
+        blocks = {"type": "video", "error": error}
+    else:
+        answer = f"正在生成视频..."
+        blocks = {
+            "type": "video",
+            "task_id": task_id,
+            "video_id": video_id,
+            "status": "processing",
+            "provider_id": provider.id,
+        }
+
+    db.add(Message(
+        thread_id=thread.id, role="assistant", content=answer,
+        extra={"blocks": blocks},
+    ))
+    db.commit()
+    return ChatResponse(answer=answer, thread_id=thread.id, blocks=blocks)
+
+
+# ============================================================
+# Chat endpoints
+# ============================================================
+
 @router.post("/chat", response_model=ChatResponse)
 def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ChatResponse:
     try:
+        # ── Model-type routing: detect non-chat models and dispatch ──
+        if payload.provider_id and payload.model_name:
+            provider = db.get(Provider, payload.provider_id)
+            if provider and provider.user_id == current_user.id and provider.enabled:
+                provider_model = _resolve_provider_model(db, payload.provider_id, payload.model_name)
+                if provider_model:
+                    if provider_model.model_type == "video":
+                        return _handle_video_generation(db, provider, provider_model, payload, current_user)
+                    elif provider_model.model_type == "image":
+                        return _handle_image_generation(db, provider, provider_model, payload, current_user)
+                    # chat / embedding: fall through to existing flow
+
         # Determine which system prompt and model to use
         system_prompt = None
         model_name = None
@@ -301,7 +418,23 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
     
     async def event_generator():
         from app.agent import ask_agent
+        _logger = logging.getLogger(__name__)
         try:
+            # ── Model-type routing: detect non-chat models and dispatch ──
+            if payload.provider_id and payload.model_name:
+                provider = db.get(Provider, payload.provider_id)
+                if provider and provider.user_id == current_user.id and provider.enabled:
+                    provider_model = _resolve_provider_model(db, payload.provider_id, payload.model_name)
+                    if provider_model:
+                        if provider_model.model_type == "video":
+                            result = _handle_video_generation(db, provider, provider_model, payload, current_user)
+                            yield f"data: {json.dumps({'answer': result.answer, 'thread_id': result.thread_id, 'blocks': result.blocks})}\n\n"
+                            return
+                        elif provider_model.model_type == "image":
+                            result = _handle_image_generation(db, provider, provider_model, payload, current_user)
+                            yield f"data: {json.dumps({'answer': result.answer, 'thread_id': result.thread_id, 'blocks': result.blocks})}\n\n"
+                            return
+
             # Determine which system prompt and model to use (same logic as /chat)
             system_prompt = None
             model_name = None
@@ -317,13 +450,18 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
                 if agent and agent.user_id == current_user.id and agent.enabled:
                     system_prompt = agent.system_prompt
                     model_name = agent.model_name
-            
+
             if payload.provider_id:
                 provider = db.get(Provider, payload.provider_id)
                 if provider and provider.user_id == current_user.id and provider.enabled:
                     provider_base_url = provider.base_url
                     if payload.model_name:
                         model_name = payload.model_name
+
+            _logger.info(
+                "chat-stream request: provider_id=%s model=%s base_url=%s type=%s agent_id=%s",
+                payload.provider_id, model_name, provider_base_url, payload.provider_type, payload.agent_id,
+            )
             
             # Build the request
             request_data = {
@@ -367,9 +505,10 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
                 
         except Exception as exc:
             import traceback
-            logger = logging.getLogger(__name__)
-            logger.error("Chat stream error: %s\n%s", exc, traceback.format_exc())
-            yield f"data: {json.dumps({'error': f'{type(exc).__name__}: {exc}'})}\n\n"
+            _logger = logging.getLogger(__name__)
+            tb_str = traceback.format_exc()
+            _logger.error("Chat stream error: %s\n%s", exc, tb_str)
+            yield f"data: {json.dumps({'error': f'{type(exc).__name__}: {exc}', 'traceback': tb_str[-2000:]})}\n\n"
     
     return StreamingResponse(
         event_generator(),
@@ -447,7 +586,11 @@ def create_provider_model(provider_id: int, payload: ProviderModelCreate, curren
     provider = db.scalar(select(Provider).where(Provider.id == provider_id, Provider.user_id == current_user.id))
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found.")
-    return ProviderService.create_model(db, provider_id=provider_id, **payload.model_dump())
+    try:
+        return ProviderService.create_model(db, provider_id=provider_id, **payload.model_dump())
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=f"模型 '{payload.model_name}' 已存在")
 @router.patch("/providers/{provider_id}/models/{model_id}", response_model=ProviderModelRead)
 def update_provider_model(provider_id: int, model_id: int, payload: ProviderModelUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> ProviderModel:
     model = db.scalar(select(ProviderModel).where(ProviderModel.id == model_id, ProviderModel.provider_id == provider_id))
@@ -460,26 +603,63 @@ def delete_provider_model(provider_id: int, model_id: int, current_user: User = 
     if not model:
         raise HTTPException(status_code=404, detail="Model not found.")
     ProviderService.delete_model(db, model)
+# ── Helper: guess model type from name ──
+
+def _suggest_model_type(model_id: str) -> str:
+    """Heuristically guess the model type from its ID string."""
+    lower = model_id.lower()
+    # Image models
+    if any(k in lower for k in ("dall-e", "dalle", "image", "stable-diffusion", "sd-", "midjourney", "flux", "imagen")):
+        return "image"
+    # Video models
+    if any(k in lower for k in ("sora", "video", "kling", "cogvideo", "runway", "pika", "luma")):
+        return "video"
+    # Embedding models
+    if any(k in lower for k in ("embedding", "bge", "text-embedding", "e5-", "gte-", "stella")):
+        return "embedding"
+    # TTS / audio
+    if any(k in lower for k in ("tts", "whisper", "speech", "audio")):
+        return "chat"  # fallback — not supported yet
+    return "chat"
+
+
+# ── Remote model fetching endpoints ──
+
+
+def _fetch_models_from_api(base_url: str, api_key: str) -> tuple[list[RemoteModelEntry], str | None]:
+    """Call /v1/models and return typed model entries."""
+    models_url = base_url.rstrip("/") + "/models"
+    req = urllib.request.Request(
+        models_url,
+        headers={"Authorization": f"Bearer {api_key}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = json.loads(resp.read().decode())
+        entries = []
+        for m in body.get("data", []):
+            mid = m.get("id")
+            if not mid:
+                continue
+            entries.append(RemoteModelEntry(
+                name=mid,
+                suggested_type=_suggest_model_type(mid),
+            ))
+        return entries, None
+
+
 @router.get("/providers/{provider_id}/remote-models", response_model=RemoteModelsResponse)
 def fetch_remote_models(provider_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> RemoteModelsResponse:
-    """Fetch available model names from a provider's /v1/models endpoint."""
+    """Fetch available model names from a provider's /v1/models endpoint, with suggested types."""
     provider = db.scalar(select(Provider).where(Provider.id == provider_id, Provider.user_id == current_user.id))
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found.")
     if not provider.base_url or not provider.api_key:
         return RemoteModelsResponse(error="请先配置 Base URL 和 API Key")
 
-    models_url = provider.base_url.rstrip("/") + "/models"
     try:
-        req = urllib.request.Request(
-            models_url,
-            headers={"Authorization": f"Bearer {provider.api_key}"},
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            body = json.loads(resp.read().decode())
-            model_names = [m["id"] for m in body.get("data", []) if m.get("id")]
-            return RemoteModelsResponse(models=model_names)
+        entries, _err = _fetch_models_from_api(provider.base_url, provider.api_key)
+        return RemoteModelsResponse(models=entries)
     except Exception as e:
         return RemoteModelsResponse(error=f"无法连接: {e}")
 
@@ -492,17 +672,9 @@ def fetch_remote_models_preview(payload: RemoteModelsFetchRequest) -> RemoteMode
     if not base_url or not api_key:
         return RemoteModelsResponse(error="请先填写 Base URL 和 API Key")
 
-    models_url = base_url.rstrip("/") + "/models"
     try:
-        req = urllib.request.Request(
-            models_url,
-            headers={"Authorization": f"Bearer {api_key}"},
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            body = json.loads(resp.read().decode())
-            model_names = [m["id"] for m in body.get("data", []) if m.get("id")]
-            return RemoteModelsResponse(models=model_names)
+        entries, _err = _fetch_models_from_api(base_url, api_key)
+        return RemoteModelsResponse(models=entries)
     except Exception as e:
         return RemoteModelsResponse(error=f"无法连接: {e}")
 
@@ -872,40 +1044,283 @@ def get_providers_for_chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Return all enabled providers with their chat models for the chat UI selector."""
+    """Return all enabled providers with their models grouped by type (chat/video/image) for the chat UI selector."""
     providers = db.scalars(
         select(Provider).where(
             Provider.user_id == current_user.id,
             Provider.enabled == True,
         ).order_by(Provider.is_default.desc(), Provider.name)
     ).all()
-    
+
+    def _model_entry(m: ProviderModel) -> dict:
+        return {
+            "id": m.id,
+            "name": m.model_name,
+            "is_default": (
+                m.is_default_chat if m.model_type == "chat"
+                else m.is_default_image if m.model_type == "image"
+                else m.is_default_video if m.model_type == "video"
+                else m.is_default_embedding
+            ),
+        }
+
     result = []
     for p in providers:
-        models = [
-            m for m in p.models 
-            if m.model_type == "chat" and m.enabled
-        ]
-        selected_model = next((m for m in models if m.is_default_chat), models[0] if models else None)
+        models_by_type: dict[str, list[dict]] = {"chat": [], "video": [], "image": []}
+        for m in p.models:
+            if not m.enabled or m.model_type not in models_by_type:
+                continue
+            models_by_type[m.model_type].append(_model_entry(m))
+
+        # Build type-grouped response with defaults
+        grouped = {}
+        for mtype, models in models_by_type.items():
+            default = next((m for m in models if m["is_default"]), models[0] if models else None)
+            grouped[mtype] = {
+                "models": models,
+                "default": {"id": default["id"], "name": default["name"]} if default else None,
+            }
+
         result.append({
             "id": p.id,
             "name": p.name,
             "base_url": p.base_url,
-            "models": [
-                {
-                    "id": m.id,
-                    "name": m.model_name,
-                    "is_default": m.is_default_chat,
-                }
-                for m in models
-            ],
-            "selected_model": {
-                "id": selected_model.id if selected_model else None,
-                "name": selected_model.model_name if selected_model else None,
-            } if selected_model else None,
+            "provider_type": p.provider_type,
+            "models_by_type": grouped,
         })
-    
+
     return {"providers": result}
+
+
+@router.get("/providers-all")
+def get_all_providers(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Return all enabled providers with their models grouped by type (chat/video/image/embedding)."""
+    providers = db.scalars(
+        select(Provider).where(
+            Provider.user_id == current_user.id,
+            Provider.enabled == True,
+        ).order_by(Provider.is_default.desc(), Provider.name)
+    ).all()
+
+    result = []
+    for p in providers:
+        models_by_type: dict = {"chat": [], "image": [], "video": [], "embedding": []}
+        for m in p.models:
+            if not m.enabled:
+                continue
+            entry = {
+                "id": m.id,
+                "name": m.model_name,
+                "is_default": (
+                    m.is_default_chat if m.model_type == "chat"
+                    else m.is_default_image if m.model_type == "image"
+                    else m.is_default_video if m.model_type == "video"
+                    else m.is_default_embedding
+                ),
+            }
+            bucket = models_by_type.setdefault(m.model_type, [])
+            bucket.append(entry)
+
+        result.append({
+            "id": p.id,
+            "name": p.name,
+            "base_url": p.base_url,
+            "models": models_by_type,
+        })
+
+    return {"providers": result}
+
+
+# ── Video task status ──
+
+@router.get("/videos/{task_id}/status")
+def get_video_status(
+    task_id: str,
+    provider_id: int,
+    video_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Poll the status of a video generation task.
+
+    Also persists the completed / failed status into the corresponding
+    chat message so history survives page refreshes.
+    """
+    provider = db.scalar(
+        select(Provider).where(
+            Provider.id == provider_id,
+            Provider.user_id == current_user.id,
+            Provider.enabled == True,
+        )
+    )
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+
+    result = MediaService.get_video_status(provider, task_id, video_id)
+
+    # Persist completed / failed status to the chat message
+    status = result.get("status") or result.get("state", "")
+    video_url = (
+        result.get("remixed_from_video_id")
+        or result.get("video_url")
+        or result.get("output")
+        or result.get("url")
+        or ""
+    )
+    error = result.get("error", "")
+
+    if status in ("completed", "succeeded", "failed", "error") or video_url:
+        _persist_video_status(db, current_user.id, task_id, status, video_url, error)
+
+    return result
+
+
+@router.get("/videos/{task_id}/watch")
+def watch_video_status(
+    task_id: str,
+    provider_id: int,
+    video_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """SSE endpoint that pushes video status changes in real time.
+
+    The client opens this as an EventSource and receives ``data:`` events
+    whenever the video transitions through queued → processing →
+    completed / failed.  No client-side polling needed.
+    """
+    provider = db.scalar(
+        select(Provider).where(
+            Provider.id == provider_id,
+            Provider.user_id == current_user.id,
+            Provider.enabled == True,
+        )
+    )
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+
+    import asyncio
+    import json
+
+    POLL_INTERVAL = 2       # seconds between internal polls
+    MAX_POLLS = 150         # ~5 minutes timeout
+
+    async def event_generator():
+        poll_count = 0
+        while poll_count < MAX_POLLS:
+            await asyncio.sleep(POLL_INTERVAL)
+            poll_count += 1
+
+            result = MediaService.get_video_status(provider, task_id, video_id)
+
+            status = result.get("status") or result.get("state", "")
+            video_url = (
+                result.get("remixed_from_video_id")
+                or result.get("video_url")
+                or result.get("output")
+                or result.get("url")
+                or ""
+            )
+            error = result.get("error", "")
+
+            if status in ("completed", "succeeded") or video_url:
+                _persist_video_status(db, current_user.id, task_id,
+                                       status if status else "completed",
+                                       video_url, "")
+                yield f"data: {json.dumps({'status': 'completed', 'video_url': video_url})}\n\n"
+                return
+
+            if status in ("failed", "error"):
+                _persist_video_status(db, current_user.id, task_id,
+                                       status, "", error or "")
+                yield f"data: {json.dumps({'status': 'failed', 'error': error or ''})}\n\n"
+                return
+
+            # Heartbeat — keep alive, client ignores "processing" events
+            yield f"data: {json.dumps({'status': status or 'processing'})}\n\n"
+
+        # Timeout
+        _persist_video_status(db, current_user.id, task_id,
+                               "failed", "", "视频生成超时")
+        yield f"data: {json.dumps({'status': 'failed', 'error': '视频生成超时，请重试'})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+def _persist_video_status(
+    db: Session,
+    user_id: int,
+    task_id: str,
+    status: str,
+    video_url: str,
+    error: str,
+) -> None:
+    """Update the DB message whose extra.blocks.task_id matches."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    # Find the assistant message with this video task_id (search recent
+    # messages belonging to threads owned by this user).
+    msg = db.scalar(
+        select(Message)
+        .join(Thread, Message.thread_id == Thread.id)
+        .where(
+            Thread.user_id == user_id,
+            Message.role == "assistant",
+        )
+        .order_by(Message.created_at.desc())
+        .limit(200)
+    )
+    # Walk through until we find the matching task_id
+    while msg:
+        blocks = msg.extra.get("blocks") if isinstance(msg.extra, dict) else None
+        if isinstance(blocks, dict) and blocks.get("task_id") == task_id:
+            break
+        # fetch next — in practice we could batch this, but for small
+        # datasets walking sequentially is fine.
+        msg = db.scalar(
+            select(Message)
+            .join(Thread, Message.thread_id == Thread.id)
+            .where(
+                Thread.user_id == user_id,
+                Message.role == "assistant",
+                Message.created_at < msg.created_at,
+            )
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+
+    if msg is None:
+        return
+
+    if not isinstance(msg.extra, dict):
+        msg.extra = {}
+
+    blocks = msg.extra.setdefault("blocks", {})
+    if not isinstance(blocks, dict):
+        blocks = msg.extra["blocks"] = {}
+
+    if status in ("completed", "succeeded"):
+        blocks["status"] = "completed"
+        if video_url:
+            blocks["video_url"] = video_url
+    elif status in ("failed", "error"):
+        blocks["status"] = "failed"
+        if error:
+            blocks["error"] = error
+
+    flag_modified(msg, "extra")
+    db.commit()
 
 
 # ============================================================

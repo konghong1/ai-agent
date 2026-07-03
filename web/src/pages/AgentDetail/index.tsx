@@ -190,6 +190,14 @@ export default function AgentDetail() {
 
 
   const handleSend = async () => {
+    if (!providerId || !modelName) {
+      Modal.warning({
+        title: '请先选择模型',
+        content: '请在上方选择一个 AI 模型后再发送消息',
+        okText: '知道了',
+      })
+      return
+    }
     if (!inputValue.trim() || sending) return
     const messageContent = inputValue.trim()
     setInputValue("")
@@ -919,7 +927,7 @@ export default function AgentDetail() {
               icon={<SendOutlined />}
               loading={sending}
               onClick={handleSend}
-              disabled={!inputValue.trim() || sending}
+              disabled={!inputValue.trim() || sending || !providerId || !modelName}
               style={{
                 background: primaryColor,
                 borderColor: primaryColor,
