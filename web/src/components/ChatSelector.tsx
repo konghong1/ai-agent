@@ -72,16 +72,18 @@ const ChevronDownIcon = ({ muted = false }: { muted?: boolean }) => (
 interface ProviderData {
   id: number
   name: string
+  provider_type: string  // 新增
   models: { id: number; name: string; is_default: boolean }[]
   selected_model: { id: number; name: string } | null
 }
 
 interface ChatSelectorProps {
   providerId: number | null
+  providerType: string | null  // 新增
   modelName: string | null
   templateId: number | null
   templates: { id: number; name: string; variables: string[] }[]
-  onProviderChange: (providerId: number, modelName: string | null) => void
+  onProviderChange: (providerId: number, modelName: string | null, providerType: string | null) => void
   onTemplateChange: (templateId: number) => void
 }
 
@@ -89,6 +91,7 @@ interface ChatSelectorProps {
 
 export default function ChatSelector({
   providerId,
+  providerType,
   modelName,
   templateId,
   templates,
@@ -130,10 +133,14 @@ export default function ChatSelector({
           <span style={{ fontWeight: 500, color: 'var(--ice-text-secondary)' }}>
             {provider.name}
           </span>
+          {/* Show provider type badge */}
+          <span style={{ fontSize: 10, color: '#999', marginLeft: 2 }}>
+            {provider.provider_type === 'qwen' ? '通义千问' : provider.provider_type === 'openai-compatible' ? 'OpenAI' : provider.provider_type}
+          </span>
         </span>
       ),
       options: provider.models.map((m) => ({
-        value: `${provider.id}::${m.name}`,
+        value: `${provider.id}::${m.name}::${provider.provider_type}`,
         label: m.name,
       })),
     }
@@ -143,8 +150,11 @@ export default function ChatSelector({
     const sep = value.indexOf('::')
     if (sep === -1) return
     const provId = Number(value.slice(0, sep))
-    const mName = value.slice(sep + 2)
-    onProviderChange(provId, mName)
+    const rest = value.slice(sep + 2)
+    const nextSep = rest.indexOf('::')
+    const mName = nextSep !== -1 ? rest.slice(nextSep + 2) : rest
+    const pType = nextSep !== -1 ? rest.slice(0, nextSep) : 'openai-compatible'
+    onProviderChange(provId, mName, pType)
   }
 
   const handleTemplateSelect = (tmplId: number) => {
@@ -153,7 +163,7 @@ export default function ChatSelector({
 
   // ── Derived state ──
   const modelValue =
-    providerId && modelName ? `${providerId}::${modelName}` : undefined
+    providerId && modelName ? `${providerId}::${modelName || ''}::${providerType || 'openai-compatible'}` : undefined
   const hasModel = !!modelValue
   const hasTemplate = !!templateId
 

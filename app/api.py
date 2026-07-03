@@ -272,6 +272,8 @@ def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), d
             system_prompt=system_prompt,
             model_name=model_name,
             provider_base_url=provider_base_url,
+            provider_type=payload.provider_type,
+            provider_id=payload.provider_id,
         )
         return ChatResponse(answer=answer, thread_id=thread_id, blocks=blocks)
     except HTTPException:
@@ -282,6 +284,102 @@ def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), d
         logger = logging.getLogger(__name__)
         logger.error("Chat error: %s\n%s", exc, traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}") from exc
+
+
+# ============================================================
+# SSE Streaming Chat
+# ============================================================
+from fastapi.responses import StreamingResponse
+
+
+@router.post("/chat-stream")
+def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> StreamingResponse:
+    """Stream chat response using Server-Sent Events."""
+    import asyncio
+    import json
+    import uuid
+    
+    async def event_generator():
+        from app.agent import ask_agent
+        try:
+            # Determine which system prompt and model to use (same logic as /chat)
+            system_prompt = None
+            model_name = None
+            provider_base_url = None
+            
+            if payload.template_id:
+                template = db.get(PromptTemplate, payload.template_id)
+                if template and template.user_id == current_user.id and template.enabled:
+                    system_prompt = template.system_prompt
+            
+            if system_prompt is None and payload.agent_id:
+                agent = db.get(AgentConfig, payload.agent_id)
+                if agent and agent.user_id == current_user.id and agent.enabled:
+                    system_prompt = agent.system_prompt
+                    model_name = agent.model_name
+            
+            if payload.provider_id:
+                provider = db.get(Provider, payload.provider_id)
+                if provider and provider.user_id == current_user.id and provider.enabled:
+                    provider_base_url = provider.base_url
+                    if payload.model_name:
+                        model_name = payload.model_name
+            
+            # Build the request
+            request_data = {
+                "message": payload.message,
+                "thread_id": payload.thread_id,
+                "template_id": payload.template_id,
+                "provider_id": payload.provider_id,
+                "provider_type": payload.provider_type,
+                "model_name": model_name,
+                "agent_id": payload.agent_id,
+            }
+            
+            # Send initial event with thread_id
+            thread_info = {"event": "thread_ready", "data": json.dumps({"thread_id": request_data.get("thread_id")})}
+            yield f"event: thread_ready\ndata: {thread_info['data']}\n\n"
+            
+            # For now, we use ask_agent which returns a single response
+            # In the future, we can integrate async streaming adapters here
+            from app.agent import ask_agent
+            from app.core.database import SessionLocal as GetSession
+            
+            temp_db = GetSession()
+            try:
+                answer, thread_id, blocks = ask_agent(
+                    db=temp_db,
+                    user_id=current_user.id,
+                    agent_id=payload.agent_id,
+                    message=payload.message,
+                    thread_id=request_data.get("thread_id"),
+                    system_prompt=system_prompt,
+                    model_name=model_name,
+                    provider_base_url=provider_base_url,
+                    provider_type=payload.provider_type,
+                    provider_id=payload.provider_id,
+                )
+                
+                # Send final answer
+                yield f"data: {json.dumps({'answer': answer, 'thread_id': thread_id, 'blocks': blocks})}\n\n"
+            finally:
+                temp_db.close()
+                
+        except Exception as exc:
+            import traceback
+            logger = logging.getLogger(__name__)
+            logger.error("Chat stream error: %s\n%s", exc, traceback.format_exc())
+            yield f"data: {json.dumps({'error': f'{type(exc).__name__}: {exc}'})}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 # ============================================================

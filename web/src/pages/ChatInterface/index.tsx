@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useState, useRef } from "react"
+import { useCallback, useEffect, useState, useRef } from "react"
 import { Typography, Input, Button, message, Modal, Avatar, Space } from "antd"
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
@@ -8,10 +8,8 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useLayoutStore } from "@/stores/layout"
 import { authHeaders } from "@/services/auth"
-import { useAuthStore } from "@/stores/auth"
 import ChatSelector from "@/components/ChatSelector"
 import { useChatSelectors } from "@/stores/useChatSelectors"
-import { useNavigate } from "react-router-dom"
 
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -55,7 +53,7 @@ export default function ChatInterface() {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeThreadIdRef = useRef<string | null>(null)  // ref to avoid closure issues
   
-  const { providerId, modelName, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
+  const { providerId, providerType, modelName, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
   
   const colors = themeColors[theme] || themeColors.naturalGreen
   const primaryColor = colors.primary
@@ -231,8 +229,10 @@ export default function ChatInterface() {
     }
     setMessages(prev => [...prev, userMsg])
 
+    // Use SSE streaming
+    let fetchRes: Response | null = null
     try {
-      const res = await fetch("/api/chat", {
+      fetchRes = await fetch("/api/chat-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
@@ -240,26 +240,71 @@ export default function ChatInterface() {
           thread_id: threadId,
           template_id: templateId,
           provider_id: providerId,
+          provider_type: providerType || 'openai-compatible',
           model_name: modelName,
         }),
       })
-      if (res.ok) {
-        const data = await res.json()
-        const assistantMsg: Message = {
-          id: Date.now() + 1,
-          role: "assistant",
-          content: data.answer,
-          created_at: new Date().toISOString(),
+
+      if (fetchRes.ok) {
+        // SSE streaming handler
+        const reader = fetchRes.body?.getReader()
+        const decoder = new TextDecoder()
+        let assistantContent = ""
+        let finalThreadId = threadId
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            const chunk = decoder.decode(value, { stream: true })
+            const lines = chunk.split('\n')
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6))
+                  if (data.answer !== undefined) {
+                    // Final response
+                    assistantContent = data.answer
+                    finalThreadId = data.thread_id
+                  }
+                } catch {
+                  // Ignore parse errors for partial SSE messages
+                }
+              }
+            }
+          }
+
+          // Send assistant message
+          if (assistantContent) {
+            const assistantMsg: Message = {
+              id: Date.now() + 1,
+              role: "assistant",
+              content: assistantContent,
+              created_at: new Date().toISOString(),
+            }
+            setMessages(prev => [...prev, assistantMsg])
+            
+            // Update thread list with new thread if created
+            if (finalThreadId !== threadId) {
+              setThreads(prev => {
+                const exists = prev.find(t => t.id === finalThreadId)
+                if (exists) return prev
+                return [{ id: finalThreadId, title: messageContent.slice(0, 60), agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]
+              })
+              setActiveThreadId(finalThreadId)
+            }
+          }
         }
-        setMessages(prev => [...prev, assistantMsg])
       } else {
-        const _err = await res.json().catch(() => ({}))
+        await fetchRes.json().catch(() => {})
         setMessages(prev => [
           ...prev,
           {
             id: Date.now() + 1,
             role: "assistant",
-            content: `抱歉，暂时无法回复：${res.statusText || "服务不可用"}`,
+            content: `抱歉，暂时无法回复：${fetchRes?.statusText || "服务不可用"}`,
             created_at: new Date().toISOString(),
           },
         ])
@@ -278,6 +323,9 @@ export default function ChatInterface() {
       setSending(false)
     }
   }
+
+  // Fix: properly handle error for non-ok response in the catch block
+  // (already handled above, this is just a placeholder for clarity)
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -603,8 +651,8 @@ export default function ChatInterface() {
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
-                              code: ({ className, children, inline, ...props }) => {
-                                const isInline = inline
+                              code: ({ className, children, ...props }: any) => {
+                                const isInline = !className || (typeof children === 'string' && !children.includes('\n'))
                                 if (isInline) {
                                   return (
                                     <code
@@ -616,7 +664,7 @@ export default function ChatInterface() {
                                         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                                         color: "var(--ice-text-primary)",
                                       }}
-                                      {...props}
+                                    {...props as any}
                                     >
                                       {children}
                                     </code>
@@ -809,10 +857,11 @@ export default function ChatInterface() {
             }}>
               <ChatSelector
                 providerId={providerId}
+                providerType={providerType}
                 modelName={modelName}
                 templateId={templateId}
                 templates={templates}
-                onProviderChange={(pid, mname) => setProviderAndModel(pid, mname)}
+                onProviderChange={(pid, mname, ptype) => setProviderAndModel(pid, mname, ptype)}
                 onTemplateChange={(tid) => setTemplateId(tid)}
               />
               <span style={{ flex: 1 }} />
@@ -873,6 +922,3 @@ export default function ChatInterface() {
     </div>
   )
 }
-
-
-

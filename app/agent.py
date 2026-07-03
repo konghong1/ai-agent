@@ -6,12 +6,12 @@ import time
 
 from fastapi import HTTPException
 from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
-from langsmith import tracing_context
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
+from app.llm import LLMFactory, LLMConfig
+from app.llm.openai_compat import OpenAICompatibleAdapter
 
 
 from app.models import AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBChunk, Message, Provider, ProviderModel, Thread, RetrievalLog
@@ -19,13 +19,13 @@ from app.services import new_thread_id, HybridRetriever, ContextBuilder, RAG_SYS
 from app.settings import get_settings
 from app.tools import get_tools
 
-_BLOCKS_RE = re.compile(r"<blocks>(.*?)</blocks>", re.DOTALL)
+_BLOCK_BLOCKS_RE = re.compile(r"<blocks>(.*?)</blocks>", re.DOTALL)
 
 
 def _extract_blocks(text: str) -> tuple[str, dict]:
     blocks: dict | None = None
     text_result = text
-    match = _BLOCKS_RE.search(text)
+    match = _BLOCK_BLOCKS_RE.search(text)
     if match:
         blocks_str = match.group(1)
         text_result = text[:match.start()] + text[match.end():]
@@ -38,40 +38,123 @@ def _extract_blocks(text: str) -> tuple[str, dict]:
     return text_result.strip(), blocks or {}
 
 
-def build_agent(agent_config: AgentConfig, user_id: int | None = None):
-    """Build LLM using provider config if available, falling back to settings."""
-    from app.models import Provider
-    from sqlalchemy import select
-    from app.core.database import SessionLocal
+def _resolve_llm_config(
+    user_id: int | None,
+    provider_id: int | None,
+    provider_base_url: str | None,
+    model_name: str | None,
+    agent_config: AgentConfig | None,
+    temperature: float | None = None,
+) -> LLMConfig:
+    """Resolve LLM configuration from various sources (provider, agent, settings).
 
+    Resolution order:
+    1. Explicit provider_id + model_name
+    2. User's default provider
+    3. Agent config
+    4. Global settings
+    """
     settings = get_settings()
     api_key = settings.openai_api_key
     base_url = settings.openai_base_url
-    model_name = agent_config.model_name or settings.openai_model
+    resolved_model = model_name
+    resolved_temperature = temperature or (agent_config.temperature if agent_config else 0.7)
 
     if user_id:
         db = SessionLocal()
         try:
-            # Try to find the default provider for this user
-            provider = db.scalar(
-                select(Provider).where(
-                    Provider.user_id == user_id,
-                    Provider.enabled == True,
-                    Provider.is_default == True,
+            # Try to find specific provider first
+            provider = None
+            if provider_id:
+                provider = db.get(Provider, provider_id)
+                provider = provider if provider and provider.user_id == user_id and provider.enabled else None
+            
+            if not provider and not provider_id:
+                provider = db.scalar(
+                    select(Provider).where(
+                        Provider.user_id == user_id,
+                        Provider.enabled == True,
+                        Provider.is_default == True,
+                    )
                 )
-            )
+
             if provider:
                 api_key = provider.api_key or api_key
-                base_url = provider.base_url or base_url
+                base_url = provider_base_url or provider.base_url or base_url
+                
+                if not resolved_model:
+                    # Find default chat model for this provider
+                    default_model = db.scalar(select(ProviderModel).where(
+                        ProviderModel.provider_id == provider.id,
+                        ProviderModel.is_default_chat == True,
+                        ProviderModel.model_type == "chat",
+                        ProviderModel.enabled == True,
+                    ))
+                    if default_model:
+                        resolved_model = default_model.model_name
+                    elif provider.models:
+                        chat_models = [m for m in provider.models if m.model_type == "chat" and m.enabled]
+                        resolved_model = chat_models[0].model_name if chat_models else None
         finally:
             db.close()
 
-    llm = ChatOpenAI(
-        model=model_name,
-        temperature=agent_config.temperature,
+    # Fallback to agent model name if still not resolved
+    if not resolved_model and agent_config:
+        resolved_model = agent_config.model_name or settings.openai_model
+        if temperature is None and resolved_temperature == 0.7:
+            resolved_temperature = agent_config.temperature
+
+    if not resolved_model:
+        resolved_model = settings.openai_model
+    
+    # Determine provider_type based on base_url
+    provider_type = "openai-compatible"  # default
+
+    return LLMConfig(
+        provider_type=provider_type,
+        model_name=resolved_model,
         api_key=api_key,
         base_url=base_url,
+        temperature=resolved_temperature,
     )
+
+
+def _create_llm_from_config(config: LLMConfig):
+    """Create an LLM instance (either via factory or legacy ChatOpenAI)."""
+    # Try factory first
+    try:
+        adapter = LLMFactory.create(config)
+        # For now, ChatAgent still needs a langchain model, so we fall back to ChatOpenAI
+        # but the adapter pattern is ready for future streaming use
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=config.model_name,
+            temperature=config.temperature,
+            api_key=config.api_key,
+            base_url=config.base_url,
+        )
+    except Exception:
+        # Fallback to direct ChatOpenAI
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=config.model_name,
+            temperature=config.temperature,
+            api_key=config.api_key,
+            base_url=config.base_url,
+        )
+
+
+def build_agent(agent_config: AgentConfig, user_id: int | None = None):
+    """Build LLM using provider config if available, falling back to settings."""
+    config = _resolve_llm_config(
+        user_id=user_id,
+        provider_id=None,
+        provider_base_url=None,
+        model_name=agent_config.model_name,
+        agent_config=agent_config,
+        temperature=agent_config.temperature,
+    )
+    llm = _create_llm_from_config(config)
     return create_agent(
         model=llm,
         tools=get_tools(),
@@ -104,6 +187,9 @@ def ask_agent(
     system_prompt: str | None = None,
     model_name: str | None = None,
     provider_base_url: str | None = None,
+    provider_type: str | None = None,
+    provider_id: int | None = None,
+    temperature: float | None = None,
 ) -> tuple[str, str, dict]:
     settings = get_settings()
     
@@ -198,72 +284,24 @@ def ask_agent(
     if rag_context:
         langchain_messages.append({
             "role": "user",
-            "content": f"\\n\\n<knowledge_context>\\n{rag_context}\\n</knowledge_context>\\n\\n请基于以上知识回答用户的问题。",
+            "content": f"\n\n<knowledge_context>\n{rag_context}\n</knowledge_context>\n\n请基于以上知识回答用户的问题。",
         })
 
-    # Call Agent
-    # Resolve provider/model
-    chat_api_key = settings.openai_api_key
-    chat_base_url = provider_base_url or settings.openai_base_url
-    
-    # If explicit model_name provided, use it; otherwise resolve from provider or agent
-    resolved_model = model_name
-    resolved_temperature = 0.7
-    
-    if not resolved_model and user_id:
-        db2 = SessionLocal()
-        try:
-            # Try to find the specified provider first
-            provider = None
-            if provider_base_url:
-                provider = db2.scalar(select(Provider).where(
-                    Provider.user_id == user_id,
-                    Provider.enabled == True,
-                ).limit(1))
-            
-            if not provider:
-                provider = db2.scalar(
-                    select(Provider).where(
-                        Provider.user_id == user_id, 
-                        Provider.enabled == True, 
-                        Provider.is_default == True,
-                    )
-                )
-            
-            if provider:
-                chat_api_key = provider.api_key or chat_api_key
-                if not resolved_model:
-                    # Find default chat model for this provider
-                    default_model = db2.scalar(select(ProviderModel).where(
-                        ProviderModel.provider_id == provider.id,
-                        ProviderModel.is_default_chat == True,
-                        ProviderModel.model_type == "chat",
-                        ProviderModel.enabled == True,
-                    ))
-                    if default_model:
-                        resolved_model = default_model.model_name
-                    elif provider.models:
-                        resolved_model = next(
-                            (m.model_name for m in provider.models if m.model_type == "chat" and m.enabled),
-                            provider.models[0].model_name
-                        )
-        finally:
-            db2.close()
-    
-    # Fallback to agent model name if still not resolved
-    if not resolved_model and agent_config:
-        resolved_model = agent_config.model_name or settings.openai_model
-        resolved_temperature = agent_config.temperature
-    
-    if not resolved_model:
-        resolved_model = settings.openai_model
-
-    llm = ChatOpenAI(
-        model=resolved_model,
-        temperature=resolved_temperature,
-        api_key=chat_api_key,
-        base_url=chat_base_url,
+    # Resolve LLM config from provider/agent
+    resolved_config = _resolve_llm_config(
+        user_id=user_id,
+        provider_id=provider_id,
+        provider_base_url=provider_base_url,
+        model_name=model_name,
+        agent_config=agent_config,
+        temperature=temperature,
     )
+    
+    # Override with explicit provider_type if provided
+    if provider_type:
+        resolved_config.provider_type = provider_type
+
+    llm = _create_llm_from_config(resolved_config)
     agent_name = f"agent-{agent_config.id}" if agent_config else "chat"
     agent = create_agent(model=llm, tools=get_tools(), system_prompt="", name=agent_name)
 

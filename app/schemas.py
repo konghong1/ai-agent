@@ -107,6 +107,7 @@ class ChatRequest(BaseModel):
     thread_id: str | None = None
     template_id: int | None = None
     provider_id: int | None = None
+    provider_type: str | None = Field(default=None, description="LLM provider type (e.g. 'openai-compatible', 'qwen')")
     model_name: str | None = None
 
 

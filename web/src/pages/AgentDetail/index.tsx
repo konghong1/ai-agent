@@ -8,6 +8,8 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useLayoutStore } from "@/stores/layout"
 import { authHeaders } from "@/services/auth"
+import ChatSelector from "@/components/ChatSelector"
+import { useChatSelectors } from "@/stores/useChatSelectors"
 
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -52,6 +54,8 @@ export default function AgentDetail() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  const { providerId, providerType, modelName, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
 
   const colors = themeColors[theme] || themeColors.naturalGreen
   const primaryColor = colors.primary
@@ -209,10 +213,6 @@ export default function AgentDetail() {
           threadId = data.id
           setActiveThreadId(data.id)
         } else {
-          const _err = await res.json().catch(() => ({}))
-          setMessages(prev => [
-            ...prev,
-          ])
           setSending(false)
           return
         }
@@ -236,33 +236,67 @@ export default function AgentDetail() {
     }
     setMessages(prev => [...prev, userMsg])
 
+    // Use SSE streaming if no thread yet, or non-streaming for existing threads
     try {
-      const res = await fetch("/api/chat", {
+      const res = await fetch("/api/chat-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           agent_id: activeAgentId,
           message: messageContent,
           thread_id: threadId,
+          provider_id: providerId,
+          provider_type: providerType || 'openai-compatible',
+          model_name: modelName,
         }),
       })
       if (res.ok) {
-        const data = await res.json()
-        const assistantMsg: Message = {
-          id: Date.now() + 1,
-          role: "assistant",
-          content: data.answer,
-          created_at: new Date().toISOString(),
+        // SSE streaming
+        const reader = res.body?.getReader()
+        const decoder = new TextDecoder()
+        let assistantContent = ""
+        // finalThreadId not used separately - threadId already set above
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            const chunk = decoder.decode(value, { stream: true })
+            const lines = chunk.split('\n')
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const data = JSON.parse(line.slice(6))
+                  if (data.answer !== undefined) {
+                    assistantContent = data.answer
+                    // finalThreadId not used - skip
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+            }
+          }
+
+          if (assistantContent) {
+            const assistantMsg: Message = {
+              id: Date.now() + 1,
+              role: "assistant",
+              content: assistantContent,
+              created_at: new Date().toISOString(),
+            }
+            setMessages(prev => [...prev, assistantMsg])
+          }
         }
-        setMessages(prev => [...prev, assistantMsg])
       } else {
-        const _err = await res.json().catch(() => ({}))
         setMessages(prev => [
           ...prev,
           {
             id: Date.now() + 1,
             role: "assistant",
-            content: `抱歉，暂时无法回复：${res.statusText || "服务不可用"}`,
+            content: `抱歉，暂时无法回复：${res?.statusText || "服务不可用"}`,
             created_at: new Date().toISOString(),
           },
         ])
@@ -633,8 +667,8 @@ export default function AgentDetail() {
                             remarkPlugins={[remarkGfm]}
                             components={{
                               // Inline code
-                              code: ({ className, children, inline, ...props }) => {
-                                const isInline = inline
+                              code: ({ className, children, ...rest }: any) => {
+                                const isInline = !className || (typeof children === 'string' && !children.includes('\n'))
                                 if (isInline) {
                                   return (
                                     <code
@@ -646,7 +680,7 @@ export default function AgentDetail() {
                                         fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                                         color: "var(--ice-text-primary)",
                                       }}
-                                      {...props}
+                                      {...rest}
                                     >
                                       {children}
                                     </code>
@@ -664,7 +698,7 @@ export default function AgentDetail() {
                                     fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                                     lineHeight: 1.5,
                                   }}>
-                                    <code className={className} {...props}>
+                                    <code className={className} {...rest}>
                                       {children}
                                     </code>
                                   </pre>
@@ -837,6 +871,18 @@ export default function AgentDetail() {
           borderTop: "1px solid var(--ice-border)",
           background: "var(--ice-bg-card)",
         }}>
+          {/* ChatSelector in sidebar-style layout */}
+          <div style={{ marginBottom: 10, padding: "0 4px" }}>
+            <ChatSelector
+              providerId={providerId}
+              providerType={providerType}
+              modelName={modelName}
+              templateId={templateId}
+              templates={[]}
+              onProviderChange={(pid, mname, ptype) => setProviderAndModel(pid, mname, ptype)}
+              onTemplateChange={(tid) => setTemplateId(tid)}
+            />
+          </div>
           <div style={{
             display: "flex",
             gap: 10,
