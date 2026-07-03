@@ -24,6 +24,7 @@ export interface VideoBlock {
   video_url?: string
   error?: string
   provider_id?: number
+  progress?: number  // poll count from SSE, indicates backend is actively checking
 }
 
 export interface MediaCardProps {
@@ -377,7 +378,7 @@ function VideoCard({
   }, [block.video_url])
 
   // ── Processing state ──
-  if (block.status !== "completed" && block.status !== "failed") {
+  if (block.status !== "completed" && block.status !== "failed" && !block.error) {
     return (
       <div style={{
         marginBottom: 12,
@@ -418,7 +419,9 @@ function VideoCard({
               视频生成中
             </div>
             <div style={{ fontSize: 12, color: "var(--ice-text-muted)" }}>
-              这可能需要 1-5 分钟，请耐心等待
+              {block.progress && block.progress > 0
+                ? `后台正在处理…（第 ${block.progress} 次状态检查）`
+                : "这可能需要 1-5 分钟，请耐心等待"}
             </div>
           </div>
 
@@ -438,7 +441,7 @@ function VideoCard({
   }
 
   // ── Failed state ──
-  if (block.status === "failed") {
+  if (block.status === "failed" || block.error) {
     return (
       <div style={{
         marginBottom: 12,

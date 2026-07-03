@@ -116,12 +116,24 @@ export default function ChatInterface() {
     index: number
   } | null>(null)
 
-  // ── Video status — SSE real-time push ────────────────────────────
+  // ── Video status — SSE real-time push with auto-reconnect ──────────
   const esRef = useRef<Map<number, EventSource>>(new Map())  // msgId → EventSource
+  const retryRef = useRef<Map<number, number>>(new Map())    // msgId → retry count
+  const reconnectTimerRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map())
+
+  const MAX_RETRIES = 5
+  const BASE_RETRY_DELAY = 2000 // 2s, 4s, 8s, 16s, 32s
 
   const watchVideo = useCallback((msg: Message) => {
     const { task_id, provider_id, video_id } = msg.blocks!;
     if (!task_id || !provider_id) return;
+
+    // Close any existing connection for this message
+    const existingEs = esRef.current.get(msg.id);
+    if (existingEs) {
+      existingEs.close();
+      esRef.current.delete(msg.id);
+    }
 
     const token = getToken();
     const params = new URLSearchParams({ provider_id: String(provider_id) });
@@ -130,6 +142,11 @@ export default function ChatInterface() {
 
     const url = `/api/videos/${task_id}/watch?${params}`;
     const es = new EventSource(url);
+
+    es.onopen = () => {
+      // Connection established — reset retry count
+      retryRef.current.set(msg.id, 0);
+    };
 
     es.onmessage = (event) => {
       try {
@@ -144,6 +161,9 @@ export default function ChatInterface() {
           );
           es.close();
           esRef.current.delete(msg.id);
+          retryRef.current.delete(msg.id);
+          const timer = reconnectTimerRef.current.get(msg.id);
+          if (timer) { clearTimeout(timer); reconnectTimerRef.current.delete(msg.id); }
         } else if (data.status === "failed") {
           setMessages(prev =>
             prev.map(m =>
@@ -154,14 +174,56 @@ export default function ChatInterface() {
           );
           es.close();
           esRef.current.delete(msg.id);
+          retryRef.current.delete(msg.id);
+          const timer = reconnectTimerRef.current.get(msg.id);
+          if (timer) { clearTimeout(timer); reconnectTimerRef.current.delete(msg.id); }
+        } else if (data.status === "processing" || data.status === "queued") {
+          // Update progress info so the user sees the video is still being worked on
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === msg.id
+                ? { ...m, blocks: { ...m.blocks!, status: "processing", progress: data.poll_count || 0 } }
+                : m
+            )
+          );
         }
-        // "processing" / "queued" — keep ES open, no state change needed
       } catch { /* ignore malformed events */ }
     };
 
     es.onerror = () => {
       es.close();
       esRef.current.delete(msg.id);
+
+      // Exponential backoff reconnection
+      const currentRetry = retryRef.current.get(msg.id) || 0;
+      if (currentRetry < MAX_RETRIES) {
+        const delay = BASE_RETRY_DELAY * Math.pow(2, currentRetry);
+        retryRef.current.set(msg.id, currentRetry + 1);
+        const timer = setTimeout(() => {
+          reconnectTimerRef.current.delete(msg.id);
+          // Check if the message is still in processing state before reconnecting
+          setMessages(prev => {
+            const current = prev.find(m => m.id === msg.id);
+            if (current?.blocks?.status === "processing") {
+              watchVideo(msg);
+            } else {
+              retryRef.current.delete(msg.id);
+            }
+            return prev;
+          });
+        }, delay);
+        reconnectTimerRef.current.set(msg.id, timer);
+      } else {
+        // Max retries exceeded — mark as failed
+        retryRef.current.delete(msg.id);
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === msg.id
+              ? { ...m, blocks: { ...m.blocks!, status: "failed", error: "连接超时，请刷新页面重试" }, content: "视频状态监控超时" }
+              : m
+          )
+        );
+      }
     };
 
     esRef.current.set(msg.id, es);
@@ -172,6 +234,9 @@ export default function ChatInterface() {
     return () => {
       esRef.current.forEach(es => es.close());
       esRef.current.clear();
+      reconnectTimerRef.current.forEach(t => clearTimeout(t));
+      reconnectTimerRef.current.clear();
+      retryRef.current.clear();
     };
   }, []);
 
@@ -182,7 +247,8 @@ export default function ChatInterface() {
         msg.blocks?.type === "video" &&
         msg.blocks?.status === "processing" &&
         msg.blocks?.task_id &&
-        !esRef.current.has(msg.id)
+        !esRef.current.has(msg.id) &&
+        !reconnectTimerRef.current.has(msg.id)
       ) {
         watchVideo(msg);
       }
@@ -199,6 +265,9 @@ export default function ChatInterface() {
       ) {
         esRef.current.get(msg.id)?.close();
         esRef.current.delete(msg.id);
+        retryRef.current.delete(msg.id);
+        const timer = reconnectTimerRef.current.get(msg.id);
+        if (timer) { clearTimeout(timer); reconnectTimerRef.current.delete(msg.id); }
       }
     });
   }, [messages]);

@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>知识库模块 · UI 重设计</title>
+<style>
+:root {
+  --c-primary:#00d4ff;--c-primary-dim:#0099cc;--c-primary-soft:rgba(0,212,255,.08);--c-primary-mid:rgba(0,212,255,.18);--c-primary-strong:rgba(0,212,255,.35);
+  --c-secondary:#7b68ee;--c-secondary-soft:rgba(123,104,238,.1);
+  --c-accent:#00ffd5;--c-accent-soft:rgba(0,255,213,.08);
+  --c-success:#10b981;--c-warning:#f59e0b;--c-error:#ef4444;--c-info:#3b82f6;
+  --bg-base:#0a0e17;--bg-surface:#111827;--bg-elevated:#161e2e;--bg-hover:#1a2333;--bg-glass:rgba(255,255,255,.03);--bg-glass-hover:rgba(255,255,255,.06);
+  --text-primary:#e8f4f8;--text-secondary:#8899aa;--text-muted:#556677;--text-inverse:#0a0e17;
+  --border-subtle:rgba(255,255,255,.06);--border-default:rgba(0,212,255,.12);--border-hover:rgba(0,212,255,.3);--border-active:rgba(0,212,255,.5);
+  --shadow-sm:0 1px 3px rgba(0,0,0,.3);--shadow-md:0 4px 12px rgba(0,0,0,.35);--shadow-lg:0 8px 32px rgba(0,0,0,.4);--shadow-glow:0 0 24px rgba(0,212,255,.12);
+  --r-sm:6px;--r-md:8px;--r-lg:12px;--r-xl:16px;--r-full:9999px;
+  --sp-1:4px;--sp-2:8px;--sp-3:12px;--sp-4:16px;--sp-5:20px;--sp-6:24px;--sp-8:32px;--sp-10:40px;--sp-12:48px;
+  --t-fast:150ms cubic-bezier(.4,0,.2,1);--t-normal:250ms cubic-bezier(.4,0,.2,1);--t-slow:400ms cubic-bezier(.4,0,.2,1);
+  --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;--font-mono:'JetBrains Mono','Fira Code',Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font-sans);background:var(--bg-base);color:var(--text-primary);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(0,212,255,.15);border-radius:3px}::-webkit-scrollbar-thumb:hover{background:rgba(0,212,255,.3)}
+
+.demo-nav{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:4px;padding:6px;background:rgba(17,24,39,.95);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-full);box-shadow:var(--shadow-lg),var(--shadow-glow);z-index:9999}
+.demo-nav button{padding:8px 16px;border:none;background:transparent;color:var(--text-secondary);font-size:13px;font-weight:500;border-radius:var(--r-full);cursor:pointer;transition:all var(--t-fast);white-space:nowrap}
+.demo-nav button:hover{color:var(--text-primary);background:var(--bg-glass)}
+.demo-nav button.active{background:var(--c-primary);color:var(--text-inverse);font-weight:600}
+
+.page-section{display:none;min-height:100vh}.page-section.active{display:block}
+
+.btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border:none;border-radius:var(--r-md);font-family:var(--font-sans);font-size:13px;font-weight:500;cursor:pointer;transition:all var(--t-fast);white-space:nowrap;text-decoration:none}
+.btn-primary{background:var(--c-primary);color:var(--text-inverse);font-weight:600}.btn-primary:hover{background:var(--c-primary-dim);transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,212,255,.3)}
+.btn-ghost{background:var(--bg-glass);color:var(--text-secondary);border:1px solid var(--border-default)}.btn-ghost:hover{color:var(--text-primary);background:var(--bg-glass-hover);border-color:var(--border-hover)}
+.btn-icon{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;background:transparent;color:var(--text-secondary);border:1px solid transparent;border-radius:var(--r-md);cursor:pointer;transition:all var(--t-fast)}
+.btn-icon:hover{color:var(--c-primary);background:var(--c-primary-soft);border-color:var(--border-hover)}
+
+.tag{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;font-size:12px;font-weight:500;border-radius:var(--r-full);line-height:1.8}
+.tag-blue{background:rgba(59,130,246,.12);color:#60a5fa}.tag-green{background:rgba(16,185,129,.12);color:#34d399}.tag-cyan{background:rgba(0,212,255,.12);color:var(--c-primary)}.tag-purple{background:rgba(123,104,238,.12);color:#a78bfa}.tag-amber{background:rgba(245,158,11,.12);color:#fbbf24}.tag-red{background:rgba(239,68,68,.12);color:#f87171}.tag-gray{background:rgba(136,153,170,.12);color:var(--text-secondary)}
+
+.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.status-dot.success{background:var(--c-success);box-shadow:0 0 6px rgba(16,185,129,.5)}
+.status-dot.processing{background:var(--c-warning);box-shadow:0 0 6px rgba(245,158,11,.5);animation:pulse 1.5s infinite}
+.status-dot.error{background:var(--c-error);box-shadow:0 0 6px rgba(239,68,68,.5)}
+.status-dot.idle{background:var(--text-muted)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+.toggle{position:relative;width:38px;height:22px;background:var(--bg-hover);border-radius:var(--r-full);cursor:pointer;transition:background var(--t-fast);border:1px solid var(--border-subtle);flex-shrink:0}
+.toggle.on{background:var(--c-primary);border-color:var(--c-primary)}
+.toggle::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;background:#fff;border-radius:50%;transition:transform var(--t-fast)}
+.toggle.on::after{transform:translateX(16px)}
+
+.kb-list-page{padding:var(--sp-6);max-width:1400px;margin:0 auto}
+.kb-list-header{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:var(--sp-6)}
+.kb-list-header h1{font-size:28px;font-weight:700;color:var(--text-primary);margin-bottom:4px}
+.kb-list-header .subtitle{color:var(--text-secondary);font-size:14px}
+.kb-toolbar{display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-6)}
+.search-box{flex:1;max-width:360px;position:relative}
+.search-box input{width:100%;padding:9px 12px 9px 38px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--r-md);color:var(--text-primary);font-size:13px;font-family:var(--font-sans);transition:all var(--t-fast)}
+.search-box input::placeholder{color:var(--text-muted)}
+.search-box input:focus{outline:none;border-color:var(--c-primary);box-shadow:0 0 0 3px rgba(0,212,255,.1)}
+.search-box .search-icon{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-muted)}
+.view-toggle{display:flex;gap:2px;padding:3px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--r-md)}
+.view-toggle button{padding:6px 10px;border:none;background:transparent;color:var(--text-muted);border-radius:var(--r-sm);cursor:pointer;transition:all var(--t-fast);display:flex;align-items:center}
+.view-toggle button.active{background:var(--c-primary-soft);color:var(--c-primary)}
+
+.kb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:var(--sp-4)}
+.kb-card{position:relative;padding:var(--sp-5);background:rgba(17,24,39,.85);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-lg);cursor:pointer;transition:all var(--t-normal);overflow:hidden}
+.kb-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--c-primary),var(--c-secondary));opacity:0;transition:opacity var(--t-normal)}
+.kb-card:hover{border-color:var(--border-hover);transform:translateY(-2px);box-shadow:var(--shadow-lg),var(--shadow-glow)}
+.kb-card:hover::before{opacity:1}
+.kb-card-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:var(--sp-4)}
+.kb-card-icon{width:44px;height:44px;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;font-size:22px;background:var(--c-primary-soft);color:var(--c-primary);flex-shrink:0}
+.kb-card-actions{display:flex;gap:2px;opacity:0;transition:opacity var(--t-fast)}
+.kb-card:hover .kb-card-actions{opacity:1}
+.kb-card-title{font-size:16px;font-weight:600;color:var(--text-primary);margin-bottom:4px}
+.kb-card-desc{font-size:13px;color:var(--text-secondary);margin-bottom:var(--sp-4);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.kb-card-stats{display:flex;gap:var(--sp-4);padding:var(--sp-3) 0;border-top:1px solid var(--border-subtle);border-bottom:1px solid var(--border-subtle);margin-bottom:var(--sp-3)}
+.kb-stat{display:flex;flex-direction:column;gap:2px}
+.kb-stat-value{font-size:18px;font-weight:700;color:var(--text-primary)}
+.kb-stat-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em}
+.kb-card-footer{display:flex;justify-content:space-between;align-items:center}
+.kb-card-meta{display:flex;align-items:center;gap:var(--sp-2);font-size:12px;color:var(--text-muted)}
+
+.kb-card-create{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:220px;border:2px dashed var(--border-default);background:transparent;cursor:pointer;transition:all var(--t-normal)}
+.kb-card-create:hover{border-color:var(--c-primary);background:var(--c-primary-soft)}
+.kb-card-create .plus-icon{width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--c-primary-soft);color:var(--c-primary);font-size:24px;margin-bottom:var(--sp-3);transition:all var(--t-normal)}
+.kb-card-create:hover .plus-icon{background:var(--c-primary);color:var(--text-inverse);transform:scale(1.1)}
+
+.kb-detail-page{padding:var(--sp-6);max-width:1400px;margin:0 auto}
+.breadcrumb{display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-4);font-size:13px;color:var(--text-secondary)}
+.breadcrumb a{color:var(--text-secondary);text-decoration:none;transition:color var(--t-fast)}.breadcrumb a:hover{color:var(--c-primary)}
+
+.detail-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:var(--sp-6);padding-bottom:var(--sp-5);border-bottom:1px solid var(--border-subtle)}
+.detail-header-left{display:flex;gap:var(--sp-4);align-items:flex-start}
+.detail-header-icon{width:52px;height:52px;border-radius:var(--r-lg);display:flex;align-items:center;justify-content:center;font-size:26px;background:linear-gradient(135deg,var(--c-primary-soft),var(--c-secondary-soft));border:1px solid var(--border-default);color:var(--c-primary);flex-shrink:0}
+.detail-header h2{font-size:22px;font-weight:700;margin-bottom:4px}
+.detail-header .desc{color:var(--text-secondary);font-size:13px;margin-bottom:var(--sp-3)}
+.detail-header-tags{display:flex;gap:var(--sp-2);flex-wrap:wrap}
+.detail-header-right{display:flex;gap:var(--sp-2)}
+
+.detail-layout{display:grid;grid-template-columns:240px 1fr;gap:var(--sp-4)}
+.folder-sidebar{background:rgba(17,24,39,.85);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-lg);padding:var(--sp-3);height:fit-content}
+.folder-sidebar-header{display:flex;justify-content:space-between;align-items:center;padding:0 var(--sp-2) var(--sp-3);border-bottom:1px solid var(--border-subtle);margin-bottom:var(--sp-2)}
+.folder-sidebar-title{font-size:13px;font-weight:600;color:var(--text-primary)}
+.folder-tree{font-size:13px}
+.folder-item{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:var(--r-sm);cursor:pointer;transition:all var(--t-fast);color:var(--text-secondary)}
+.folder-item:hover{background:var(--bg-glass);color:var(--text-primary)}
+.folder-item.active{background:var(--c-primary-soft);color:var(--c-primary)}
+.folder-item .folder-icon{font-size:14px;flex-shrink:0}
+.folder-item .folder-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.folder-item .folder-count{font-size:11px;color:var(--text-muted);background:var(--bg-glass);padding:1px 6px;border-radius:var(--r-full)}
+.folder-children{margin-left:16px}
+
+.detail-main{min-width:0}
+.tab-bar{display:flex;gap:2px;margin-bottom:var(--sp-4);border-bottom:1px solid var(--border-subtle)}
+.tab-item{padding:10px 16px;font-size:14px;font-weight:500;color:var(--text-secondary);cursor:pointer;border-bottom:2px solid transparent;transition:all var(--t-fast);display:flex;align-items:center;gap:6px}
+.tab-item:hover{color:var(--text-primary)}
+.tab-item.active{color:var(--c-primary);border-bottom-color:var(--c-primary)}
+.tab-content{display:none}.tab-content.active{display:block}
+
+.doc-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)}
+.doc-toolbar-left{display:flex;gap:var(--sp-2);align-items:center}
+.doc-toolbar-right{display:flex;gap:var(--sp-2)}
+.doc-table{background:rgba(17,24,39,.85);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-lg);overflow:hidden}
+.doc-table-header{display:grid;grid-template-columns:32px 1fr 80px 100px 160px 120px 80px;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);background:var(--bg-glass);border-bottom:1px solid var(--border-subtle);font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em}
+.doc-row{display:grid;grid-template-columns:32px 1fr 80px 100px 160px 120px 80px;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);border-bottom:1px solid var(--border-subtle);align-items:center;transition:background var(--t-fast);cursor:pointer}
+.doc-row:last-child{border-bottom:none}.doc-row:hover{background:var(--bg-glass)}
+.doc-checkbox{width:16px;height:16px;border:1.5px solid var(--text-muted);border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all var(--t-fast)}
+.doc-checkbox.checked{background:var(--c-primary);border-color:var(--c-primary)}
+.doc-checkbox.checked::after{content:'\2713';color:var(--text-inverse);font-size:11px;font-weight:bold}
+.doc-name{display:flex;align-items:center;gap:var(--sp-2);min-width:0}
+.file-type-icon{width:28px;height:28px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.file-type-pdf{background:rgba(239,68,68,.12);color:#f87171}.file-type-doc{background:rgba(59,130,246,.12);color:#60a5fa}.file-type-md{background:rgba(0,212,255,.12);color:var(--c-primary)}.file-type-txt{background:rgba(136,153,170,.12);color:var(--text-secondary)}.file-type-code{background:rgba(123,104,238,.12);color:#a78bfa}
+.doc-name-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;color:var(--text-primary)}
+.doc-size{font-size:12px;color:var(--text-secondary)}.doc-type{font-size:12px;color:var(--text-secondary)}
+.doc-status{display:flex;align-items:center;gap:6px;font-size:12px}
+.doc-pipeline{display:flex;align-items:center;gap:3px}
+.pipeline-step{width:20px;height:20px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;background:var(--bg-hover);color:var(--text-muted);border:1px solid var(--border-subtle)}
+.pipeline-step.done{background:rgba(16,185,129,.12);color:var(--c-success);border-color:rgba(16,185,129,.3)}
+.pipeline-step.active{background:rgba(245,158,11,.12);color:var(--c-warning);border-color:rgba(245,158,11,.3);animation:pulse 1.5s infinite}
+.pipeline-step.failed{background:rgba(239,68,68,.12);color:var(--c-error);border-color:rgba(239,68,68,.3)}
+.doc-date{font-size:12px;color:var(--text-muted)}
+.doc-actions{display:flex;gap:2px;justify-content:flex-end;opacity:0;transition:opacity var(--t-fast)}
+.doc-row:hover .doc-actions{opacity:1}
+
+.upload-zone{border:2px dashed var(--border-default);border-radius:var(--r-lg);padding:var(--sp-8);text-align:center;transition:all var(--t-normal);cursor:pointer;background:rgba(17,24,39,.5)}
+.upload-zone:hover,.upload-zone.dragover{border-color:var(--c-primary);background:var(--c-primary-soft)}
+.upload-zone-icon{width:56px;height:56px;margin:0 auto var(--sp-4);border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--c-primary-soft);color:var(--c-primary);font-size:24px}
+.upload-zone h3{font-size:16px;color:var(--text-primary);margin-bottom:var(--sp-2)}
+.upload-zone p{font-size:13px;color:var(--text-secondary)}
+.upload-zone .file-types{margin-top:var(--sp-3);display:flex;gap:var(--sp-2);justify-content:center;flex-wrap:wrap}
+
+.retrieval-container{display:grid;grid-template-columns:1fr 280px;gap:var(--sp-4)}
+.retrieval-main{background:rgba(17,24,39,.85);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-lg);padding:var(--sp-5)}
+.retrieval-input-area{display:flex;gap:var(--sp-2);margin-bottom:var(--sp-5)}
+.retrieval-input{flex:1;padding:12px 16px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--r-md);color:var(--text-primary);font-size:14px;font-family:var(--font-sans);transition:all var(--t-fast)}
+.retrieval-input:focus{outline:none;border-color:var(--c-primary);box-shadow:0 0 0 3px rgba(0,212,255,.1)}
+.retrieval-results-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--sp-4)}
+.retrieval-results-header h4{font-size:15px;font-weight:600}
+.retrieval-meta{display:flex;gap:var(--sp-3);font-size:12px;color:var(--text-muted)}
+.retrieval-result{padding:var(--sp-4);background:var(--bg-glass);border:1px solid var(--border-subtle);border-radius:var(--r-md);margin-bottom:var(--sp-3);transition:all var(--t-fast)}
+.retrieval-result:hover{border-color:var(--border-hover);background:var(--bg-glass-hover)}
+.result-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--sp-2)}
+.result-source{display:flex;align-items:center;gap:var(--sp-2)}
+.result-score-bar{display:flex;align-items:center;gap:var(--sp-2)}
+.score-track{width:60px;height:4px;background:var(--bg-hover);border-radius:2px;overflow:hidden}
+.score-fill{height:100%;border-radius:2px;transition:width var(--t-normal)}
+.score-high{background:var(--c-success)}.score-mid{background:var(--c-warning)}.score-low{background:var(--c-error)}
+.result-content{font-size:13px;color:var(--text-secondary);line-height:1.7;padding:var(--sp-2) var(--sp-3);background:rgba(0,0,0,.2);border-radius:var(--r-sm);border-left:2px solid var(--c-primary);margin:var(--sp-2) 0;white-space:pre-wrap;font-family:var(--font-mono);font-size:12px}
+.result-footer{display:flex;justify-content:space-between;align-items:center;margin-top:var(--sp-2)}
+.result-feedback{display:flex;gap:var(--sp-1)}
+.feedback-btn{width:28px;height:28px;border:1px solid var(--border-subtle);border-radius:var(--r-sm);background:transparent;color:var(--text-muted);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;transition:all var(--t-fast)}
+.feedback-btn:hover{border-color:var(--border-hover);color:var(--c-primary)}
+.feedback-btn.active-up{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3);color:var(--c-success)}
+.feedback-btn.active-down{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.3);color:var(--c-error)}
+
+.retrieval-config{background:rgba(17,24,39,.85);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-lg);padding:var(--sp-4);height:fit-content}
+.config-section{margin-bottom:var(--sp-4)}.config-section:last-child{margin-bottom:0}
+.config-label{font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:var(--sp-2);text-transform:uppercase;letter-spacing:.05em}
+.config-select{width:100%;padding:8px 12px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--r-md);color:var(--text-primary);font-size:13px;font-family:var(--font-sans);cursor:pointer}
+.config-row{display:flex;justify-content:space-between;align-items:center;padding:var(--sp-2) 0;font-size:13px}
+.config-row .label{color:var(--text-secondary)}.config-row .value{color:var(--text-primary);font-weight:500}
+
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--sp-4);margin-bottom:var(--sp-4)}
+.stat-card{padding:var(--sp-5);background:rgba(17,24,39,.85);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-lg);transition:all var(--t-normal)}
+.stat-card:hover{border-color:var(--border-hover);box-shadow:var(--shadow-glow)}
+.stat-card-icon{width:40px;height:40px;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:var(--sp-3)}
+.stat-card-value{font-size:32px;font-weight:700;color:var(--text-primary);margin-bottom:4px}
+.stat-card-label{font-size:13px;color:var(--text-secondary)}
+.stat-card-trend{display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-top:var(--sp-2)}
+
+.chart-card{padding:var(--sp-5);background:rgba(17,24,39,.85);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-lg);margin-bottom:var(--sp-4)}
+.chart-card h4{font-size:15px;font-weight:600;margin-bottom:var(--sp-4)}
+.bar-chart{display:flex;align-items:flex-end;gap:var(--sp-3);height:180px;padding-top:var(--sp-4)}
+.bar-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:var(--sp-2)}
+.bar-fill{width:100%;max-width:48px;border-radius:4px 4px 0 0;transition:height var(--t-slow);position:relative}
+.bar-label{font-size:11px;color:var(--text-muted)}
+.bar-value{font-size:12px;color:var(--text-secondary);font-weight:600;position:absolute;top:-20px;left:50%;transform:translateX(-50%)}
+
+.hot-queries{display:flex;flex-direction:column;gap:var(--sp-2)}
+.hot-query-item{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-2) var(--sp-3);background:var(--bg-glass);border-radius:var(--r-md);transition:background var(--t-fast)}
+.hot-query-item:hover{background:var(--bg-glass-hover)}
+.hot-query-rank{width:24px;height:24px;border-radius:var(--r-sm);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:var(--bg-hover);color:var(--text-muted)}
+.hot-query-rank.top{background:var(--c-primary-soft);color:var(--c-primary)}
+.hot-query-text{flex:1;font-size:13px;color:var(--text-primary)}
+.hot-query-count{font-size:12px;color:var(--text-muted)}
+
+.rag-config-grid{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4)}
+.config-card{padding:var(--sp-5);background:rgba(17,24,39,.85);backdrop-filter:blur(20px);border:1px solid var(--border-default);border-radius:var(--r-lg)}
+.config-card h4{font-size:15px;font-weight:600;margin-bottom:var(--sp-2);display:flex;align-items:center;gap:var(--sp-2)}
+.config-card .config-desc{font-size:12px;color:var(--text-muted);margin-bottom:var(--sp-4)}
+.config-item{display:flex;justify-content:space-between;align-items:center;padding:var(--sp-3) 0;border-bottom:1px solid var(--border-subtle)}
+.config-item:last-child{border-bottom:none}
+.config-item-left{display:flex;flex-direction:column;gap:2px}
+.config-item-name{font-size:13px;font-weight:500;color:var(--text-primary)}
+.config-item-hint{font-size:12px;color:var(--text-muted)}
+.config-slider{display:flex;align-items:center;gap:var(--sp-3);width:200px}
+.slider-track{flex:1;height:4px;background:var(--bg-hover);border-radius:2px;position:relative;cursor:pointer}
+.slider-fill{height:100%;background:var(--c-primary);border-radius:2px}
+.slider-thumb{position:absolute;top:50%;transform:translate(-50%,-50%);width:14px;height:14px;background:#fff;border:2px solid var(--c-primary);border-radius:50%;cursor:grab}
+.slider-value{font-size:13px;font-weight:600;color:var(--c-primary);min-width:50px;text-align:right}
+.config-input{width:100px;padding:6px 10px;background:var(--bg-surface);border:1px solid var(--border-default);border-radius:var(--r-sm);color:var(--text-primary);font-size:13px;font-family:var(--font-mono);text-align:right}
+.config-input:focus{outline:none;border-color:var(--c-primary)}
+
+.pipeline-viz{display:flex;align-items:center;gap:var(--sp-2);padding:var(--sp-4);background:var(--bg-glass);border-radius:var(--r-md);margin-bottom:var(--sp-4);overflow-x:auto}
+.pipeline-node{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:80px}
+.pipeline-node-icon{width:36px;height:36px;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;font-size:16px;background:var(--c-primary-soft);color:var(--c-primary);border:1px solid var(--border-default)}
+.pipeline-node-label{font-size:11px;color:var(--text-secondary);text-align:center}
+.pipeline-arrow{color:var(--text-muted);font-size:16px;flex-shrink:0}
+
+.save-bar{display:flex;justify-content:flex-end;gap:var(--sp-2);margin-top:var(--sp-6);padding-top:var(--sp-4);border-top:1px solid var(--border-subtle)}
+
+svg{display:inline-block;vertical-align:middle}
+</style>
+</head>
+<body>
+
+<!-- PAGE 1: KB List -->
+<div class="page-section active" id="page-list">
+<div class="kb-list-page">
+<div class="kb-list-header">
+<div><h1>知识库</h1><div class="subtitle">管理知识库、文档和 RAG 检索配置</div></div>
+<button class="btn btn-primary" onclick="switchPage('detail')">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新建知识库</button>
+</div>
+<div class="kb-toolbar">
+<div class="search-box">
+<svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+<input type="text" placeholder="搜索知识库名称..." />
+</div>
+<div class="view-toggle">
+<button class="active" title="网格视图"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
+<button title="列表视图"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></button>
+</div>
+<div style="flex:1"></div>
+<button class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>排序</button>
+<button class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>筛选</button>
+</div>
+<div class="kb-grid">
+
+<div class="kb-card" onclick="switchPage('detail')">
+<div class="kb-card-header">
+<div class="kb-card-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
+<div class="kb-card-actions">
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
+</div></div>
+<div class="kb-card-title">产品技术文档</div>
+<div class="kb-card-desc">包含产品 API 文档、架构设计、部署指南和技术规范</div>
+<div class="kb-card-stats">
+<div class="kb-stat"><div class="kb-stat-value">48</div><div class="kb-stat-label">文档</div></div>
+<div class="kb-stat"><div class="kb-stat-value">1,247</div><div class="kb-stat-label">分块</div></div>
+<div class="kb-stat"><div class="kb-stat-value">6</div><div class="kb-stat-label">文件夹</div></div>
+</div>
+<div class="kb-card-footer">
+<div class="kb-card-meta"><span class="status-dot success"></span><span>已启用 · 2 小时前更新</span></div>
+<span class="tag tag-cyan">text-embedding-3-small</span>
+</div></div>
+
+<div class="kb-card" onclick="switchPage('detail')">
+<div class="kb-card-header">
+<div class="kb-card-icon" style="background:var(--c-secondary-soft);color:var(--c-secondary)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+<div class="kb-card-actions">
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
+</div></div>
+<div class="kb-card-title">客服问答知识</div>
+<div class="kb-card-desc">客户常见问题、产品使用指南、故障排除手册</div>
+<div class="kb-card-stats">
+<div class="kb-stat"><div class="kb-stat-value">126</div><div class="kb-stat-label">文档</div></div>
+<div class="kb-stat"><div class="kb-stat-value">3,842</div><div class="kb-stat-label">分块</div></div>
+<div class="kb-stat"><div class="kb-stat-value">12</div><div class="kb-stat-label">文件夹</div></div>
+</div>
+<div class="kb-card-footer">
+<div class="kb-card-meta"><span class="status-dot success"></span><span>已启用 · 30 分钟前更新</span></div>
+<span class="tag tag-purple">text-embedding-3-small</span>
+</div></div>
+
+<div class="kb-card" onclick="switchPage('detail')">
+<div class="kb-card-header">
+<div class="kb-card-icon" style="background:var(--c-accent-soft);color:var(--c-accent)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>
+<div class="kb-card-actions">
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
+</div></div>
+<div class="kb-card-title">法律合规手册</div>
+<div class="kb-card-desc">公司法、数据保护法规、合规流程文档和风险评估报告</div>
+<div class="kb-card-stats">
+<div class="kb-stat"><div class="kb-stat-value">34</div><div class="kb-stat-label">文档</div></div>
+<div class="kb-stat"><div class="kb-stat-value">892</div><div class="kb-stat-label">分块</div></div>
+<div class="kb-stat"><div class="kb-stat-value">4</div><div class="kb-stat-label">文件夹</div></div>
+</div>
+<div class="kb-card-footer">
+<div class="kb-card-meta"><span class="status-dot success"></span><span>已启用 · 1 天前更新</span></div>
+<span class="tag tag-green">text-embedding-3-small</span>
+</div></div>
+
+<div class="kb-card" onclick="switchPage('detail')">
+<div class="kb-card-header">
+<div class="kb-card-icon" style="background:rgba(245,158,11,.12);color:var(--c-warning)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></div>
+<div class="kb-card-actions">
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
+</div></div>
+<div class="kb-card-title">培训资料库</div>
+<div class="kb-card-desc">内部培训课件、课程视频文字稿、考核题库和学习路径</div>
+<div class="kb-card-stats">
+<div class="kb-stat"><div class="kb-stat-value">67</div><div class="kb-stat-label">文档</div></div>
+<div class="kb-stat"><div class="kb-stat-value">2,103</div><div class="kb-stat-label">分块</div></div>
+<div class="kb-stat"><div class="kb-stat-value">8</div><div class="kb-stat-label">文件夹</div></div>
+</div>
+<div class="kb-card-footer">
+<div class="kb-card-meta"><span class="status-dot processing"></span><span>处理中 · 3 个文档排队</span></div>
+<span class="tag tag-amber">text-embedding-3-small</span>
+</div></div>
+
+<div class="kb-card" onclick="switchPage('detail')" style="opacity:.7">
+<div class="kb-card-header">
+<div class="kb-card-icon" style="background:rgba(136,153,170,.12);color:var(--text-secondary)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
+<div class="kb-card-actions">
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
+</div></div>
+<div class="kb-card-title">竞品分析报告</div>
+<div class="kb-card-desc">行业竞品分析、市场调研报告和产品对比资料</div>
+<div class="kb-card-stats">
+<div class="kb-stat"><div class="kb-stat-value">22</div><div class="kb-stat-label">文档</div></div>
+<div class="kb-stat"><div class="kb-stat-value">567</div><div class="kb-stat-label">分块</div></div>
+<div class="kb-stat"><div class="kb-stat-value">3</div><div class="kb-stat-label">文件夹</div></div>
+</div>
+<div class="kb-card-footer">
+<div class="kb-card-meta"><span class="status-dot idle"></span><span>已禁用 · 5 天前更新</span></div>
+<span class="tag tag-gray">text-embedding-3-small</span>
+</div></div>
+
+<div class="kb-card kb-card-create" onclick="switchPage('detail')">
+<div class="plus-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
+<div style="font-size:14px;font-weight:600;color:var(--text-primary);margin-bottom:4px">新建知识库</div>
+<div style="font-size:12px;color:var(--text-muted)">上传文档，构建专属知识检索</div>
+</div>
+
+</div></div></div>
+
+<!-- PAGE 2: KB Detail -->
+<div class="page-section" id="page-detail">
+<div class="kb-detail-page">
+<div class="breadcrumb"><a href="#" onclick="switchPage('list');return false">知识库</a><span>/</span><span style="color:var(--text-primary)">产品技术文档</span></div>
+
+<div class="detail-header">
+<div class="detail-header-left">
+<div class="detail-header-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></div>
+<div>
+<h2>产品技术文档</h2>
+<div class="desc">包含产品 API 文档、架构设计、部署指南和技术规范</div>
+<div class="detail-header-tags">
+<span class="tag tag-cyan">text-embedding-3-small</span>
+<span class="tag tag-green">混合检索</span>
+<span class="tag tag-green">重排序已启用</span>
+<span class="tag tag-purple">MMR 去重</span>
+<span class="tag tag-gray">Chunk: 500 / Overlap: 50</span>
+</div></div></div>
+<div class="detail-header-right">
+<button class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>编辑</button>
+<button class="btn btn-primary" onclick="switchTab('docs')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>上传文档</button>
+</div></div>
+
+<div class="detail-layout">
+<div class="folder-sidebar">
+<div class="folder-sidebar-header"><span class="folder-sidebar-title">文件夹</span>
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button></div>
+<div class="folder-tree">
+<div class="folder-item active"><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="folder-name">全部文档</span><span class="folder-count">48</span></div>
+<div class="folder-item"><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="folder-name">API 文档</span><span class="folder-count">18</span></div>
+<div class="folder-children">
+<div class="folder-item"><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="folder-name">REST API</span><span class="folder-count">12</span></div>
+<div class="folder-item"><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="folder-name">GraphQL</span><span class="folder-count">6</span></div>
+</div>
+<div class="folder-item"><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="folder-name">架构设计</span><span class="folder-count">10</span></div>
+<div class="folder-item"><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="folder-name">部署指南</span><span class="folder-count">8</span></div>
+<div class="folder-item"><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg><span class="folder-name">技术规范</span><span class="folder-count">12</span></div>
+</div></div>
+
+<div class="detail-main">
+<div class="tab-bar">
+<div class="tab-item active" data-tab="docs" onclick="switchTab('docs')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>文档管理</div>
+<div class="tab-item" data-tab="search" onclick="switchTab('search')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>检索测试</div>
+<div class="tab-item" data-tab="stats" onclick="switchTab('stats')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>统计分析</div>
+<div class="tab-item" data-tab="config" onclick="switchTab('config')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>RAG 配置</div>
+</div>
+
+<!-- Documents Tab -->
+<div class="tab-content active" id="tab-docs">
+<div class="doc-toolbar">
+<div class="doc-toolbar-left">
+<button class="btn btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>上传文件</button>
+<button class="btn btn-ghost"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M7 12h10M10 18h4"/></svg>批量操作</button>
+<span style="color:var(--text-muted);font-size:12px;margin-left:8px">共 48 个文档 · 1,247 个分块</span>
+</div>
+<div class="doc-toolbar-right">
+<div class="search-box" style="max-width:240px">
+<svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+<input type="text" placeholder="搜索文件名..." style="font-size:12px;padding:7px 12px 7px 34px" />
+</div>
+<button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+</div></div>
+
+<div class="doc-table">
+<div class="doc-table-header"><div></div><div>文件名</div><div>类型</div><div>大小</div><div>处理流水线</div><div>上传时间</div><div style="text-align:right">操作</div></div>
+
+<div class="doc-row">
+<div class="doc-checkbox checked"></div>
+<div class="doc-name"><div class="file-type-icon file-type-pdf">PDF</div><span class="doc-name-text">API_Design_Specification_v2.pdf</span></div>
+<div class="doc-type">PDF</div><div class="doc-size">2.4 MB</div>
+<div class="doc-pipeline"><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div></div>
+<div class="doc-date">2026-07-03</div>
+<div class="doc-actions"><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>
+</div>
+
+<div class="doc-row">
+<div class="doc-checkbox"></div>
+<div class="doc-name"><div class="file-type-icon file-type-doc">DOC</div><span class="doc-name-text">系统架构设计文档.docx</span></div>
+<div class="doc-type">DOCX</div><div class="doc-size">1.8 MB</div>
+<div class="doc-pipeline"><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div></div>
+<div class="doc-date">2026-07-02</div>
+<div class="doc-actions"><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>
+</div>
+
+<div class="doc-row">
+<div class="doc-checkbox"></div>
+<div class="doc-name"><div class="file-type-icon file-type-md">MD</div><span class="doc-name-text">deployment_guide.md</span></div>
+<div class="doc-type">MD</div><div class="doc-size">156 KB</div>
+<div class="doc-pipeline"><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step active" title="向量化中">4</div><div class="pipeline-step">5</div></div>
+<div class="doc-date">2026-07-03</div>
+<div class="doc-actions"><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></button></div>
+</div>
+
+<div class="doc-row">
+<div class="doc-checkbox"></div>
+<div class="doc-name"><div class="file-type-icon file-type-code">PY</div><span class="doc-name-text">auth_service.py</span></div>
+<div class="doc-type">Code</div><div class="doc-size">42 KB</div>
+<div class="doc-pipeline"><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div></div>
+<div class="doc-date">2026-07-01</div>
+<div class="doc-actions"><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>
+</div>
+
+<div class="doc-row">
+<div class="doc-checkbox"></div>
+<div class="doc-name"><div class="file-type-icon file-type-pdf">PDF</div><span class="doc-name-text">database_design.pdf</span></div>
+<div class="doc-type">PDF</div><div class="doc-size">5.2 MB</div>
+<div class="doc-pipeline"><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step failed">!</div><div class="pipeline-step">4</div><div class="pipeline-step">5</div></div>
+<div class="doc-date">2026-06-30</div>
+<div class="doc-actions"><button class="btn-icon" style="color:var(--c-warning)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>
+</div>
+
+<div class="doc-row">
+<div class="doc-checkbox"></div>
+<div class="doc-name"><div class="file-type-icon file-type-txt">TXT</div><span class="doc-name-text">release_notes_v1.txt</span></div>
+<div class="doc-type">TXT</div><div class="doc-size">28 KB</div>
+<div class="doc-pipeline"><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div></div>
+<div class="doc-date">2026-06-28</div>
+<div class="doc-actions"><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>
+</div>
+
+<div class="doc-row">
+<div class="doc-checkbox"></div>
+<div class="doc-name"><div class="file-type-icon file-type-code">TS</div><span class="doc-name-text">frontend_components.tsx</span></div>
+<div class="doc-type">Code</div><div class="doc-size">89 KB</div>
+<div class="doc-pipeline"><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div><div class="pipeline-step done">&#10003;</div></div>
+<div class="doc-date">2026-06-27</div>
+<div class="doc-actions"><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button><button class="btn-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></div>
+</div>
+</div>
+
+<div class="upload-zone" style="margin-top:var(--sp-4)">
+<div class="upload-zone-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
+<h3>拖拽文件到此处或点击选择</h3>
+<p>支持批量上传，单文件最大 50MB</p>
+<div class="file-types"><span class="tag tag-red">PDF</span><span class="tag tag-blue">DOCX</span><span class="tag tag-cyan">MD</span><span class="tag tag-gray">TXT</span><span class="tag tag-purple">Code</span><span class="tag tag-amber">CSV</span><span class="tag tag-green">JSON</span></div>
+</div>
+</div>
+
+<!-- Retrieval Test Tab -->
+<div class="tab-content" id="tab-search">
+<div class="retrieval-container">
+<div class="retrieval-main">
+<div class="retrieval-input-area">
+<input type="text" class="retrieval-input" placeholder="输入检索问题，测试知识库检索效果..." value="如何部署这个系统？" />
+<button class="btn btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>检索</button>
+</div>
+<div class="retrieval-results-header">
+<h4>检索结果</h4>
+<div class="retrieval-meta"><span>5 条结果</span><span>·</span><span>耗时 127ms</span><span>·</span><span>Tokens: 1,842</span></div>
+</div>
+
+<div class="retrieval-result">
+<div class="result-header">
+<div class="result-source"><div class="file-type-icon file-type-md" style="width:24px;height:24px;font-size:9px">MD</div><span style="font-size:13px;color:var(--text-primary)">deployment_guide.md</span><span class="tag tag-cyan" style="font-size:10px">向量+关键词</span></div>
+<div class="result-score-bar"><div class="score-track"><div class="score-fill score-high" style="width:92%"></div></div><span style="font-size:12px;font-weight:600;color:var(--c-success)">92%</span></div>
+</div>
+<div class="result-content">## 系统部署指南
+### 环境要求
+- Python 3.10+
+- Node.js 18+
+- PostgreSQL 14+ (生产环境)
+### 部署步骤
+1. 克隆代码仓库：git clone https://...
+2. 安装后端依赖：pip install -r requirements.txt
+3. 配置环境变量：复制 .env.example 为 .env 并修改配置...</div>
+<div class="result-footer">
+<span style="font-size:11px;color:var(--text-muted)">Chunk #3 · 500 tokens · 文件夹: 部署指南</span>
+<div class="result-feedback"><button class="feedback-btn active-up">&#128077;</button><button class="feedback-btn">&#128078;</button></div>
+</div></div>
+
+<div class="retrieval-result">
+<div class="result-header">
+<div class="result-source"><div class="file-type-icon file-type-pdf" style="width:24px;height:24px;font-size:9px">PDF</div><span style="font-size:13px;color:var(--text-primary)">API_Design_Specification_v2.pdf</span><span class="tag tag-cyan" style="font-size:10px">向量+关键词</span></div>
+<div class="result-score-bar"><div class="score-track"><div class="score-fill score-high" style="width:87%"></div></div><span style="font-size:12px;font-weight:600;color:var(--c-success)">87%</span></div>
+</div>
+<div class="result-content">第4章 部署架构
+本系统采用微服务架构部署，包含以下核心组件：
+- API Gateway (端口 8010)
+- Worker Process (异步任务处理)
+- ChromaDB (向量数据库)
+- PostgreSQL (业务数据)
+部署推荐使用 Docker Compose 进行容器化部署...</div>
+<div class="result-footer">
+<span style="font-size:11px;color:var(--text-muted)">Chunk #7 · 480 tokens · 文件夹: 架构设计</span>
+<div class="result-feedback"><button class="feedback-btn">&#128077;</button><button class="feedback-btn">&#128078;</button></div>
+</div></div>
+
+<div class="retrieval-result">
+<div class="result-header">
+<div class="result-source"><div class="file-type-icon file-type-code" style="width:24px;height:24px;font-size:9px">SH</div><span style="font-size:13px;color:var(--text-primary)">deploy_script.sh</span><span class="tag tag-purple" style="font-size:10px">仅向量</span></div>
+<div class="result-score-bar"><div class="score-track"><div class="score-fill score-mid" style="width:73%"></div></div><span style="font-size:12px;font-weight:600;color:var(--c-warning)">73%</span></div>
+</div>
+<div class="result-content">#!/bin/bash
+# 自动化部署脚本
+echo "Starting deployment..."
+docker-compose up -d --build
+docker-compose exec backend python manage.py migrate
+echo "Deployment complete!"</div>
+<div class="result-footer">
+<span style="font-size:11px;color:var(--text-muted)">Chunk #1 · 120 tokens · 文件夹: 部署指南</span>
+<div class="result-feedback"><button class="feedback-btn">&#128077;</button><button class="feedback-btn">&#128078;</button></div>
+</div></div>
+
+<div class="retrieval-result">
+<div class="result-header">
+<div class="result-source"><div class="file-type-icon file-type-md" style="width:24px;height:24px;font-size:9px">MD</div><span style="font-size:13px;color:var(--text-primary)">quickstart.md</span><span class="tag tag-purple" style="font-size:10px">仅向量</span></div>
+<div class="result-score-bar"><div class="score-track"><div class="score-fill score-mid" style="width:65%"></div></div><span style="font-size:12px;font-weight:600;color:var(--c-warning)">65%</span></div>
+</div>
+<div class="result-content"># 快速开始
+## 本地开发环境
+npm install
+cd ../backend && pip install -r requirements.txt
+## 启动开发服务器
+npm run dev  # 前端
+python server.py  # 后端
+## 生产部署
+请参考 deployment_guide.md 文件获取完整的生产环境部署说明...</div>
+<div class="result-footer">
+<span style="font-size:11px;color:var(--text-muted)">Chunk #2 · 350 tokens · 文件夹: 部署指南</span>
+<div class="result-feedback"><button class="feedback-btn">&#128077;</button><button class="feedback-btn">&#128078;</button></div>
+</div></div>
+
+<div class="retrieval-result">
+<div class="result-header">
+<div class="result-source"><div class="file-type-icon file-type-txt" style="width:24px;height:24px;font-size:9px">TXT</div><span style="font-size:13px;color:var(--text-primary)">release_notes_v1.txt</span><span class="tag tag-gray" style="font-size:10px">仅关键词</span></div>
+<div class="result-score-bar"><div class="score-track"><div class="score-fill score-low" style="width:38%"></div></div><span style="font-size:12px;font-weight:600;color:var(--c-error)">38%</span></div>
+</div>
+<div class="result-content">Release Notes v1.0.0
+- 初始版本发布
+- 支持基础部署功能
+- 修复了若干已知问题
+下一版本计划：支持 Docker 镜像一键部署、Kubernetes 编排...</div>
+<div class="result-footer">
+<span style="font-size:11px;color:var(--text-muted)">Chunk #5 · 200 tokens · 文件夹: 全部文档</span>
+<div class="result-feedback"><button class="feedback-btn">&#128077;</button><button class="feedback-btn">&#128078;</button></div>
+</div></div>
+
+</div>
+
+<div class="retrieval-config">
+<div class="config-section"><div class="config-label">检索模式</div><select class="config-select"><option>混合检索 (推荐)</option><option>仅向量检索</option><option>仅关键词检索</option></select></div>
+<div class="config-section"><div class="config-label">返回数量 (Top-K)</div><div class="config-slider"><div class="slider-track"><div class="slider-fill" style="width:33%"></div><div class="slider-thumb" style="left:33%"></div></div><span class="slider-value">5</span></div></div>
+<div class="config-section"><div class="config-label">重排序</div><div class="config-row"><span class="label">启用 Cross-Encoder</span><div class="toggle on"></div></div><div class="config-row"><span class="label">模型</span><span class="value" style="font-size:11px">bge-reranker</span></div></div>
+<div class="config-section"><div class="config-label">检索统计</div><div class="config-row"><span class="label">平均相关度</span><span class="value" style="color:var(--c-success)">71%</span></div><div class="config-row"><span class="label">检索耗时</span><span class="value">127ms</span></div><div class="config-row"><span class="label">Token 消耗</span><span class="value">1,842</span></div><div class="config-row"><span class="label">命中来源</span><span class="value">3 向量 / 4 关键词</span></div></div>
+<div class="config-section"><div class="config-label">质量反馈</div><div class="config-row"><span class="label">&#128077; 有用</span><span class="value" style="color:var(--c-success)">23</span></div><div class="config-row"><span class="label">&#128078; 没用</span><span class="value" style="color:var(--c-error)">4</span></div></div>
+</div>
+</div>
+</div>
+
+<!-- Statistics Tab -->
+<div class="tab-content" id="tab-stats">
+<div class="stats-grid">
+<div class="stat-card"><div class="stat-card-icon" style="background:var(--c-primary-soft);color:var(--c-primary)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><div class="stat-card-value">48</div><div class="stat-card-label">文档总数</div><div class="stat-card-trend" style="color:var(--c-success)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>+12 本周</div></div>
+<div class="stat-card"><div class="stat-card-icon" style="background:var(--c-secondary-soft);color:var(--c-secondary)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="15" x2="15" y2="15"/></svg></div><div class="stat-card-value">1,247</div><div class="stat-card-label">分块总数</div><div class="stat-card-trend" style="color:var(--c-success)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>+312 本周</div></div>
+<div class="stat-card"><div class="stat-card-icon" style="background:var(--c-accent-soft);color:var(--c-accent)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div><div class="stat-card-value">342</div><div class="stat-card-label">本月检索次数</div><div class="stat-card-trend" style="color:var(--c-success)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>+18% vs 上月</div></div>
+<div class="stat-card"><div class="stat-card-icon" style="background:rgba(16,185,129,.12);color:var(--c-success)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div><div class="stat-card-value">89%</div><div class="stat-card-label">平均相关度</div><div class="stat-card-trend" style="color:var(--c-success)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>+3% vs 上月</div></div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4)">
+<div class="chart-card">
+<h4>文档处理状态分布</h4>
+<div style="display:flex;gap:var(--sp-6);align-items:center;padding:var(--sp-4) 0">
+<div style="position:relative;width:120px;height:120px">
+<div style="width:120px;height:120px;border-radius:50%;background:conic-gradient(var(--c-success) 0% 85%,var(--c-warning) 85% 93%,var(--c-error) 93% 97%,var(--text-muted) 97% 100%)"></div>
+<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center"><div style="font-size:24px;font-weight:700;color:var(--text-primary)">48</div><div style="font-size:11px;color:var(--text-muted)">总计</div></div>
+</div>
+<div style="display:flex;flex-direction:column;gap:var(--sp-3)">
+<div style="display:flex;align-items:center;gap:8px"><span class="status-dot success"></span><span style="font-size:13px;color:var(--text-secondary)">已完成</span><span style="font-size:13px;font-weight:600;color:var(--text-primary)">41</span></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="status-dot processing"></span><span style="font-size:13px;color:var(--text-secondary)">处理中</span><span style="font-size:13px;font-weight:600;color:var(--text-primary)">4</span></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="status-dot error"></span><span style="font-size:13px;color:var(--text-secondary)">失败</span><span style="font-size:13px;font-weight:600;color:var(--text-primary)">2</span></div>
+<div style="display:flex;align-items:center;gap:8px"><span class="status-dot idle"></span><span style="font-size:13px;color:var(--text-secondary)">等待中</span><span style="font-size:13px;font-weight:600;color:var(--text-primary)">1</span></div>
+</div>
+</div>
+</div>
+<div class="chart-card">
+<h4>近 7 天检索趋势</h4>
+<div class="bar-chart">
+<div class="bar-item"><div class="bar-fill" style="height:45%;background:linear-gradient(180deg,rgba(0,212,255,.4),rgba(0,212,255,.15))"><span class="bar-value">28</span></div><span class="bar-label">周一</span></div>
+<div class="bar-item"><div class="bar-fill" style="height:60%;background:linear-gradient(180deg,rgba(0,212,255,.4),rgba(0,212,255,.15))"><span class="bar-value">35</span></div><span class="bar-label">周二</span></div>
+<div class="bar-item"><div class="bar-fill" style="height:38%;background:linear-gradient(180deg,rgba(0,212,255,.4),rgba(0,212,255,.15))"><span class="bar-value">22</span></div><span class="bar-label">周三</span></div>
+<div class="bar-item"><div class="bar-fill" style="height:75%;background:linear-gradient(180deg,rgba(0,212,255,.5),rgba(0,212,255,.2))"><span class="bar-value">48</span></div><span class="bar-label">周四</span></div>
+<div class="bar-item"><div class="bar-fill" style="height:90%;background:linear-gradient(180deg,var(--c-primary),rgba(0,212,255,.2))"><span class="bar-value">62</span></div><span class="bar-label">周五</span></div>
+<div class="bar-item"><div class="bar-fill" style="height:30%;background:linear-gradient(180deg,rgba(0,212,255,.4),rgba(0,212,255,.15))"><span class="bar-value">18</span></div><span class="bar-label">周六</span></div>
+<div class="bar-item"><div class="bar-fill" style="height:22%;background:linear-gradient(180deg,rgba(0,212,255,.4),rgba(0,212,255,.15))"><span class="bar-value">12</span></div><span class="bar-label">周日</span></div>
+</div>
+</div>
+</div>
+
+<div class="chart-card">
+<h4>热门检索词 TOP 10</h4>
+<div class="hot-queries">
+<div class="hot-query-item"><div class="hot-query-rank top">1</div><span class="hot-query-text">如何部署这个系统</span><span class="hot-query-count">42 次</span></div>
+<div class="hot-query-item"><div class="hot-query-rank top">2</div><span class="hot-query-text">API 认证方式</span><span class="hot-query-count">35 次</span></div>
+<div class="hot-query-item"><div class="hot-query-rank top">3</div><span class="hot-query-text">数据库连接配置</span><span class="hot-query-count">28 次</span></div>
+<div class="hot-query-item"><div class="hot-query-rank">4</div><span class="hot-query-text">Agent 创建流程</span><span class="hot-query-count">22 次</span></div>
+<div class="hot-query-item"><div class="hot-query-rank">5</div><span class="hot-query-text">知识库分块策略</span><span class="hot-query-count">18 次</span></div>
+<div class="hot-query-item"><div class="hot-query-rank">6</div><span class="hot-query-text">MCP Server 配置</span><span class="hot-query-count">15 次</span></div>
+<div class="hot-query-item"><div class="hot-query-rank">7</div><span class="hot-query-text">权限管理</span><span class="hot-query-count">12 次</span></div>
+</div>
+</div>
+</div>
+
+<!-- RAG Config Tab -->
+<div class="tab-content" id="tab-config">
+<div class="chart-card">
+<h4>RAG 检索流水线</h4>
+<div class="pipeline-viz">
+<div class="pipeline-node"><div class="pipeline-node-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></div><span class="pipeline-node-label">查询改写</span></div>
+<span class="pipeline-arrow">&#8594;</span>
+<div class="pipeline-node"><div class="pipeline-node-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div><span class="pipeline-node-label">混合检索</span></div>
+<span class="pipeline-arrow">&#8594;</span>
+<div class="pipeline-node"><div class="pipeline-node-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 3 13 12 8 7"/><polyline points="3 21 8 16"/></svg></div><span class="pipeline-node-label">RRF 融合</span></div>
+<span class="pipeline-arrow">&#8594;</span>
+<div class="pipeline-node"><div class="pipeline-node-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></div><span class="pipeline-node-label">MMR 去重</span></div>
+<span class="pipeline-arrow">&#8594;</span>
+<div class="pipeline-node"><div class="pipeline-node-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11H1l3-3m4 6H1l3 3"/><path d="M15 11h8l-3-3m3 6h-8l3 3"/></svg></div><span class="pipeline-node-label">Cross-Encoder 重排</span></div>
+<span class="pipeline-arrow">&#8594;</span>
+<div class="pipeline-node"><div class="pipeline-node-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div><span class="pipeline-node-label">上下文组装</span></div>
+</div>
+</div>
+
+<div class="rag-config-grid">
+<div class="config-card">
+<h4><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-primary)" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>检索配置</h4>
+<div class="config-desc">控制检索策略和返回结果数量</div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">混合检索</div><div class="config-item-hint">向量检索 + 关键词检索 + RRF 融合</div></div><div class="toggle on"></div></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">查询改写</div><div class="config-item-hint">使用 LLM 智能改写用户查询</div></div><div class="toggle on"></div></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">Top-K 初筛数量</div><div class="config-item-hint">检索阶段返回的候选数量</div></div><input class="config-input" type="number" value="20" /></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">最低相关度阈值</div><div class="config-item-hint">低于此分数的结果将被过滤</div></div><div class="config-slider"><div class="slider-track"><div class="slider-fill" style="width:30%"></div><div class="slider-thumb" style="left:30%"></div></div><span class="slider-value">0.30</span></div></div>
+</div>
+
+<div class="config-card">
+<h4><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-secondary)" stroke-width="2"><path d="M3 6h18M7 12h10M10 18h4"/></svg>重排序配置</h4>
+<div class="config-desc">Cross-Encoder 精排，提升结果相关性</div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">启用重排序</div><div class="config-item-hint">使用 Cross-Encoder 精排候选结果</div></div><div class="toggle on"></div></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">重排模型</div><div class="config-item-hint">Cross-Encoder 模型选择</div></div><select class="config-select" style="width:180px"><option>bge-reranker-base</option><option>bge-reranker-large</option><option>cohere-rerank</option></select></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">重排保留数量</div><div class="config-item-hint">重排后保留的最终结果数</div></div><input class="config-input" type="number" value="10" /></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">MMR 去重</div><div class="config-item-hint">消除重复/高度相似的内容片段</div></div><div class="toggle on"></div></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">MMR 相似度阈值</div><div class="config-item-hint">高于此阈值的内容将被去重</div></div><div class="config-slider"><div class="slider-track"><div class="slider-fill" style="width:50%"></div><div class="slider-thumb" style="left:50%"></div></div><span class="slider-value">0.50</span></div></div>
+</div>
+
+<div class="config-card">
+<h4><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-accent)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>上下文配置</h4>
+<div class="config-desc">控制注入 LLM 的上下文内容</div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">最大上下文 Tokens</div><div class="config-item-hint">注入 LLM 的检索内容上限</div></div><input class="config-input" type="number" value="4000" /></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">标注来源</div><div class="config-item-hint">在回答中标注检索来源文件</div></div><div class="toggle on"></div></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">来源格式</div><div class="config-item-hint">来源标注的显示格式</div></div><select class="config-select" style="width:180px"><option>[来源: 文件名, 相关度: X%]</option><option>引用编号 [1] [2]</option><option>脚注样式</option></select></div>
+</div>
+
+<div class="config-card">
+<h4><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--c-warning)" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/></svg>分块配置</h4>
+<div class="config-desc">文档切分策略参数</div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">分块策略</div><div class="config-item-hint">文档切分算法</div></div><select class="config-select" style="width:180px"><option>递归字符分块 (推荐)</option><option>固定大小分块</option><option>文档结构分块</option></select></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">分块大小 (tokens)</div><div class="config-item-hint">每个分块的最大 token 数</div></div><div class="config-slider"><div class="slider-track"><div class="slider-fill" style="width:12.5%"></div><div class="slider-thumb" style="left:12.5%"></div></div><span class="slider-value">500</span></div></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">重叠大小 (tokens)</div><div class="config-item-hint">相邻分块的重叠 token 数</div></div><div class="config-slider"><div class="slider-track"><div class="slider-fill" style="width:10%"></div><div class="slider-thumb" style="left:10%"></div></div><span class="slider-value">50</span></div></div>
+<div class="config-item"><div class="config-item-left"><div class="config-item-name">最小分块大小</div><div class="config-item-hint">小于此值的分块将被丢弃</div></div><input class="config-input" type="number" value="50" /></div>
+</div>
+</div>
+
+<div class="save-bar">
+<button class="btn btn-ghost">恢复默认</button>
+<button class="btn btn-primary"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>保存配置</button>
+</div>
+</div>
+
+</div></div>
+</div></div>
+</div>
+
+<!-- Demo Navigation -->
+<div class="demo-nav">
+<button class="active" data-page="list" onclick="switchPage('list')">知识库列表</button>
+<button data-page="detail" onclick="switchPage('detail')">知识库详情</button>
+</div>
+
+<script>
+function switchPage(page) {
+  document.querySelectorAll('.page-section').forEach(s => s.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.querySelectorAll('.demo-nav button').forEach(b => b.classList.remove('active'));
+  document.querySelector('.demo-nav button[data-page="' + page + '"]').classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-item').forEach(t => t.classList.remove('active'));
+  document.querySelector('.tab-item[data-tab="' + tab + '"]').classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
+// Toggle switches
+document.querySelectorAll('.toggle').forEach(t => {
+  t.addEventListener('click', () => t.classList.toggle('on'));
+});
+
+// Checkboxes
+document.querySelectorAll('.doc-checkbox').forEach(c => {
+  c.addEventListener('click', () => c.classList.toggle('checked'));
+});
+
+// Feedback buttons
+document.querySelectorAll('.feedback-btn').forEach(b => {
+  b.addEventListener('click', function() {
+    const parent = this.parentElement;
+    parent.querySelectorAll('.feedback-btn').forEach(s => s.classList.remove('active-up', 'active-down'));
+    if (this.textContent.charCodeAt(0) === 128077) this.classList.add('active-up');
+    else this.classList.add('active-down');
+  });
+});
+</script>
+</body>
+</html>

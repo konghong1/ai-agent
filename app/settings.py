@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
     access_token_expire_minutes: int = Field(default=60 * 24 * 7, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
 
+    # ── Vector Store Configuration ──────────────────────────────────
+    # Supported backends: "chroma", "faiss", "milvus"
+    vector_store_backend: str = Field(default="chroma", alias="VECTOR_STORE_BACKEND")
+    vector_store_path: str = Field(default=str(ROOT_DIR / "vector_db"), alias="VECTOR_STORE_PATH")
+    # Milvus-specific (only used when backend="milvus")
+    milvus_host: str = Field(default="localhost", alias="MILVUS_HOST")
+    milvus_port: int = Field(default=19530, alias="MILVUS_PORT")
+    milvus_collection_prefix: str = Field(default="kb_", alias="MILVUS_COLLECTION_PREFIX")
+
 
 @lru_cache
 def get_settings() -> Settings:

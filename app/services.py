@@ -7,7 +7,7 @@ from typing import Any
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
@@ -16,6 +16,7 @@ from app.models import (
 )
 from app.schemas import KBFolderTreeNode
 from app.core.security import hash_password, verify_password
+from app.vector_store import get_vector_store, DEFAULT_RAG_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,8 @@ logger = logging.getLogger(__name__)
 UPLOAD_DIR = Path(__file__).resolve().parents[1] / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# ChromaDB persistent directory
+# Legacy ChromaDB path — kept for backward compatibility migrations.
+# New code should use get_vector_store() from app.vector_store.
 CHROMA_DIR = Path(__file__).resolve().parents[1] / "chroma_db"
 CHROMA_DIR.mkdir(exist_ok=True)
 
@@ -141,6 +143,7 @@ class KnowledgeBaseService:
             user_id=user_id, name=name, description=description,
             embedding_model=embedding_model, chunk_size=chunk_size,
             chunk_overlap=chunk_overlap, enabled=enabled,
+            rag_config=DEFAULT_RAG_CONFIG.copy(),
         )
         db.add(kb)
         db.commit()
@@ -171,11 +174,10 @@ class KnowledgeBaseService:
     @staticmethod
     def delete_kb(db: Session, kb: KnowledgeBase) -> None:
         try:
-            import chromadb
-            client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-            client.delete_collection(f"kb_{kb.id}")
-        except Exception:
-            pass
+            vs = get_vector_store()
+            vs.delete_collection(f"kb_{kb.id}")
+        except Exception as exc:
+            logger.warning("Failed to delete vector collection for kb %s: %s", kb.id, exc)
         db.delete(kb)
         db.commit()
 
@@ -258,12 +260,10 @@ class KnowledgeBaseService:
         if chunks:
             kb = doc.kb
             try:
-                import chromadb
-                client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-                coll = client.get_collection(f"kb_{kb.id}")
-                coll.delete(ids=[c.vector_id for c in chunks])
-            except Exception:
-                pass
+                vs = get_vector_store()
+                vs.delete(f"kb_{kb.id}", ids=[c.vector_id for c in chunks])
+            except Exception as exc:
+                logger.warning("Failed to delete vectors for doc %s: %s", doc.id, exc)
             for c in chunks:
                 db.delete(c)
         db.delete(doc)
@@ -299,30 +299,41 @@ class KnowledgeBaseService:
             folder = db.get(KBFolder, doc.folder_id) if doc.folder_id else None
             folder_path = KnowledgeBaseService.get_folder_path(db, folder) if folder else ""
 
-            import chromadb
-            client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-            coll = client.get_collection(f"kb_{kb.id}")
+            # Use the abstracted vector store backend
+            vs = get_vector_store()
+            collection_name = f"kb_{kb.id}"
+            vs.ensure_collection(collection_name)
 
             chunk_records = []
+            ids = []
+            vectors = []
+            documents = []
+            metadatas = []
             for idx, (chunk_data, embedding) in enumerate(zip(chunks_data, emb_list)):
                 vector_id = f"{doc.id}_chunk_{idx}_{uuid.uuid4().hex[:8]}"
-                coll.upsert(
-                    ids=[vector_id],
-                    embeddings=[embedding],
-                    documents=[chunk_data["content"]],
-                    metadatas={
-                        "document_id": doc.id, "document_name": doc.original_filename,
-                        "folder_path": folder_path, "kb_id": kb.id,
-                        "chunk_index": idx, "page_number": None,
-                        **(chunk_data.get("metadata") or {}),
-                    },
-                )
+                ids.append(vector_id)
+                vectors.append(embedding)
+                documents.append(chunk_data["content"])
+                metadatas.append({
+                    "document_id": str(doc.id),
+                    "document_name": doc.original_filename,
+                    "folder_path": folder_path,
+                    "folder_id": str(doc.folder_id) if doc.folder_id else "",
+                    "kb_id": str(kb.id),
+                    "chunk_index": str(idx),
+                    "page_number": "",
+                    **(chunk_data.get("metadata") or {}),
+                })
                 chunk_records.append(KBChunk(
                     kb_id=kb.id, document_id=doc.id, folder_id=doc.folder_id,
                     vector_id=vector_id, chunk_index=idx,
                     content=chunk_data["content"],
                     metadata_=chunk_data.get("metadata") or {},
                 ))
+
+            # Batch upsert — much faster than per-chunk
+            vs.upsert(collection_name, ids=ids, embeddings=vectors,
+                      documents=documents, metadatas=metadatas)
 
             db.add_all(chunk_records)
             doc.status = "ready"
@@ -347,9 +358,8 @@ class KnowledgeBaseService:
         embeddings = get_embeddings(kb.embedding_model)
         query_embedding = embeddings.embed_query(query)
 
-        import chromadb
-        client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-        coll = client.get_collection(f"kb_{kb.id}")
+        vs = get_vector_store()
+        collection_name = f"kb_{kb.id}"
 
         where = {"kb_id": str(kb_id)}
         if folder_id is not None:
@@ -358,16 +368,21 @@ class KnowledgeBaseService:
                 folder_path = KnowledgeBaseService.get_folder_path(db, folder)
                 where["folder_path"] = folder_path
 
-        results = coll.query(
-            query_embeddings=[query_embedding], n_results=top_k,
-            where=where, include=["metadatas", "distances"],
+        results = vs.query(
+            collection_name,
+            query_embeddings=[query_embedding],
+            n_results=top_k,
+            where=where,
         )
 
         hits = []
-        for i in range(len(results["ids"][0])):
-            vid = results["ids"][0][i]
-            distance = results["distances"][0][i]
-            metadata = results["metadatas"][0][i]
+        ids_list = results.get("ids", [[]])
+        distances_list = results.get("distances", [[]])
+        metadatas_list = results.get("metadatas", [[]])
+        for i in range(len(ids_list[0]) if ids_list else 0):
+            vid = ids_list[0][i]
+            distance = distances_list[0][i] if i < len(distances_list[0]) else 0
+            metadata = metadatas_list[0][i] if i < len(metadatas_list[0]) else {}
             document_id = int(metadata.get("document_id", 0))
             doc = db.scalar(select(KBDocument).where(KBDocument.id == document_id))
             chunk = db.scalar(
@@ -379,7 +394,7 @@ class KnowledgeBaseService:
                 "document_name": doc.original_filename if doc else metadata.get("document_name", ""),
                 "folder_path": metadata.get("folder_path", ""),
                 "page_number": metadata.get("page_number"),
-                "chunk_index": metadata.get("chunk_index", 0),
+                "chunk_index": int(metadata.get("chunk_index", 0)) if metadata.get("chunk_index") else 0,
                 "content": chunk.content if chunk else "",
                 "score": round(1.0 - distance, 4) if distance is not None else 0.0,
             })
@@ -536,59 +551,116 @@ class QueryRewriter:
         return ''.join(words) if words else query
 
 
+# ============================================================
+# CrossEncoder cache — avoid reloading model on every retrieval
+# ============================================================
+
+_cross_encoder_cache: dict[str, Any] = {}
+
+
+def _get_cross_encoder(model_name: str):
+    """Get or create a cached CrossEncoder instance."""
+    if model_name not in _cross_encoder_cache:
+        try:
+            from sentence_transformers import CrossEncoder
+            _cross_encoder_cache[model_name] = CrossEncoder(model_name)
+            logger.info("Loaded CrossEncoder model: %s", model_name)
+        except Exception as exc:
+            logger.warning("Failed to load CrossEncoder %s: %s", model_name, exc)
+            return None
+    return _cross_encoder_cache[model_name]
+
+
+# ============================================================
+# HybridRetriever — vector + keyword + RRF fusion + MMR + rerank
+# ============================================================
+
 class HybridRetriever:
     """Hybrid retrieval: vector + keyword + RRF fusion + MMR dedup + rerank."""
 
     def __init__(self, kb, db):
         self.kb = kb
         self.db = db
-        self.chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+        self.vs = get_vector_store()
+        # Use rag_config from the KB model, falling back to defaults
+        self.rag_config = {**DEFAULT_RAG_CONFIG, **(getattr(kb, 'rag_config', None) or {})}
 
     def retrieve(self, query: str, top_k: int = 20, rerank_top_k: int = 10, folder_id=None):
         """Execute hybrid retrieval and return sorted results."""
-        # Road 1: Vector search
-        vector_hits = self._vector_search(query, top_k=top_k * 2, folder_id=folder_id)
-        # Road 2: Keyword search
-        keyword_hits = self._keyword_search(query, top_k=top_k * 2, folder_id=folder_id)
-        # RRF fusion
-        fused = self._rrf_fusion(vector_hits, keyword_hits, k=60)
+        # Use config values if not explicitly overridden
+        top_k = self.rag_config.get('top_k', top_k)
+        rerank_top_k = self.rag_config.get('rerank_top_k', rerank_top_k)
+        strategy = self.rag_config.get('retrieval_strategy', 'hybrid')
+
+        vector_hits = []
+        keyword_hits = []
+
+        if strategy in ('hybrid', 'vector'):
+            vector_hits = self._vector_search(query, top_k=top_k * 2, folder_id=folder_id)
+        if strategy in ('hybrid', 'keyword'):
+            keyword_hits = self._keyword_search(query, top_k=top_k * 2, folder_id=folder_id)
+
+        if strategy == 'hybrid' and vector_hits and keyword_hits:
+            fused = self._rrf_fusion(vector_hits, keyword_hits, k=self.rag_config.get('rrf_k', 60))
+        elif vector_hits:
+            fused = vector_hits
+        elif keyword_hits:
+            fused = keyword_hits
+        else:
+            return []
+
         # MMR deduplication
-        if fused and self.kb.rag_config.get('mmr_enabled', True):
-            fused = self._mmr_deduplicate(fused, threshold=self.kb.rag_config.get('mmr_threshold', 0.5))
+        if fused and self.rag_config.get('mmr_enabled', True):
+            fused = self._mmr_deduplicate(fused, threshold=self.rag_config.get('mmr_threshold', 0.5))
         # Rerank
-        if fused and self.kb.rag_config.get('rerank_enabled', True):
+        if fused and self.rag_config.get('rerank_enabled', True):
             fused = self._rerank(query, fused[:rerank_top_k])
         # Filter low scores
-        min_score = self.kb.rag_config.get('min_relevance_score', 0.3)
-        fused = [h for h in fused if h['score'] >= min_score]
+        min_score = self.rag_config.get('min_relevance_score', 0.3)
+        fused = [h for h in fused if h.get('score', 0) >= min_score]
         return fused[:top_k]
 
     def _vector_search(self, query, top_k, folder_id):
-        """Vector search via ChromaDB."""
-        embeddings = get_embeddings(self.kb.embedding_model)
-        query_vec = embeddings.embed_query(query)
-        coll = self.chroma_client.get_collection(f"kb_{self.kb.id}")
-        where = {"kb_id": str(self.kb.id)}
-        if folder_id:
-            where["folder_id"] = str(folder_id)
+        """Vector search via the configured vector store backend."""
         try:
-            results = coll.query(query_embeddings=[query_vec], n_results=top_k, where=where)
-        except Exception:
+            embeddings = get_embeddings(self.kb.embedding_model)
+            query_vec = embeddings.embed_query(query)
+            collection_name = f"kb_{self.kb.id}"
+            where = {"kb_id": str(self.kb.id)}
+            if folder_id:
+                where["folder_id"] = str(folder_id)
+            results = self.vs.query(
+                collection_name,
+                query_embeddings=[query_vec],
+                n_results=top_k,
+                where=where,
+            )
+        except Exception as exc:
+            logger.warning("Vector search failed: %s", exc)
             return []
+
         hits = []
-        for i in range(len(results['ids'][0])):
+        ids_list = results.get("ids", [[]])
+        dist_list = results.get("distances", [[]])
+        docs_list = results.get("documents", [[]])
+        meta_list = results.get("metadatas", [[]])
+        for i in range(len(ids_list[0]) if ids_list and ids_list[0] else 0):
             hits.append({
                 'type': 'vector',
-                'score': 1 - results['distances'][0][i],
-                'content': results['documents'][0][i],
-                'metadata': results['metadatas'][0][i] if results['metadatas'][0][i] else {},
-                'vector_id': results['ids'][0][i],
+                'score': 1 - (dist_list[0][i] if i < len(dist_list[0]) else 0),
+                'content': docs_list[0][i] if i < len(docs_list[0]) else '',
+                'metadata': meta_list[0][i] if i < len(meta_list[0]) and meta_list[0][i] else {},
+                'vector_id': ids_list[0][i],
             })
         return hits
 
     def _keyword_search(self, query, top_k, folder_id):
-        """Keyword search via SQLite LIKE matching."""
-        keywords = [w for w in query if len(w) > 0]
+        """Keyword search via SQLite LIKE matching with proper tokenization."""
+        # Fix: tokenize the query into words, not iterate over characters
+        import re
+        keywords = [w for w in re.split(r'[\s,，。.、；;！!？?]+', query) if len(w) > 1]
+        if not keywords:
+            keywords = [query]  # fallback to full query
         if not keywords:
             return []
         conditions = [KBChunk.content.like(f"%{kw}%") for kw in keywords]
@@ -605,11 +677,11 @@ class HybridRetriever:
                 'score': score,
                 'content': chunk.content,
                 'metadata': {
-                    'document_id': doc.id,
+                    'document_id': str(doc.id),
                     'document_name': doc.original_filename,
                     'folder_path': '',
-                    'kb_id': self.kb.id,
-                    'folder_id': chunk.folder_id,
+                    'kb_id': str(self.kb.id),
+                    'folder_id': str(chunk.folder_id) if chunk.folder_id else "",
                 },
                 'vector_id': chunk.vector_id,
             })
@@ -637,51 +709,59 @@ class HybridRetriever:
         return sorted(merged.values(), key=lambda x: x['rrf_score'], reverse=True)
 
     def _mmr_deduplicate(self, hits, threshold=0.5):
-        """Maximal Marginal Relevance deduplication."""
+        """Maximal Marginal Relevance deduplication — optimized with batch embeddings."""
         if not hits:
             return []
         try:
             import numpy as np
+            # Optimization: batch-embed all candidates at once instead of O(n²) individual calls
             embeddings = get_embeddings(self.kb.embedding_model)
-            selected = [hits[0]]
-            remaining = list(hits[1:])
-            while remaining and len(selected) < 10:
+            contents = [h['content'] for h in hits]
+            all_embs = np.array(embeddings.embed_documents(contents))
+
+            # Normalize embeddings for cosine similarity
+            norms = np.linalg.norm(all_embs, axis=1, keepdims=True)
+            norms[norms == 0] = 1
+            normalized = all_embs / norms
+
+            selected_indices = [0]
+            remaining = list(range(1, len(hits)))
+            while remaining and len(selected_indices) < 10:
                 best_idx = 0
                 best_score = -1
-                for i, candidate in enumerate(remaining):
-                    cand_emb = np.array(embeddings.embed_query(candidate['content']))
-                    max_sim = 0
-                    for sel in selected:
-                        sel_emb = np.array(embeddings.embed_query(sel['content']))
-                        norm_c = np.linalg.norm(cand_emb)
-                        norm_s = np.linalg.norm(sel_emb)
-                        if norm_c > 0 and norm_s > 0:
-                            sim = float(np.dot(cand_emb, sel_emb) / (norm_c * norm_s))
-                            max_sim = max(max_sim, sim)
-                    mmr_score = candidate['score'] - threshold * max_sim
+                for i, candidate_idx in enumerate(remaining):
+                    # Vectorized similarity computation — no more per-pair API calls
+                    sel_embs = normalized[selected_indices]
+                    cand_emb = normalized[candidate_idx]
+                    sims = sel_embs @ cand_emb
+                    max_sim = float(sims.max())
+                    mmr_score = hits[candidate_idx].get('score', 0) - threshold * max_sim
                     if mmr_score > best_score:
                         best_score = mmr_score
                         best_idx = i
-                selected.append(remaining.pop(best_idx))
-            return selected
-        except Exception:
+                selected_indices.append(remaining.pop(best_idx))
+            return [hits[i] for i in selected_indices]
+        except Exception as exc:
+            logger.warning("MMR dedup failed: %s", exc)
             return hits[:10]
 
     def _rerank(self, query, hits):
-        """Cross-Encoder reranking."""
+        """Cross-Encoder reranking with cached model."""
         if not hits:
             return []
-        model_name = self.kb.rag_config.get('rerank_model', 'bge-reranker-base')
+        model_name = self.rag_config.get('rerank_model', 'BAAI/bge-reranker-base')
+        ce = _get_cross_encoder(model_name)
+        if ce is None:
+            return sorted(hits, key=lambda x: x.get('rrf_score', 0), reverse=True)
         try:
-            from sentence_transformers import CrossEncoder
-            ce = CrossEncoder(model_name)
             pairs = [[query, h['content']] for h in hits]
             scores = ce.predict(pairs)
             for hit, score in zip(hits, scores):
                 hit['rerank_score'] = float(score)
                 hit['score'] = float(score)
             return sorted(hits, key=lambda x: x['rerank_score'], reverse=True)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Rerank failed: %s", exc)
             return sorted(hits, key=lambda x: x.get('rrf_score', 0), reverse=True)
 
 
@@ -704,19 +784,19 @@ class ContextBuilder:
             # Approximate token count
             token_count = len(content) // 3.5
             if token_count > budget:
-                content = content[:budget * 3] + "... [鍐呭杩囬暱锛屽凡鎴柇]"
+                content = content[:int(budget * 3)] + '... [内容过长，已截断]'
                 token_count = budget
             budget -= token_count
             if budget <= 0:
                 break
-            source_tag = ""
+            source_tag = ''
             if include_sources:
                 doc_name = meta.get('document_name', 'Unknown')
                 score_pct = hit.get('score', 0)
                 folder_path = meta.get('folder_path', '')
-                source_tag = f"[鏉ユ簮: {doc_name}, 鐩稿叧搴? {score_pct:.0%}]"
+                source_tag = f'[来源: {doc_name}, 相关度: {score_pct:.0%}]'
                 if folder_path:
-                    source_tag += f" ({folder_path})"
+                    source_tag += f' ({folder_path})'
             context_parts.append(f"{source_tag}\n{content}\n")
             sources.append({
                 'document_name': meta.get('document_name', ''),
@@ -725,23 +805,28 @@ class ContextBuilder:
                 'rerank_score': hit.get('rerank_score'),
                 'hit_source': hit.get('hit_source', 'vector'),
             })
-        context = "\n=== 妫€绱㈠埌鐨勭浉鍏崇煡璇?===\n\n" + "".join(context_parts)
+        context = "\n=== 检索到的相关知识 ===\n\n" + "".join(context_parts)
         return context, sources
 
 
 # RAG System Prompt
-RAG_SYSTEM_PROMPT = """浣犳槸涓€涓熀浜庣煡璇嗗簱鐨勬櫤鑳介棶绛斿姪鎵嬨€?
-## 鍥炵瓟瑙勫垯
+RAG_SYSTEM_PROMPT = """你是一个基于知识库的智能问答助手。
 
-1. **浼樺厛浣跨敤妫€绱㈠埌鐨勭煡璇?*: 褰撴彁渚涗簡妫€绱㈢粨鏋滄椂锛屽繀椤诲熀浜庤繖浜涘唴瀹瑰洖绛旈棶棰?2. **蹇呴』寮曠敤鏉ユ簮**: 姣忎釜鍏抽敭淇℃伅鍚庨潰鏍囨敞 [鏉ユ簮: 鏂囦欢鍚峕
-3. **涓嶇煡閬撳氨璇翠笉鐭ラ亾**: 濡傛灉妫€绱㈢粨鏋滀腑娌℃湁鐩稿叧淇℃伅锛屾槑纭憡鐭ョ敤鎴?4. **涓嶈缂栭€犵瓟妗?*: 鍗充娇浣犺寰楃煡閬撶瓟妗堬紝涔熻浠ユ绱㈢粨鏋滀负鍑?5. **缁煎悎澶氭潵婧?*: 澶氫釜鏂囨。鏈夌浉鍏充俊鎭椂锛岀患鍚堝悗缁欏嚭瀹屾暣鍥炵瓟
-6. **鎸囧嚭鐭涚浘**: 涓嶅悓鏂囨。鏈夊啿绐佷俊鎭椂锛屽憡鐭ョ敤鎴峰苟鍒楀嚭鍚勬柟璇存硶
+## 回答规则
 
-## 鍥炵瓟椋庢牸
+1. **优先使用检索到的知识**: 当提供了检索结果时，必须基于这些内容回答问题
+2. **必须引用来源**: 每个关键信息后面标注 [来源: 文件名]
+3. **不知道就说不知道**: 如果检索结果中没有相关信息，明确告知用户
+4. **不要编造答案**: 即使你觉得知道答案，也要以检索结果为准
+5. **综合多来源**: 多个文档有相关信息时，综合后给出完整回答
+6. **指出矛盾**: 不同文档有冲突信息时，告知用户并列出各方说法
 
-- 缁撴瀯鍖栵紝鏉＄悊娓呮櫚
-- 閫傚綋浣跨敤 Markdown 鏍煎紡
-- 寮曠敤鍏蜂綋鏁版嵁鍜屼簨瀹?- 濡傛灉闂瓒呭嚭鐭ヨ瘑搴撹寖鍥达紝鍛婄煡鐢ㄦ埛骞跺皾璇曠敤閫氱敤鐭ヨ瘑鍥炵瓟
+## 回答风格
+
+- 结构化，条理清晰
+- 适当使用 Markdown 格式
+- 引用具体数据和事实
+- 如果问题超出知识库范围，告知用户并尝试用通用知识回答
 """
 
 

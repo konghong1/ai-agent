@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -41,3 +44,25 @@ def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+
+    # ── Lightweight SQLite migration: add columns that create_all can't ──
+    _migrate_sqlite_columns()
+
+
+def _migrate_sqlite_columns() -> None:
+    """Add new columns to existing SQLite tables (create_all only creates new tables)."""
+    from sqlalchemy import text, inspect
+
+    insp = inspect(engine)
+    if not insp.has_table("knowledge_bases"):
+        return
+
+    existing_cols = {c["name"] for c in insp.get_columns("knowledge_bases")}
+
+    if "rag_config" not in existing_cols:
+        with engine.connect() as conn:
+            conn.execute(text(
+                "ALTER TABLE knowledge_bases ADD COLUMN rag_config JSON DEFAULT '{}' "
+            ))
+            conn.commit()
+            logger.info("Added rag_config column to knowledge_bases")

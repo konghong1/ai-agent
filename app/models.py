@@ -235,6 +235,8 @@ class KnowledgeBase(TimestampMixin, Base):
     chunk_size: Mapped[int] = mapped_column(Integer, default=500)
     chunk_overlap: Mapped[int] = mapped_column(Integer, default=50)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # RAG pipeline configuration (retrieval strategy, rerank, MMR, etc.)
+    rag_config: Mapped[dict] = mapped_column(SA_JSON, default=dict)
 
     user: Mapped[User] = relationship(back_populates="knowledge_bases")
     folders: Mapped[list["KBFolder"]] = relationship(back_populates="kb", cascade="all, delete-orphan")

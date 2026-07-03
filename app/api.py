@@ -6,6 +6,7 @@ import urllib.request
 
 # Enable debug logging for troubleshooting
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.exc import IntegrityError
@@ -303,7 +304,7 @@ def _handle_video_generation(
 
     if error:
         answer = f"Video generation failed: {error}"
-        blocks = {"type": "video", "error": error}
+        blocks = {"type": "video", "status": "failed", "error": error}
     else:
         answer = f"正在生成视频..."
         blocks = {
@@ -1163,6 +1164,12 @@ def get_video_status(
 
     # Persist completed / failed status to the chat message
     status = result.get("status") or result.get("state", "")
+    # Normalize status values from various providers
+    normalized_status = status.lower().strip() if status else ""
+    if normalized_status in ("done", "success", "finished", "ready", "available"):
+        status = "completed"
+    elif normalized_status in ("failed", "error", "cancelled", "canceled"):
+        status = "failed"
     video_url = (
         result.get("remixed_from_video_id")
         or result.get("video_url")
@@ -1205,42 +1212,70 @@ def watch_video_status(
     import asyncio
     import json
 
-    POLL_INTERVAL = 2       # seconds between internal polls
-    MAX_POLLS = 150         # ~5 minutes timeout
+    POLL_INTERVAL = 3       # seconds between internal polls
+    MAX_POLLS = 200         # ~10 minutes timeout
+    HEARTBEAT_INTERVAL = 1  # seconds between heartbeat comments
 
     async def event_generator():
+        # Send an immediate heartbeat so the client knows the connection is live
+        yield f": connected\n\n"
+
         poll_count = 0
+        last_heartbeat = asyncio.get_event_loop().time()
+
         while poll_count < MAX_POLLS:
-            await asyncio.sleep(POLL_INTERVAL)
+            # ── Run the blocking HTTP poll in a thread to avoid
+            #    blocking the event loop (the #1 cause of "stuck loading"). ──
+            try:
+                result = await asyncio.to_thread(
+                    MediaService.get_video_status, provider, task_id, video_id
+                )
+            except Exception as exc:
+                logger.warning("Video status poll error: %s", exc)
+                result = {"error": str(exc)}
+
             poll_count += 1
 
-            result = MediaService.get_video_status(provider, task_id, video_id)
-
             status = result.get("status") or result.get("state", "")
+            # Normalize status values from various providers
+            normalized_status = status.lower().strip() if status else ""
+            if normalized_status in ("done", "success", "finished", "ready", "available"):
+                status = "completed"
+            elif normalized_status in ("failed", "error", "cancelled", "canceled"):
+                status = "failed"
             video_url = (
-                result.get("remixed_from_video_id")
-                or result.get("video_url")
+                result.get("video_url")
                 or result.get("output")
                 or result.get("url")
                 or ""
             )
+            # Agnes AI: "remixed_from_video_id" is a video ID, not a URL —
+            # only use it if it looks like a URL (starts with http)
+            remixed = result.get("remixed_from_video_id", "")
+            if not video_url and remixed and str(remixed).startswith("http"):
+                video_url = remixed
+
             error = result.get("error", "")
 
-            if status in ("completed", "succeeded") or video_url:
+            if status in ("completed", "succeeded") or (video_url and status not in ("failed", "error")):
                 _persist_video_status(db, current_user.id, task_id,
                                        status if status else "completed",
                                        video_url, "")
-                yield f"data: {json.dumps({'status': 'completed', 'video_url': video_url})}\n\n"
+                yield f"data: {json.dumps({'status': 'completed', 'video_url': video_url, 'poll_count': poll_count})}\n\n"
                 return
 
             if status in ("failed", "error"):
                 _persist_video_status(db, current_user.id, task_id,
                                        status, "", error or "")
-                yield f"data: {json.dumps({'status': 'failed', 'error': error or ''})}\n\n"
+                yield f"data: {json.dumps({'status': 'failed', 'error': error or '视频生成失败'})}\n\n"
                 return
 
-            # Heartbeat — keep alive, client ignores "processing" events
-            yield f"data: {json.dumps({'status': status or 'processing'})}\n\n"
+            # Push a status update so the frontend can show progress
+            yield f"data: {json.dumps({'status': status or 'processing', 'poll_count': poll_count})}\n\n"
+
+            # Wait before next poll, sending periodic heartbeats to keep
+            # the SSE connection alive through proxies.
+            await asyncio.sleep(POLL_INTERVAL)
 
         # Timeout
         _persist_video_status(db, current_user.id, task_id,
