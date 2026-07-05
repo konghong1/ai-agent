@@ -25,20 +25,25 @@ async function parseJsonSafe(res: Response): Promise<any> {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       token: null,
       user: null,
       isAuthenticated: false,
 
       login: async (email: string, password: string) => {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
-        })
+        let res: Response
+        try {
+          res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password }),
+          })
+        } catch {
+          throw new Error('无法连接到后端服务，请确认后端已启动（端口 8010）')
+        }
         if (!res.ok) {
           const err = await parseJsonSafe(res)
-          throw new Error(err.detail || 'Login failed')
+          throw new Error(err.detail || `登录失败 (HTTP ${res.status})`)
         }
         const data = await parseJsonSafe(res)
         set({
@@ -49,14 +54,19 @@ export const useAuthStore = create<AuthState>()(
       },
 
       register: async (data) => {
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data),
-        })
+        let res: Response
+        try {
+          res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+          })
+        } catch {
+          throw new Error('无法连接到后端服务，请确认后端已启动（端口 8010）')
+        }
         if (!res.ok) {
           const err = await parseJsonSafe(res)
-          throw new Error(err.detail || 'Registration failed')
+          throw new Error(err.detail || `注册失败 (HTTP ${res.status})`)
         }
         const result = await parseJsonSafe(res)
         set({

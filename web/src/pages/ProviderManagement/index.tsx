@@ -833,7 +833,7 @@ export default function ProviderManagement() {
                                     { value: "video", label: "🎬 视频" },
                                     { value: "embedding", label: "📊 嵌入" },
                                   ]}
-                                  dropdownMatchSelectWidth={false}
+                                  popupMatchSelectWidth={false}
                                 />
                               </div>
                             )

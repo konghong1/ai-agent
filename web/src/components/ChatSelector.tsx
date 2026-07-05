@@ -358,7 +358,7 @@ export default function ChatSelector({
             suffixIcon={null}
             getPopupContainer={() => document.body}
             popupClassName="chat-selector-model-dropdown"
-            dropdownMatchSelectWidth={false}
+            popupMatchSelectWidth={false}
             dropdownStyle={{ minWidth: 220 }}
             filterOption={(input: string, option: any) => {
               if (!input || !option?.value) return true
@@ -391,7 +391,7 @@ export default function ChatSelector({
             suffixIcon={null}
             getPopupContainer={() => document.body}
             popupClassName="chat-selector-tmpl-dropdown"
-            dropdownMatchSelectWidth={false}
+            popupMatchSelectWidth={false}
             options={templates.map((t) => ({
               value: t.id,
               label: t.name + (t.variables?.length > 0 ? `  (${t.variables.length} 个变量)` : ''),

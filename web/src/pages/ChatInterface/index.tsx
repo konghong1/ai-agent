@@ -62,9 +62,13 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [switching, setSwitching] = useState(false)  // smooth transition state for thread switching
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeThreadIdRef = useRef<string | null>(null)  // ref to avoid closure issues
+  const chatAbortRef = useRef<AbortController | null>(null)  // abort SSE when switching threads
+  const fetchMsgIdRef = useRef(0)  // race condition guard: only apply latest fetchMessages result
+  const skipNextFetchRef = useRef(false)  // skip fetchMessages when creating a new thread (handleSend)
   
   const { providerId, providerType, modelName, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
   
@@ -72,10 +76,11 @@ export default function ChatInterface() {
   const primaryColor = colors.primary
   const accentColor = colors.accent
   
-  // Sync ref with state
-  useEffect(() => {
-    activeThreadIdRef.current = activeThreadId
-  }, [activeThreadId])
+  // Wrapper for setActiveThreadId that also syncs the ref synchronously
+  const switchThread = useCallback((threadId: string | null) => {
+    activeThreadIdRef.current = threadId
+    setActiveThreadId(threadId)
+  }, [])
   
   const fetchThreads = useCallback(async () => {
     try {
@@ -85,17 +90,33 @@ export default function ChatInterface() {
         setThreads(data)
         // Use ref instead of state to avoid re-creating fetchThreads
         if (data.length > 0 && !activeThreadIdRef.current) {
-          setActiveThreadId(data[0].id)
+          switchThread(data[0].id)
         }
+      } else {
+        const err = await res.json().catch(() => ({}))
+        message.error(err?.detail || `加载会话列表失败 (HTTP ${res.status})`, 4)
       }
-    } catch { /* ignore */ }
+    } catch {
+      message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
+    }
   }, [])
 
   const fetchMessages = useCallback(async (threadId: string) => {
+    const reqId = ++fetchMsgIdRef.current  // assign a unique ID to this request
+    setSwitching(true)
+
+    // Safety timeout: force-reset switching after 8s even if fetch hangs
+    const safetyTimer = setTimeout(() => {
+      setSwitching(false)
+    }, 8000)
+
     try {
       const res = await fetch(`/api/threads/${threadId}/messages`, { headers: authHeaders() })
+      // Guard: if a newer request was fired, discard this stale response
+      if (reqId !== fetchMsgIdRef.current) return
       if (res.ok) {
         const data = await res.json()
+        if (reqId !== fetchMsgIdRef.current) return  // double-check after await
         // 后端返回 extra.blocks，拍平到顶层 msg.blocks
         const mapped = (data as any[]).map((msg: any) => ({
           ...msg,
@@ -104,9 +125,18 @@ export default function ChatInterface() {
         setMessages(mapped)
       } else {
         setMessages([])
+        const err = await res.json().catch(() => ({}))
+        message.error(err?.detail || `加载消息失败 (HTTP ${res.status})`, 4)
       }
     } catch {
+      if (reqId !== fetchMsgIdRef.current) return
       setMessages([])
+      message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
+    } finally {
+      clearTimeout(safetyTimer)
+      // Always reset switching — never let the UI get stuck gray.
+      // If a newer request is in-flight, it will set switching=true again.
+      setSwitching(false)
     }
   }, [])  // No deps - fetches always use fresh URL
 
@@ -232,6 +262,7 @@ export default function ChatInterface() {
   // Cleanup EventSources on unmount
   useEffect(() => {
     return () => {
+      if (chatAbortRef.current) chatAbortRef.current.abort();
       esRef.current.forEach(es => es.close());
       esRef.current.clear();
       reconnectTimerRef.current.forEach(t => clearTimeout(t));
@@ -288,7 +319,15 @@ export default function ChatInterface() {
 
   useEffect(() => {
     if (activeThreadId) {
+      // Skip fetch when handleSend just created a new thread — the user message
+      // is already in state and the thread is empty on the backend
+      if (skipNextFetchRef.current) {
+        skipNextFetchRef.current = false
+        return
+      }
       fetchMessages(activeThreadId)
+    } else {
+      setMessages([])
     }
   }, [activeThreadId, fetchMessages])
 
@@ -317,8 +356,20 @@ export default function ChatInterface() {
       if (res.ok || res.status === 204) {
         setThreads(prev => prev.filter(t => t.id !== threadId))
         if (activeThreadId === threadId) {
-          setActiveThreadId(null)
+          // Abort SSE and clean up video connections for the deleted thread
+          if (chatAbortRef.current) {
+            chatAbortRef.current.abort()
+            chatAbortRef.current = null
+          }
+          esRef.current.forEach(es => es.close())
+          esRef.current.clear()
+          reconnectTimerRef.current.forEach(t => clearTimeout(t))
+          reconnectTimerRef.current.clear()
+          retryRef.current.clear()
+
           setMessages([])
+          fetchMsgIdRef.current++
+          switchThread(null)
         }
         message.success("会话已删除")
       }
@@ -393,7 +444,10 @@ export default function ChatInterface() {
           const data = await res.json()
           setThreads(prev => [data, ...prev])
           threadId = data.id
-          setActiveThreadId(data.id)
+          // Skip the next fetchMessages — the thread is empty and we're about
+          // to add the user's message to state ourselves
+          skipNextFetchRef.current = true
+          switchThread(data.id)
         } else {
           setSending(false)
           return
@@ -416,10 +470,16 @@ export default function ChatInterface() {
       content: messageContent,
       created_at: new Date().toISOString(),
     }
-    setMessages(prev => [...prev, userMsg])
+    // Only add user message if we're still on the same thread
+    // (threadId could differ if user switched during thread creation)
+    if (activeThreadIdRef.current === threadId || !activeThreadIdRef.current) {
+      setMessages(prev => [...prev, userMsg])
+    }
 
     // Use SSE streaming
     let fetchRes: Response | null = null
+    const abortCtrl = new AbortController()
+    chatAbortRef.current = abortCtrl
     try {
       fetchRes = await fetch("/api/chat-stream", {
         method: "POST",
@@ -432,6 +492,7 @@ export default function ChatInterface() {
           provider_type: providerType || 'openai-compatible',
           model_name: modelName,
         }),
+        signal: abortCtrl.signal,
       })
 
       if (fetchRes.ok) {
@@ -469,8 +530,8 @@ export default function ChatInterface() {
                 }
               }
 
-              // Send assistant message
-              if (assistantContent) {
+              // Send assistant message — but only if user hasn't switched threads
+              if (assistantContent && activeThreadIdRef.current === threadId) {
                 const assistantMsg: Message = {
                   id: Date.now() + 1,
                   role: "assistant",
@@ -478,18 +539,20 @@ export default function ChatInterface() {
                   created_at: new Date().toISOString(),
                   blocks: assistantBlocks,
                 }
-            setMessages(prev => [...prev, assistantMsg])
-            
-            // Update thread list with new thread if created
-            if (finalThreadId !== threadId) {
-              setThreads(prev => {
-                const exists = prev.find(t => t.id === finalThreadId)
-                if (exists) return prev
-                return [{ id: finalThreadId, title: messageContent.slice(0, 60), agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]
-              })
-              setActiveThreadId(finalThreadId)
-            }
-          }
+                setMessages(prev => [...prev, assistantMsg])
+
+                // Update thread list with new thread if created
+                if (finalThreadId !== threadId) {
+                  setThreads(prev => {
+                    const exists = prev.find(t => t.id === finalThreadId)
+                    if (exists) return prev
+                    return [{ id: finalThreadId, title: messageContent.slice(0, 60), agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]
+                  })
+                  // Skip fetch — we already have the messages in state
+                  skipNextFetchRef.current = true
+                  switchThread(finalThreadId)
+                }
+              }
         }
       } else {
         await fetchRes.json().catch(() => {})
@@ -504,16 +567,23 @@ export default function ChatInterface() {
         ])
       }
     } catch (e: any) {
+      // AbortError means the user switched threads — don't show an error
+      if (e?.name === 'AbortError') return
+      const errMsg = e?.message?.includes('Failed to fetch')
+        ? '无法连接到后端服务，请确认后端已启动'
+        : `网络错误：${e.message}`
+      message.error(errMsg, 5)
       setMessages(prev => [
         ...prev,
         {
           id: Date.now() + 1,
           role: "assistant",
-          content: `网络错误：${e.message}`,
+          content: errMsg,
           created_at: new Date().toISOString(),
         },
       ])
     } finally {
+      chatAbortRef.current = null
       setSending(false)
     }
   }
@@ -529,11 +599,46 @@ export default function ChatInterface() {
   }
 
   const selectThread = (threadId: string) => {
-    setActiveThreadId(threadId)
+    // Use ref for accurate current value (state may be stale in closures)
+    if (threadId === activeThreadIdRef.current) return
+
+    // Abort any in-flight SSE chat stream from the previous thread
+    if (chatAbortRef.current) {
+      chatAbortRef.current.abort()
+      chatAbortRef.current = null
+    }
+
+    // Close all video SSE connections from the previous thread
+    esRef.current.forEach(es => es.close())
+    esRef.current.clear()
+    reconnectTimerRef.current.forEach(t => clearTimeout(t))
+    reconnectTimerRef.current.clear()
+    retryRef.current.clear()
+
+    // DON'T clear messages — keep old messages visible with a fade transition
+    // while new ones load. This creates a smooth "crossfade" effect.
+    // fetchMessages will replace them when ready.
+
+    // Sync ref immediately (don't wait for useEffect) to prevent race conditions
+    // The useEffect on [activeThreadId] will call fetchMessages automatically
+    switchThread(threadId)
+
     if (window.innerWidth < 768) setSidebarCollapsed(true)
   }
 
   const handleNewThread = async () => {
+    // Abort any in-flight SSE chat stream
+    if (chatAbortRef.current) {
+      chatAbortRef.current.abort()
+      chatAbortRef.current = null
+    }
+    // Close all video SSE connections
+    esRef.current.forEach(es => es.close())
+    esRef.current.clear()
+    reconnectTimerRef.current.forEach(t => clearTimeout(t))
+    reconnectTimerRef.current.clear()
+    retryRef.current.clear()
+
     try {
       const res = await fetch(`/api/threads`, {
         method: "POST",
@@ -543,7 +648,10 @@ export default function ChatInterface() {
       if (res.ok) {
         const data = await res.json()
         setThreads(prev => [data, ...prev])
-        setActiveThreadId(data.id)
+        // Skip fetch — new thread is empty
+        skipNextFetchRef.current = true
+        setMessages([])
+        switchThread(data.id)
       }
     } catch { /* silent */ }
   }
@@ -764,6 +872,7 @@ export default function ChatInterface() {
           overflowY: "auto",
           padding: "20px 24px",
           background: "var(--ice-bg-primary)",
+          position: "relative",
         }}>
           {!activeThreadId ? (
             <div style={{
@@ -786,7 +895,7 @@ export default function ChatInterface() {
                 选择或创建一个会话开始对话
               </Text>
             </div>
-          ) : messages.length === 0 ? (
+          ) : messages.length === 0 && !switching ? (
             <div style={{
               display: "flex", flexDirection: "column",
               alignItems: "center", justifyContent: "center",
@@ -808,7 +917,31 @@ export default function ChatInterface() {
               </Text>
             </div>
           ) : (
-            <div>
+            <div style={{
+              opacity: switching ? 0.35 : 1,
+              filter: switching ? "blur(2px)" : "none",
+              transition: "opacity 0.18s ease, filter 0.18s ease",
+              pointerEvents: switching ? "none" : "auto",
+              position: "relative",
+            }}>
+              {switching && (
+                <div style={{
+                  position: "absolute",
+                  top: 8, right: 12,
+                  display: "flex", alignItems: "center", gap: 6,
+                  zIndex: 10,
+                }}>
+                  <div style={{
+                    width: 14, height: 14, borderRadius: "50%",
+                    border: `2px solid ${primaryColor}33`,
+                    borderTopColor: primaryColor,
+                    animation: "spin 0.6s linear infinite",
+                  }} />
+                  <Text style={{ fontSize: 11, color: "var(--ice-text-muted)" }}>
+                    切换中
+                  </Text>
+                </div>
+              )}
               {messages.map((msg, idx) => (
                 <div
                   key={msg.id || idx}
@@ -1181,11 +1314,14 @@ export default function ChatInterface() {
         />
       </Modal>
 
-      {/* Pulse animation */}
+      {/* Pulse + spin animations */}
       <style>{`
         @keyframes pulse {
           0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
           40% { opacity: 1; transform: scale(1); }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
         }
       `}</style>
 

@@ -1,105 +1,78 @@
-# 任务完成概述
+# 后端卡顿 & API 代理错误修复
 
-## 任务一：视频加载状态优化
+## 问题现象
 
-### 问题
-聊天中选择视频模型生成视频时，视频一直显示"视频加载中"，但后端一直在刷（轮询）。
+1. **ECONNREFUSED 127.0.0.1:8010** — Vite 代理连不上后端
+2. **页面数据加载不出来** — 后端无法响应 API 请求
+3. **聊天时后端非常卡，视频生成后更卡** — 服务器响应越来越慢直至卡死
 
-### 根因
-SSE 端点 `watch_video_status` 的 `async def event_generator` 内直接调用同步 `requests.get()`（15s 超时），**阻塞整个 FastAPI 事件循环**。这导致：
-1. SSE 事件无法推送到前端
-2. 前端 EventSource 连接超时
-3. 前端 `es.onerror` 关闭连接，且无重连机制
-4. 视频永久卡在 "processing" 状态
+## 根因分析
 
-### 修复方案
+### 核心问题：asyncio 事件循环被同步调用阻塞
 
-**后端 (`app/api.py`)**:
-- 用 `asyncio.to_thread()` 包装 `MediaService.get_video_status`，避免阻塞事件循环
-- 首次轮询立即执行（不再等待 2 秒）
-- 增加 SSE 心跳（`: connected` 注释行）
-- 修复 `remixed_from_video_id` 字段判断（仅当以 `http` 开头时才作为 URL）
-- 轮询间隔从 2s 调整为 3s，最大轮询次数从 150 提升到 200（~10 分钟超时）
-- 推送 `poll_count` 让前端显示实时进度
+`chat_stream` 端点返回 `StreamingResponse`，内部的 `event_generator` 是 `async def`，
+运行在 asyncio 事件循环中。但它**直接调用了三个同步阻塞函数**：
 
-**前端 (`ChatInterface/index.tsx`)**:
-- 添加指数退避重连机制（2s → 4s → 8s → 16s → 32s，最大 5 次）
-- 处理 processing 状态更新（显示 "第 N 次状态检查"）
-- 超时后自动标记为 failed
-- 添加 `reconnectTimerRef` 管理重连定时器
-- 重连前检查消息是否仍在 processing 状态
+| 调用位置 | 同步函数 | 阻塞原因 | 阻塞时长 |
+|---------|---------|---------|---------|
+| api.py:431 | `_handle_video_generation()` | `requests.post` (timeout=30s) | 最多 30 秒 |
+| api.py:435 | `_handle_image_generation()` | `requests.post` (timeout=120s) | 最多 120 秒 |
+| api.py:489 | `ask_agent()` | `llm.invoke()` 网络 + RAG 检索 | 5~60 秒 |
 
-**前端 (`MediaCard/index.tsx`)**:
-- `VideoBlock` 接口添加 `progress` 字段
-- 处理状态显示进度信息
+在 `async def` 中直接调用同步函数 = **冻结整个事件循环**。
+期间服务器无法接受新连接、无法处理其他请求、SSE 心跳停止 → 表现为"卡死"和 ECONNREFUSED。
 
----
+### 次要问题
 
-## 任务二：知识库全流程重构
+| 问题 | 影响 |
+|------|------|
+| 日志级别 = DEBUG（api.py + agent.py 的 openai/httpx） | 每次请求产生海量日志，I/O 开销巨大 |
+| .env PORT=8000，实际运行 8010 | 配置不一致，容易混淆 |
+| LANGSMITH_TRACING=true 但 API key 是占位符 | 每次 LLM 调用尝试上传 trace 失败，增加延迟 |
 
-### 发现的 8 个 Bug
+## 修复内容
 
-| # | Bug | 影响 |
-|---|-----|------|
-| 1 | `or_` 未从 sqlalchemy 导入 | `_keyword_search` 运行时崩溃 |
-| 2 | 关键词搜索遍历字符串字符而非词 | 搜索结果不正确 |
-| 3 | `self.kb.rag_config` 不存在 | `HybridRetriever` 崩溃 |
-| 4 | MMR 做 O(n²) embedding API 调用 | 检索极慢（20 个候选 = 400+ API 调用）|
-| 5 | ContextBuilder/RAG_SYSTEM_PROMPT 编码乱码 | 中文显示为 mojibake |
-| 6 | CrossEncoder 每次检索重新加载模型 | 检索延迟高 |
-| 7 | folder_id 元数据类型不匹配 | 文件夹过滤失效 |
-| 8 | ChromaDB 硬编码在所有方法中 | 无法切换向量数据库 |
+### 1. 用 `asyncio.to_thread()` 包装同步调用（核心修复）
 
-### 修复方案
+```python
+# 修复前 — 直接在 async 函数中调用同步函数，阻塞事件循环
+answer, thread_id, blocks = ask_agent(db=temp_db, ...)
 
-**新建 `app/vector_store.py` — 向量数据库抽象层**:
-- 抽象接口 `VectorStoreBackend`：`upsert`、`query`、`delete`、`delete_collection`、`ensure_collection`
-- 三种后端实现：
-  - `ChromaBackend`（默认，本地持久化）
-  - `FAISSBackend`（内存 + 文件持久化，适合小数据集）
-  - `MilvusBackend`（远程，生产级）
-- 通过环境变量 `VECTOR_STORE_BACKEND` 配置切换
-- 单例模式，线程安全
-
-**`app/settings.py` — 配置扩展**:
-- `VECTOR_STORE_BACKEND` = `"chroma"` | `"faiss"` | `"milvus"`
-- `VECTOR_STORE_PATH` = 向量数据库存储路径
-- `MILVUS_HOST` / `MILVUS_PORT` = Milvus 连接配置
-
-**`app/models.py` — 模型扩展**:
-- `KnowledgeBase` 添加 `rag_config` JSON 字段（存储检索策略配置）
-
-**`app/core/database.py` — 数据库迁移**:
-- 添加 `_migrate_sqlite_columns()` 自动给已有表添加新列
-
-**`app/services.py` — 全面修复**:
-- 修复 `or_` 导入
-- 关键词搜索用 `re.split` 正确分词
-- `HybridRetriever` 使用 `self.rag_config`（从 `kb.rag_config` + `DEFAULT_RAG_CONFIG` 合并）
-- MMR 优化为批量 embed（O(n) API 调用）+ NumPy 向量化相似度计算
-- CrossEncoder 模型缓存（`_cross_encoder_cache`）
-- 所有 ChromaDB 调用替换为 `get_vector_store()`
-- ContextBuilder 和 RAG_SYSTEM_PROMPT 编码修复
-- 元数据 `folder_id` 统一存储为字符串
-- `process_document` 改为批量 upsert（性能提升）
-
-### RAG 流水线
-```
-文档上传 → 文本提取(PDF/DOCX/TXT) → 分块(RecursiveCharacterTextSplitter)
-→ 向量化(OpenAI Embeddings) → 存储(VectorStoreManager)
-→ 检索(向量+关键词+RRF融合+MMR去重+CrossEncoder重排)
-→ 上下文构建 → LLM 生成回答
+# 修复后 — 在线程池中执行，不阻塞事件循环
+answer, thread_id, blocks = await asyncio.to_thread(ask_agent, db=temp_db, ...)
 ```
 
----
+三处调用全部修复：`_handle_video_generation`、`_handle_image_generation`、`ask_agent`
 
-## 测试验证
+### 2. 降低日志级别
 
-- ✅ 所有 Python 文件语法编译通过
-- ✅ 向量存储 CRUD 操作测试通过（upsert/query/delete/delete_collection）
-- ✅ 服务层导入测试通过
-- ✅ RAG_SYSTEM_PROMPT 编码正确
-- ✅ DEFAULT_RAG_CONFIG 配置完整
-- ✅ 数据库迁移执行成功（rag_config 列已添加）
-- ✅ FastAPI 应用初始化成功（68 条路由，2 条视频路由，14 条知识库路由）
-- ✅ 前端 TypeScript 编译无新错误
+- `api.py`: `logging.DEBUG` → `logging.INFO`
+- `agent.py`: openai/httpx `logging.DEBUG` → `logging.WARNING`
+
+### 3. 统一端口配置
+
+- `.env` / `.env.example`: `PORT=8000` → `PORT=8010`
+
+### 4. 禁用无效的 LangSmith tracing
+
+- `.env`: `LANGSMITH_TRACING=true` → `false`（API key 是占位符）
+
+## 修改文件清单
+
+| 文件 | 修改 |
+|------|------|
+| `app/api.py` | 3 处 asyncio.to_thread 包装 + 日志级别 INFO |
+| `app/agent.py` | openai/httpx 日志级别 WARNING |
+| `.env` | PORT=8010 + LANGSMITH_TRACING=false |
+| `.env.example` | PORT=8010 |
+
+## 部署步骤
+
+**必须重启后端**让所有修改生效（`.env` 变更需要重启进程）：
+
+```bash
+# 停止当前后端，然后重新启动
+uvicorn app.server:app --reload --host 127.0.0.1 --port 8010
+```
+
+前端无需改动，Vite 会自动检测到后端恢复。

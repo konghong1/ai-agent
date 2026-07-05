@@ -42,7 +42,7 @@ SECRET_KEY=replace-with-a-long-random-secret
 ## 3. 启动后端
 
 `powershell
-uvicorn app.server:app --reload --host 127.0.0.1 --port 8010
+uvicorn app.server:app --reload --reload-dir app --host 127.0.0.1 --port 8010
 `
 
 可访问：

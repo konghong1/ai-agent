@@ -3,19 +3,24 @@ from __future__ import annotations
 import json
 import logging
 import urllib.request
+from urllib.parse import urlparse, unquote
 
-# Enable debug logging for troubleshooting
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+import requests as _requests
+
+# Logging — INFO level keeps useful diagnostics without the massive
+# overhead of DEBUG (httpx/openai produce thousands of lines at DEBUG).
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session
 
 from app.agent import ask_agent, _get_or_create_thread
 from app.core.database import get_db
-from app.core.security import create_access_token
+from app.core.security import create_access_token, hash_password
 from app.deps import get_current_user, get_current_user_sse
 from app.media import MediaService
 from app.models import (
@@ -55,6 +60,79 @@ router = APIRouter(prefix="/api")
 
 
 # ============================================================
+# Media Proxy — route external CDN content through the backend
+# to avoid client-side proxy/network restrictions.
+# ============================================================
+
+_MEDIA_PROXY_ALLOWED_DOMAINS = {
+    "platform-outputs.agnes-ai.space",
+}
+
+
+@router.get("/media/proxy")
+def proxy_media(
+    url: str,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Proxy external CDN media content to bypass client proxy/network issues.
+
+    Supports HTTP Range requests for video seeking.
+    """
+    target_url = unquote(url)
+
+    parsed = urlparse(target_url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="Invalid URL scheme")
+
+    # SSRF protection: only allow whitelisted CDN domains
+    if parsed.hostname not in _MEDIA_PROXY_ALLOWED_DOMAINS:
+        raise HTTPException(status_code=403, detail="Domain not allowed")
+
+    # Forward Range header for video seek support
+    fwd_headers: dict[str, str] = {}
+    range_header = request.headers.get("range")
+    if range_header:
+        fwd_headers["Range"] = range_header
+
+    try:
+        resp = _requests.get(target_url, stream=True, timeout=30, headers=fwd_headers)
+        resp.raise_for_status()
+    except _requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch media: {exc}")
+
+    content_type = resp.headers.get("content-type", "application/octet-stream")
+    filename = parsed.path.split("/")[-1] or "media"
+
+    # Pass through status code (200 or 206 Partial Content) and Range headers
+    status_code = resp.status_code
+    resp_headers: dict[str, str] = {
+        "Cache-Control": "public, max-age=3600",
+        "Content-Disposition": f'inline; filename="{filename}"',
+        "Accept-Ranges": "bytes",
+    }
+    if "content-range" in resp.headers:
+        resp_headers["Content-Range"] = resp.headers["content-range"]
+    if "content-length" in resp.headers:
+        resp_headers["Content-Length"] = resp.headers["content-length"]
+
+    def stream_content():
+        try:
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    yield chunk
+        finally:
+            resp.close()
+
+    return StreamingResponse(
+        stream_content(),
+        media_type=content_type,
+        status_code=status_code,
+        headers=resp_headers,
+    )
+
+
+# ============================================================
 # Auth
 # ============================================================
 
@@ -78,6 +156,26 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> TokenResponse:
 @router.get("/auth/me", response_model=UserRead)
 def me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
+
+
+@router.post("/auth/reset-password")
+def reset_password(
+    email: str,
+    new_password: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Admin-only: reset any user's password."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+    if len(new_password) < 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 6 characters.")
+    user = db.scalar(select(User).where(User.email == email.lower()))
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    user.password_hash = hash_password(new_password)
+    db.commit()
+    return {"ok": True, "message": f"Password reset for {user.email}"}
 
 
 # ============================================================
@@ -407,7 +505,6 @@ def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), d
 # ============================================================
 # SSE Streaming Chat
 # ============================================================
-from fastapi.responses import StreamingResponse
 
 
 @router.post("/chat-stream")
@@ -428,11 +525,11 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
                     provider_model = _resolve_provider_model(db, payload.provider_id, payload.model_name)
                     if provider_model:
                         if provider_model.model_type == "video":
-                            result = _handle_video_generation(db, provider, provider_model, payload, current_user)
+                            result = await asyncio.to_thread(_handle_video_generation, db, provider, provider_model, payload, current_user)
                             yield f"data: {json.dumps({'answer': result.answer, 'thread_id': result.thread_id, 'blocks': result.blocks})}\n\n"
                             return
                         elif provider_model.model_type == "image":
-                            result = _handle_image_generation(db, provider, provider_model, payload, current_user)
+                            result = await asyncio.to_thread(_handle_image_generation, db, provider, provider_model, payload, current_user)
                             yield f"data: {json.dumps({'answer': result.answer, 'thread_id': result.thread_id, 'blocks': result.blocks})}\n\n"
                             return
 
@@ -486,7 +583,12 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
             
             temp_db = GetSession()
             try:
-                answer, thread_id, blocks = ask_agent(
+                # ── Run ask_agent in a thread to avoid blocking the event
+                #    loop.  ask_agent calls llm.invoke() (a blocking network
+                #    request) which would freeze the entire server if called
+                #    directly in this async generator. ──
+                answer, thread_id, blocks = await asyncio.to_thread(
+                    ask_agent,
                     db=temp_db,
                     user_id=current_user.id,
                     agent_id=payload.agent_id,
@@ -1160,7 +1262,7 @@ def get_video_status(
     if not provider:
         raise HTTPException(status_code=404, detail="Provider not found.")
 
-    result = MediaService.get_video_status(provider, task_id, video_id)
+    result = MediaService.get_video_status(provider, task_id)
 
     # Persist completed / failed status to the chat message
     status = result.get("status") or result.get("state", "")
@@ -1228,7 +1330,7 @@ def watch_video_status(
             #    blocking the event loop (the #1 cause of "stuck loading"). ──
             try:
                 result = await asyncio.to_thread(
-                    MediaService.get_video_status, provider, task_id, video_id
+                    MediaService.get_video_status, provider, task_id
                 )
             except Exception as exc:
                 logger.warning("Video status poll error: %s", exc)

@@ -142,11 +142,11 @@ def _create_llm_from_config(config: LLMConfig):
               config.model_name, config.base_url, config.provider_type,
               (config.api_key or "")[:8])
     
-    # Enable OpenAI client debug logging
+    # Keep OpenAI/httpx quiet — DEBUG produces huge volume of request logs
     _openai_log = logging.getLogger("openai")
-    _openai_log.setLevel(logging.DEBUG)
+    _openai_log.setLevel(logging.WARNING)
     _httpx_log = logging.getLogger("httpx")
-    _httpx_log.setLevel(logging.DEBUG)
+    _httpx_log.setLevel(logging.WARNING)
     
     # Try factory first
     try:

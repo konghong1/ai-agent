@@ -29,7 +29,10 @@ export default function Login() {
         navigate('/dashboard')
       }
     } catch (e: any) {
-      setError(e.message || '操作失败')
+      const errMsg = e.message || '操作失败'
+      setError(errMsg)
+      // 弹窗展示后端错误信息
+      message.error(errMsg, 5)
     } finally {
       setLoading(false)
     }
@@ -45,8 +48,7 @@ export default function Login() {
         </div>
         <Tabs defaultActiveKey="login" items={[
           { key: 'login', label: '登录', children: (
-            <Form onFinish={handleSubmit} layout="vertical">
-              <Form.Item name="mode" hidden initialValue="login" />
+            <Form onFinish={(v) => handleSubmit({ ...v, mode: 'login' })} layout="vertical">
               <Form.Item name="email" label="邮箱" rules={[{ required: true, message: '请输入邮箱' }, { type: 'email', message: '邮箱格式不正确' }]}>
                 <Input prefix={<MailOutlined />} placeholder="your@email.com" size="large" />
               </Form.Item>
@@ -58,8 +60,7 @@ export default function Login() {
             </Form>
           )},
           { key: 'register', label: '注册', children: (
-            <Form onFinish={handleSubmit} layout="vertical">
-              <Form.Item name="mode" hidden initialValue="register" />
+            <Form onFinish={(v) => handleSubmit({ ...v, mode: 'register' })} layout="vertical">
               <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }, { min: 2, message: '至少 2 个字符' }]}>
                 <Input prefix={<UserOutlined />} placeholder="用户名" size="large" />
               </Form.Item>

@@ -148,29 +148,20 @@ class MediaService:
         task_id: str,
         video_id: str | None = None,
     ) -> dict[str, Any]:
-        """Poll the status of a video generation task.
+        """Poll the status of a video generation task using the standard
+        OpenAI-compatible API endpoint.
 
-        Uses the recommended Agnes AI endpoint ``/agnesapi?video_id=``
-        when ``video_id`` is provided; falls back to the legacy endpoint
-        ``GET /v1/videos/{task_id}`` otherwise.
+        Always uses ``GET {base_url}/v1/videos/{task_id}`` regardless of
+        whether a ``video_id`` is provided, because the legacy
+        ``/agnesapi`` endpoint has been deprecated by Agnes AI and
+        returns 404 for encoded video IDs.
 
         Normalises provider-specific field names (e.g. Agnes's
         ``remixed_from_video_id``) into ``video_url``.
         """
-        base = provider.base_url.rstrip("/")
-        if base.endswith("/v1"):
-            base = base[:-3]
+        url = _api_base(provider.base_url, f"/v1/videos/{task_id}")
 
-        if video_id:
-            # Recommended endpoint per Agnes AI docs
-            url = f"{base}/agnesapi?video_id={video_id}"
-            identifier = f"video_id={video_id}"
-        else:
-            # Legacy fallback
-            url = _api_base(base, f"/v1/videos/{task_id}")
-            identifier = f"task_id={task_id}"
-
-        logger.info("Video status check: provider=%s %s", provider.name, identifier)
+        logger.info("Video status check: provider=%s task_id=%s", provider.name, task_id)
 
         try:
             resp = requests.get(
@@ -183,6 +174,7 @@ class MediaService:
 
             # ── Normalise response ─────────────────────────────────
             # Agnes AI returns the video URL in "remixed_from_video_id"
+            # or "video_url"; prefer the URL-looking field.
             if "video_url" not in data:
                 for candidate in ("remixed_from_video_id", "output", "url"):
                     if data.get(candidate):
