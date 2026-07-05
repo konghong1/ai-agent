@@ -1,10 +1,11 @@
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import {
   LoadingOutlined, DownloadOutlined, ExpandOutlined,
   CopyOutlined, CheckOutlined,
   ExclamationCircleOutlined, ReloadOutlined,
 } from "@ant-design/icons"
 import { message } from "antd"
+import { proxyMediaUrl } from "@/services/media"
 
 // ═══════════════════════════════════════════════════════════════
 // Types
@@ -167,7 +168,7 @@ function ImageCard({
 
   const handleDownload = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    downloadFile(imageUrl)
+    downloadFile(proxyMediaUrl(imageUrl))
   }, [imageUrl])
 
   const handleImageLoad = useCallback(() => {
@@ -223,8 +224,9 @@ function ImageCard({
 
           {/* Actual image */}
           <img
-            src={imageUrl}
+            src={proxyMediaUrl(imageUrl)}
             alt="Generated"
+            loading="lazy"
             onLoad={handleImageLoad}
             style={{
               maxWidth: "100%",
@@ -317,7 +319,7 @@ function ImageCard({
               className="media-thumb"
             >
               <img
-                src={img.url}
+                src={proxyMediaUrl(img.url)}
                 alt={`Variant ${i + 2}`}
                 loading="lazy"
                 style={{
@@ -360,6 +362,31 @@ function VideoCard({
   isUserMessage: boolean
 }) {
   const [copied, setCopied] = useState(false)
+  const [videoSrc, setVideoSrc] = useState('')  // 懒加载：初始为空，进入视口后才设置
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // IntersectionObserver — 按需加载视频
+  useEffect(() => {
+    if (!block.video_url) return
+    // 如果已经有 src 了，不需要再观察
+    if (videoSrc) return
+
+    const el = containerRef.current
+    if (!el) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVideoSrc(proxyMediaUrl(block.video_url))
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '300px' },  // 提前 300px 开始加载，平衡流畅度和性能
+    )
+
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [block.video_url, videoSrc])
 
   const handleCopy = useCallback(async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -374,7 +401,7 @@ function VideoCard({
 
   const handleDownload = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    if (block.video_url) downloadFile(block.video_url)
+    if (block.video_url) downloadFile(proxyMediaUrl(block.video_url))
   }, [block.video_url])
 
   // ── Processing state ──
@@ -499,18 +526,29 @@ function VideoCard({
         className="media-video-card"
       >
         {/* Video player */}
-        <div style={{ position: "relative", background: "#000" }}>
+        <div ref={containerRef} style={{ position: "relative", background: "#000" }}>
+          {!videoSrc && (
+            <div style={{
+              width: "100%", height: 240,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "#111",
+              borderRadius: "var(--radius-xl) var(--radius-xl) 0 0",
+              color: "var(--ice-text-muted)", fontSize: 14,
+            }}>
+              滚动到此处加载视频…
+            </div>
+          )}
           <video
             controls
-            src={block.video_url}
+            src={videoSrc || undefined}
             style={{
               width: "100%",
               maxHeight: 420,
-              display: "block",
+              display: videoSrc ? "block" : "none",
               background: "#000",
               borderRadius: "var(--radius-xl) var(--radius-xl) 0 0",
             }}
-            preload="metadata"
+            preload={videoSrc ? "metadata" : "none"}
           />
         </div>
 

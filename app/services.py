@@ -5,8 +5,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings
 from sqlalchemy import select, or_
 from sqlalchemy.orm import Session, joinedload
 
@@ -103,6 +101,9 @@ def _extract_text(filepath: str) -> tuple[str, int]:
 # ============================================================
 
 def chunk_text(text: str, chunk_size: int = 500, chunk_overlap: int = 50) -> list[dict]:
+    # Lazy import: only load when chunking is actually needed
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
@@ -118,6 +119,9 @@ def chunk_text(text: str, chunk_size: int = 500, chunk_overlap: int = 50) -> lis
 # ============================================================
 
 def get_embeddings(model_name: str = "text-embedding-3-small"):
+    # Lazy import: only load when embeddings are actually needed
+    from langchain_openai import OpenAIEmbeddings
+
     from app.settings import get_settings
     settings = get_settings()
     return OpenAIEmbeddings(

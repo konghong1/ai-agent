@@ -8,6 +8,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useLayoutStore } from "@/stores/layout"
 import { authHeaders, getToken } from "@/services/auth"
+import { proxyMediaUrl } from "@/services/media"
 import ChatSelector from "@/components/ChatSelector"
 import { useChatSelectors } from "@/stores/useChatSelectors"
 import MediaCard, { MediaCardStyles } from "@/components/MediaCard"
@@ -62,7 +63,6 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [switching, setSwitching] = useState(false)  // smooth transition state for thread switching
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeThreadIdRef = useRef<string | null>(null)  // ref to avoid closure issues
@@ -102,16 +102,12 @@ export default function ChatInterface() {
   }, [])
 
   const fetchMessages = useCallback(async (threadId: string) => {
-    const reqId = ++fetchMsgIdRef.current  // assign a unique ID to this request
-    setSwitching(true)
-
-    // Safety timeout: force-reset switching after 8s even if fetch hangs
-    const safetyTimer = setTimeout(() => {
-      setSwitching(false)
-    }, 8000)
+    const reqId = ++fetchMsgIdRef.current
 
     try {
-      const res = await fetch(`/api/threads/${threadId}/messages`, { headers: authHeaders() })
+      const res = await fetch(`/api/threads/${threadId}/messages`, {
+        headers: authHeaders(),
+      })
       // Guard: if a newer request was fired, discard this stale response
       if (reqId !== fetchMsgIdRef.current) return
       if (res.ok) {
@@ -124,19 +120,16 @@ export default function ChatInterface() {
         }))
         setMessages(mapped)
       } else {
+        // Only update state if this is still the latest request
+        if (reqId !== fetchMsgIdRef.current) return
         setMessages([])
         const err = await res.json().catch(() => ({}))
         message.error(err?.detail || `加载消息失败 (HTTP ${res.status})`, 4)
       }
-    } catch {
+    } catch (e: any) {
       if (reqId !== fetchMsgIdRef.current) return
       setMessages([])
       message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
-    } finally {
-      clearTimeout(safetyTimer)
-      // Always reset switching — never let the UI get stuck gray.
-      // If a newer request is in-flight, it will set switching=true again.
-      setSwitching(false)
     }
   }, [])  // No deps - fetches always use fresh URL
 
@@ -368,6 +361,7 @@ export default function ChatInterface() {
           retryRef.current.clear()
 
           setMessages([])
+          // Advance fetchMsgId so any in-flight fetchMessages discards its result
           fetchMsgIdRef.current++
           switchThread(null)
         }
@@ -615,8 +609,10 @@ export default function ChatInterface() {
     reconnectTimerRef.current.clear()
     retryRef.current.clear()
 
-    // DON'T clear messages — keep old messages visible with a fade transition
-    // while new ones load. This creates a smooth "crossfade" effect.
+    // Advance fetchMsgId so any in-flight fetchMessages will discard their result
+    fetchMsgIdRef.current++
+
+    // DON'T clear messages — keep old messages visible while new ones load.
     // fetchMessages will replace them when ready.
 
     // Sync ref immediately (don't wait for useEffect) to prevent race conditions
@@ -638,6 +634,9 @@ export default function ChatInterface() {
     reconnectTimerRef.current.forEach(t => clearTimeout(t))
     reconnectTimerRef.current.clear()
     retryRef.current.clear()
+
+    // Advance fetchMsgId so any in-flight fetchMessages discards its result
+    fetchMsgIdRef.current++
 
     try {
       const res = await fetch(`/api/threads`, {
@@ -895,7 +894,7 @@ export default function ChatInterface() {
                 选择或创建一个会话开始对话
               </Text>
             </div>
-          ) : messages.length === 0 && !switching ? (
+          ) : messages.length === 0 ? (
             <div style={{
               display: "flex", flexDirection: "column",
               alignItems: "center", justifyContent: "center",
@@ -918,30 +917,8 @@ export default function ChatInterface() {
             </div>
           ) : (
             <div style={{
-              opacity: switching ? 0.35 : 1,
-              filter: switching ? "blur(2px)" : "none",
-              transition: "opacity 0.18s ease, filter 0.18s ease",
-              pointerEvents: switching ? "none" : "auto",
               position: "relative",
             }}>
-              {switching && (
-                <div style={{
-                  position: "absolute",
-                  top: 8, right: 12,
-                  display: "flex", alignItems: "center", gap: 6,
-                  zIndex: 10,
-                }}>
-                  <div style={{
-                    width: 14, height: 14, borderRadius: "50%",
-                    border: `2px solid ${primaryColor}33`,
-                    borderTopColor: primaryColor,
-                    animation: "spin 0.6s linear infinite",
-                  }} />
-                  <Text style={{ fontSize: 11, color: "var(--ice-text-muted)" }}>
-                    切换中
-                  </Text>
-                </div>
-              )}
               {messages.map((msg, idx) => (
                 <div
                   key={msg.id || idx}
@@ -995,9 +972,9 @@ export default function ChatInterface() {
                               onClick={() => {
                                 if (msg.blocks?.type === "image" && msg.blocks.image_url) {
                                   const allImages: LightboxImage[] = [
-                                    { url: msg.blocks.image_url, alt: "生成图片" },
+                                    { url: proxyMediaUrl(msg.blocks.image_url), alt: "生成图片" },
                                     ...(msg.blocks.images?.map((img) => ({
-                                      url: img.url,
+                                      url: proxyMediaUrl(img.url),
                                       alt: "生成图片",
                                     })) || []),
                                   ]
@@ -1029,9 +1006,9 @@ export default function ChatInterface() {
                                 onThumbnailClick={(index) => {
                                   if (msg.blocks?.type === "image" && msg.blocks.image_url) {
                                     const allImages: LightboxImage[] = [
-                                      { url: msg.blocks.image_url, alt: "生成图片" },
+                                      { url: proxyMediaUrl(msg.blocks.image_url), alt: "生成图片" },
                                       ...(msg.blocks.images?.map((img) => ({
-                                        url: img.url,
+                                        url: proxyMediaUrl(img.url),
                                         alt: "生成图片",
                                       })) || []),
                                     ]

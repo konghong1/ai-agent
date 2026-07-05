@@ -5,7 +5,6 @@ import re
 import time
 
 from fastapi import HTTPException
-from langchain.agents import create_agent
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,7 +16,6 @@ from app.llm.openai_compat import OpenAICompatibleAdapter
 from app.models import AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBChunk, Message, Provider, ProviderModel, Thread, RetrievalLog
 from app.services import new_thread_id, HybridRetriever, ContextBuilder, RAG_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT, KnowledgeBaseService
 from app.settings import get_settings
-from app.tools import get_tools
 
 _BLOCK_BLOCKS_RE = re.compile(r"<blocks>(.*?)</blocks>", re.DOTALL)
 
@@ -174,6 +172,10 @@ def _create_llm_from_config(config: LLMConfig):
 
 def build_agent(agent_config: AgentConfig, user_id: int | None = None):
     """Build LLM using provider config if available, falling back to settings."""
+    # Lazy imports: only load langchain.agents (heavy) when actually building an agent
+    from langchain.agents import create_agent
+    from app.tools import get_tools
+
     config = _resolve_llm_config(
         user_id=user_id,
         provider_id=None,

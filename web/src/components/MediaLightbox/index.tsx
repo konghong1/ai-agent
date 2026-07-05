@@ -5,6 +5,7 @@ import {
   ZoomInOutlined, ZoomOutOutlined,
 } from "@ant-design/icons"
 import { message } from "antd"
+import { proxyMediaUrl } from "@/services/media"
 
 // ═══════════════════════════════════════════════════════════════
 // Types
@@ -220,7 +221,7 @@ export default function MediaLightbox({
   // Actions
   const handleDownload = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
-    downloadFile(current.url)
+    downloadFile(proxyMediaUrl(current.url))
   }, [current.url])
 
   const handleCopy = useCallback(async (e: React.MouseEvent) => {
@@ -384,7 +385,7 @@ export default function MediaLightbox({
       >
         <img
           ref={imageRef}
-          src={current.url}
+          src={proxyMediaUrl(current.url)}
           alt={current.alt || "Preview"}
           draggable={false}
           style={{
@@ -429,7 +430,7 @@ export default function MediaLightbox({
               }}
             >
               <img
-                src={img.url}
+                src={proxyMediaUrl(img.url)}
                 alt=""
                 loading="lazy"
                 style={{ width: "100%", height: "100%", objectFit: "cover" }}
