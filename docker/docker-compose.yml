@@ -11,7 +11,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secure_2026}
       MYSQL_DATABASE: ai_agent
-      MYSQL_USER: ai_agent
+      MYSQL_USER: ${MYSQL_USER:-ai_agent}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ai_agent_secure_2026}
     ports:
       - "3306:3306"
