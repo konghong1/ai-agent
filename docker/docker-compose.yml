@@ -1,26 +1,41 @@
 version: '3.8'
 
 services:
-  # ── Database ───────────────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    container_name: ai-agent-postgres
+  # ──────────────────────────────────────────────────────────────
+  # DATABASE: MySQL 8.0 (replace PostgreSQL)
+  # ──────────────────────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: ai-agent-mysql
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ai_agent
-      POSTGRES_USER: ai_agent
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-ai_agent_secure_2026}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secure_2026}
+      MYSQL_DATABASE: ai_agent
+      MYSQL_USER: ai_agent
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ai_agent_secure_2026}
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
+      # 初始化和迁移脚本
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./db/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=256M
+      --max-connections=200
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ai_agent"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_secure_2026}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
-  # ── Object Storage (MinIO / RustFS-compatible) ─────────────
+  # ──────────────────────────────────────────────────────────────
+  # OBJECT STORAGE: MinIO (RustFS 兼容)
+  # ──────────────────────────────────────────────────────────────
   minio:
     image: minio/minio:latest
     container_name: ai-agent-minio
@@ -40,7 +55,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Init MinIO bucket (runs once at startup) ───────────────
+  # ──────────────────────────────────────────────────────────────
+  # INIT MinIO BUCKET (runs once at startup)
+  # ──────────────────────────────────────────────────────────────
   minio-init:
     image: minio/mc:latest
     depends_on:
@@ -54,7 +71,9 @@ services:
       exit 0;
       "
 
-  # ── Backend API ────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
+  # BACKEND API: FastAPI + SQLAlchemy
+  # ──────────────────────────────────────────────────────────────
   api:
     build:
       context: .
@@ -64,9 +83,13 @@ services:
     ports:
       - "${API_PORT:-8010}:8010"
     environment:
-      # Database
-      DATABASE_URL: postgresql+asyncpg://ai_agent:${DB_PASSWORD:-ai_agent_secure_2026}@postgres:5432/ai_agent
-      # Storage
+      # ── Database (MySQL) ──
+      DATABASE_URL: mysql+pymysql://ai_agent:${MYSQL_PASSWORD:-ai_agent_secure_2026}@mysql:3306/ai_agent
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secure_2026}
+      MYSQL_DATABASE: ai_agent
+      MYSQL_USER: ai_agent
+      
+      # ── Storage (MinIO) ──
       STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -74,25 +97,38 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-media-assets}
       MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000/media-assets}
       MINIO_USE_SSL: "false"
-      # Agnes AI API
+      
+      # ── Agnes AI API ──
       AGNES_API_KEY: ${AGNES_API_KEY:-sk-0T1BpcsI51cKxXgWZejpvONrcUs8vDc1Tqzz7NkObIWAyezd}
       AGNES_BASE_URL: ${AGNES_BASE_URL:-https://apihub.agnes-ai.com/v1}
-      # App
+      
+      # ── App ──
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
-      DEBUG: "false"
+      DEBUG: "true"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}"
+      
+      # ── Init ──
+      INIT_DB_ON_STARTUP: "true"
     depends_on:
-      postgres:
-        condition: service_started
+      mysql:
+        condition: service_healthy
       minio:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
     volumes:
       - ./:/app
-    command: uvicorn app.server:app --host 0.0.0.0 --port 8010 --reload
+    command: >
+      sh -c "
+      # 1. Run database migrations
+      python -m app.db.init_db;
+      # 2. Start API server
+      uvicorn app.server:app --host 0.0.0.0 --port 8010 --reload
+      "
 
-  # ── Background Worker (downloads media from CDN to MinIO) ──
+  # ──────────────────────────────────────────────────────────────
+  # BACKGROUND WORKER: Async media downloader
+  # ──────────────────────────────────────────────────────────────
   worker:
     build:
       context: .
@@ -100,7 +136,7 @@ services:
     container_name: ai-agent-worker
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql+asyncpg://ai_agent:${DB_PASSWORD:-ai_agent_secure_2026}@postgres:5432/ai_agent
+      DATABASE_URL: mysql+pymysql://ai_agent:${MYSQL_PASSWORD:-ai_agent_secure_2026}@mysql:3306/ai_agent
       STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -112,8 +148,8 @@ services:
       AGNES_BASE_URL: ${AGNES_BASE_URL:-https://apihub.agnes-ai.com/v1}
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
     depends_on:
-      postgres:
-        condition: service_started
+      mysql:
+        condition: service_healthy
       minio:
         condition: service_healthy
       minio-init:
@@ -122,7 +158,9 @@ services:
       - ./:/app
     command: python -m app.worker.media_worker
 
-  # ── Frontend (Nginx serves static React app) ───────────────
+  # ──────────────────────────────────────────────────────────────
+  # FRONTEND: Nginx serves static React app
+  # ──────────────────────────────────────────────────────────────
   web:
     image: nginx:alpine
     container_name: ai-agent-web
@@ -136,5 +174,5 @@ services:
       - api
 
 volumes:
-  postgres_data:
+  mysql_data:
   minio_data:
