@@ -2,15 +2,33 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# Install build dependencies
+# Configure mirrors for improved reliability (China-friendly)
+# Fall back to official mirrors if mirrors.tuna.tsinghua.edu.cn is slow
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources || true \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install build dependencies (gcc + MariaDB client libs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
+    libmariadb-dev-compat libmariadb-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for layer caching
+# Copy and install all requirements at once
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# Pre-install setuptools & wheel first (needed for langdetect build)
+RUN pip install --no-cache-dir --prefix=/install \
+    --timeout 600 --retries 10 \
+    "setuptools>=68.0.0" "wheel>=0.42.0"
+
+# Then install project requirements
+RUN pip install --no-cache-dir --prefix=/install \
+    --timeout 600 --retries 10 \
+    -r requirements.txt
 
 # ── Final image ──────────────────────────────────────────────
 FROM python:3.12-slim
@@ -18,7 +36,8 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Runtime deps only
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources || true \
+    && apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 

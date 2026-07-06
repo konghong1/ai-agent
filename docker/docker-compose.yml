@@ -1,8 +1,12 @@
-version: '3.8'
+name: ai-agent
 
 services:
   # ──────────────────────────────────────────────────────────────
-  # DATABASE: MySQL 8.0 (replace PostgreSQL)
+  # DATABASE: MySQL 8.0 (DEFAULT)
+  # ──────────────────────────────────────────────────────────────
+  # Switch to PostgreSQL by editing docker/.env:
+  #   DATABASE_TYPE=postgresql
+  #   Then comment out 'mysql' service below and uncomment 'postgres' below
   # ──────────────────────────────────────────────────────────────
   mysql:
     image: mysql:8.0
@@ -10,16 +14,15 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secure_2026}
-      MYSQL_DATABASE: ai_agent
+      MYSQL_DATABASE: ${MYSQL_DB:-ai_agent}
       MYSQL_USER: ${MYSQL_USER:-ai_agent}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ai_agent_secure_2026}
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      # 初始化和迁移脚本
-      - ./db/init.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
-      - ./db/migrations:/docker-entrypoint-initdb.d/migrations:ro
+      # init script switches based on DATABASE_TYPE
+      - ./db/init_${DATABASE_TYPE:-mysql}.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
     command: >
       --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
@@ -34,7 +37,32 @@ services:
       start_period: 30s
 
   # ──────────────────────────────────────────────────────────────
-  # OBJECT STORAGE: MinIO (RustFS 兼容)
+  # DATABASE: PostgreSQL 16 (ALTERNATIVE)
+  # ──────────────────────────────────────────────────────────────
+  # Uncomment below when DATABASE_TYPE=postgresql in docker/.env
+  # ──────────────────────────────────────────────────────────────
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: ai-agent-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: ${POSTGRES_USER:-ai_agent}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ai_agent_secure_2026}
+  #     POSTGRES_DB: ${POSTGRES_DB:-ai_agent}
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #     - ./db/init_postgresql.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ai_agent} -d ${POSTGRES_DB:-ai_agent}"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 10s
+
+  # ──────────────────────────────────────────────────────────────
+  # OBJECT STORAGE: MinIO (S3 Compatible)
   # ──────────────────────────────────────────────────────────────
   minio:
     image: minio/minio:latest
@@ -76,19 +104,17 @@ services:
   # ──────────────────────────────────────────────────────────────
   api:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.api
     container_name: ai-agent-api
     restart: unless-stopped
     ports:
       - "${API_PORT:-8010}:8010"
     environment:
-      # ── Database (MySQL) ──
-      DATABASE_URL: mysql+pymysql://ai_agent:${MYSQL_PASSWORD:-ai_agent_secure_2026}@mysql:3306/ai_agent
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_secure_2026}
-      MYSQL_DATABASE: ai_agent
-      MYSQL_USER: ai_agent
-      
+      # ── Database (dynamic based on DATABASE_TYPE) ──
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_TYPE: ${DATABASE_TYPE:-mysql}
+
       # ── Storage (MinIO) ──
       STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
       MINIO_ENDPOINT: minio:9000
@@ -97,30 +123,32 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-media-assets}
       MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000/media-assets}
       MINIO_USE_SSL: "false"
-      
+
       # ── Agnes AI API ──
       AGNES_API_KEY: ${AGNES_API_KEY:-sk-0T1BpcsI51cKxXgWZejpvONrcUs8vDc1Tqzz7NkObIWAyezd}
       AGNES_BASE_URL: ${AGNES_BASE_URL:-https://apihub.agnes-ai.com/v1}
-      
+
       # ── App ──
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       DEBUG: "true"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}"
-      
+
       # ── Init ──
       INIT_DB_ON_STARTUP: "true"
     depends_on:
       mysql:
         condition: service_healthy
+      # postgres:
+      #   condition: service_healthy
       minio:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
     volumes:
-      - ./:/app
+      - ../:/app
     command: >
       sh -c "
-      # 1. Run database migrations
+      # 1. Run database initialization (waits for DB, seeds data)
       python -m app.db.init_db;
       # 2. Start API server
       uvicorn app.server:app --host 0.0.0.0 --port 8010 --reload
@@ -131,12 +159,13 @@ services:
   # ──────────────────────────────────────────────────────────────
   worker:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.api
     container_name: ai-agent-worker
     restart: unless-stopped
     environment:
-      DATABASE_URL: mysql+pymysql://ai_agent:${MYSQL_PASSWORD:-ai_agent_secure_2026}@mysql:3306/ai_agent
+      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_TYPE: ${DATABASE_TYPE:-mysql}
       STORAGE_BACKEND: ${STORAGE_BACKEND:-minio}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -150,12 +179,14 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      # postgres:
+      #   condition: service_healthy
       minio:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
     volumes:
-      - ./:/app
+      - ../:/app
     command: python -m app.worker.media_worker
 
   # ──────────────────────────────────────────────────────────────
@@ -168,11 +199,12 @@ services:
     ports:
       - "${WEB_PORT:-80}:80"
     volumes:
-      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./web/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../web/dist:/usr/share/nginx/html:ro
     depends_on:
       - api
 
 volumes:
   mysql_data:
+  # postgres_data:  # uncomment when using postgres
   minio_data:

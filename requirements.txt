@@ -16,10 +16,24 @@ email-validator>=2.1.1
 # Knowledge Base dependencies
 chromadb>=0.5.0
 langchain-text-splitters>=0.2.0
+
+# langdetect has no prebuilt wheel; install setuptools first so its
+# build deps resolve correctly. Pin to binary releases where possible
+# to avoid compiling C extensions inside Docker.
+setuptools>=68.0.0
+wheel>=0.42.0
+langdetect>=1.0.9
+
 unstructured>=0.14.0
 openai>=1.30.0
 pdfminer.six>=20221105
 python-docx>=1.1.0
+
+# Database drivers (MySQL)
+pymysql>=1.1.0
+
+# Database drivers (PostgreSQL)
+psycopg2-binary>=2.9.0
 
 sentence-transformers>=2.2.0
 numpy>=1.24.0

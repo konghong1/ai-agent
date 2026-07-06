@@ -1,12 +1,12 @@
 """
 Background Worker — downloads media from external CDNs to local storage.
 
-Runs as a separate process/container. Polls the database for
-pending media assets and downloads them asynchronously.
+Uses synchronous SQLAlchemy engine because MySQL async drivers (aiomysql/asyncmy)
+are not installed. Polls the database for pending media assets and downloads them.
 
 Usage:
     python -m app.worker.media_worker
-    
+
 Or via Docker:
     docker compose up worker
 """
@@ -17,33 +17,33 @@ import logging
 import os
 import signal
 import sys
-import time
 import uuid
 from datetime import datetime
 
 import httpx
-import requests
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 # ── Config ──────────────────────────────────────────────────────
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://ai_agent:password@localhost:5432/ai_agent")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+if not DATABASE_URL:
+    logger.error("DATABASE_URL environment variable is not set!")
+    sys.exit(1)
+
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.getenv("MINIO_BUCKET", "media-assets")
 MINIO_PUBLIC_URL = os.getenv("MINIO_PUBLIC_URL", "http://localhost:9000/media-assets")
 POLL_INTERVAL = int(os.getenv("WORKER_POLL_INTERVAL", "5"))  # seconds
-MAX_CONCURRENT_DOWNLOADS = int(os.getenv("WORKER_MAX_CONCURRENT", "3"))
 
-# ── Engine Setup ────────────────────────────────────────────────
+# ── Sync Engine Setup ──────────────────────────────────────────
 
-engine = create_async_engine(DATABASE_URL, echo=False, pool_size=10, max_overflow=20)
-async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+logger.info("Worker connected to database: %s", _parse_db_type(DATABASE_URL))
 
 shutdown_event = asyncio.Event()
 
@@ -58,30 +58,38 @@ signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
 
 
+def _parse_db_type(url: str) -> str:
+    """Extract database type from URL."""
+    if "mysql" in url:
+        return "MySQL"
+    elif "postgresql" in url:
+        return "PostgreSQL"
+    elif "sqlite" in url:
+        return "SQLite"
+    return "Unknown"
+
+
 # ── Worker ──────────────────────────────────────────────────────
 
 
-async def download_to_storage(session: AsyncSession, external_url: str) -> dict | None:
-    """Download media from external URL and store in MinIO.
-    
+def download_to_storage(internal_url: str) -> dict | None:
+    """Download media from internal URL and store in MinIO.
+
     Returns {internal_url, object_key, mime_type, file_size} or None on failure.
+    Runs in a thread to avoid blocking the async event loop.
     """
     try:
-        # Download
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.get(external_url)
-            resp.raise_for_status()
-            file_bytes = resp.content
-        
-        # Detect MIME type
-        content_type = resp.headers.get("content-type", "application/octet-stream")
+        async def _download():
+            async with httpx.AsyncClient(timeout=60) as client:
+                resp = await client.get(internal_url)
+                resp.raise_for_status()
+                return resp.content, resp.headers.get("content-type", "application/octet-stream")
+
+        file_bytes, content_type = asyncio.run(_download())
         mime_type = content_type.split(";")[0] if ";" in content_type else content_type
-        
-        # Generate object key
+
         file_uuid = str(uuid.uuid4())
         date_str = datetime.now().strftime("%Y/%m/%d")
-        
-        # Extract extension from content type
         ext_map = {
             "image/jpeg": ".jpg",
             "image/png": ".png",
@@ -92,8 +100,7 @@ async def download_to_storage(session: AsyncSession, external_url: str) -> dict 
         }
         ext = ext_map.get(mime_type, ".bin")
         object_key = f"media/{date_str}/{file_uuid}{ext}"
-        
-        # Store in MinIO (reuse local storage backend)
+
         from app.storage import create_storage_backend
         storage = create_storage_backend(
             backend_type="minio",
@@ -104,73 +111,93 @@ async def download_to_storage(session: AsyncSession, external_url: str) -> dict 
             public_url=MINIO_PUBLIC_URL,
             use_ssl=False,
         )
-        
+
         storage.put(
             file_bytes=file_bytes,
             object_key=object_key,
             mime_type=mime_type,
         )
-        
-        internal_url = f"{MINIO_PUBLIC_URL}/{object_key}"
-        
+
+        result_internal_url = f"{MINIO_PUBLIC_URL}/{object_key}"
+
         return {
-            "internal_url": internal_url,
+            "internal_url": result_internal_url,
             "object_key": object_key,
             "mime_type": mime_type,
             "file_size": len(file_bytes),
         }
-        
+
     except Exception as exc:
-        logger.error("Download failed for %s: %s", external_url[:80], exc)
+        logger.error("Download failed for %s: %s", internal_url[:80], exc)
         return None
 
 
-async def process_pending_tasks(session: AsyncSession):
-    """Find pending MediaAsset records and process them."""
-    # Query for queued/failed assets (max 10 at a time)
-    stmt = (
-        select("id", "external_url", "media_type")
-        .where("status == 'queued'")
-        .limit(10)
-    )
-    
-    # Since we can't use raw SQL easily, let's use a simpler approach
-    result = await session.execute(stmt)
-    tasks = result.all()
-    
-    for task in tasks:
-        download_task = asyncio.create_task(
-            download_to_storage(session, task.external_url)
-        )
-        download_task.add_done_callback(lambda t, sid=task.id: _mark_completed(sid, t.result()))
-        
-        if len(asyncio.all_tasks()) >= MAX_CONCURRENT_DOWNLOADS:
-            await asyncio.sleep(0.1)
+def update_task_status(session: Session, task_id, status: str, error_msg: str | None = None):
+    """Update MediaAsset status in database using raw SQL."""
+    try:
+        if status == "completed":
+            session.execute(
+                text("UPDATE media_assets SET status = 'completed', updated_at = NOW() WHERE id = :id"),
+                {"id": task_id}
+            )
+        else:
+            session.execute(
+                text("UPDATE media_assets SET status = 'failed', error_message = :msg, updated_at = NOW() WHERE id = :id"),
+                {"msg": error_msg, "id": task_id}
+            )
+        session.commit()
+    except Exception as e:
+        logger.error("Failed to update task %s status: %s", task_id, e)
+        session.rollback()
 
 
-def _mark_completed(asset_id, result: dict | None):
-    """Mark asset as completed/failed in database."""
-    if result:
-        logger.info("Stored: %s → %s", asset_id, result.get("internal_url", ""))
-    else:
-        logger.error("Failed to store asset: %s", asset_id)
+def process_pending_tasks():
+    """Find pending MediaAsset records and process them synchronously."""
+    with engine.connect() as conn:
+        # Query for queued assets (use raw SQL since MediaAsset model needs async)
+        result = conn.execute(text(
+            "SELECT id, internal_url FROM media_assets WHERE status = 'queued' LIMIT 10"
+        ))
+        rows = result.fetchall()
+
+    if not rows:
+        return
+
+    session = Session(engine)
+    try:
+        for row in rows:
+            task_id = row[0]
+            internal_url = row[1]
+
+            if not internal_url:
+                continue
+
+            logger.info("Processing task %s: %s", task_id, internal_url[:80])
+            result = download_to_storage(internal_url)
+
+            if result:
+                update_task_status(session, task_id, "completed")
+            else:
+                update_task_status(session, task_id, "failed", "Download/storage failed")
+
+            session.flush()
+    finally:
+        session.close()
 
 
 async def main():
     """Main worker loop."""
-    logger.info("Media worker started (database: %s)", DATABASE_URL)
-    logger.info("Polling interval: %ds, max concurrent: %d", POLL_INTERVAL, MAX_CONCURRENT_DOWNLOADS)
-    
+    logger.info("Media worker started (database: %s)", _parse_db_type(DATABASE_URL))
+    logger.info("Polling interval: %ds", POLL_INTERVAL)
+
     while not shutdown_event.is_set():
         try:
-            async with async_session() as session:
-                await process_pending_tasks(session)
-                await session.commit()
+            await asyncio.to_thread(process_pending_tasks)
         except Exception as exc:
             logger.error("Worker cycle error: %s", exc)
-        
+
         await asyncio.sleep(POLL_INTERVAL)
-    
+
     logger.info("Worker stopped gracefully.")
 
 
