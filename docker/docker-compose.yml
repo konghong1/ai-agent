@@ -146,13 +146,12 @@ services:
         condition: service_completed_successfully
     volumes:
       - ../:/app
-    command: >
-      sh -c "
-      # 1. Run database initialization (waits for DB, seeds data)
-      python -m app.db.init_db;
-      # 2. Start API server
-      uvicorn app.server:app --host 0.0.0.0 --port 8010 --reload
-      "
+    command:
+      - sh
+      - -c
+      - |
+        python -m app.db.init_db
+        exec uvicorn app.server:app --host 0.0.0.0 --port 8010 --reload
 
   # ──────────────────────────────────────────────────────────────
   # BACKGROUND WORKER: Async media downloader

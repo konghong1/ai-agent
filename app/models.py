@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import JSON as SA_JSON
 
@@ -281,7 +282,12 @@ class KBDocument(TimestampMixin, Base):
 
     folder: Mapped["KBFolder | None"] = relationship(back_populates="documents")
 
-    __table_args__ = (UniqueConstraint("kb_id", "storage_path", name="uq_kb_doc_path"),)
+    # NOTE: storage_path can be up to VARCHAR(1000); a full-column unique index would
+    # exceed MySQL/InnoDB's 3072-byte key limit (1000 * 4 utf8mb4 bytes). Use a prefix
+    # index so the constraint still fits while remaining effectively unique for real paths.
+    __table_args__ = (
+        Index("uq_kb_doc_path", "kb_id", "storage_path", unique=True, mysql_length={"storage_path": 255}),
+    )
 
 
 class KBChunk(TimestampMixin, Base):
@@ -337,5 +343,39 @@ class RetrievalLog(Base):
     avg_score: Mapped[float]
     took_ms: Mapped[int]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ============================================================
+# MediaAsset (background worker downloads CDN media -> object storage)
+# ============================================================
+
+
+class MediaAsset(TimestampMixin, Base):
+    """Tracks a media asset being downloaded/served by the worker.
+
+    MySQL-compatible port of the model (the PostgreSQL variant used a UUID PK with
+    ``gen_random_uuid()``; here we use a ``String`` PK defaulting to a uuid4).
+    """
+
+    __tablename__ = "media_assets"
+
+    id: Mapped[str] = mapped_column(
+        String(80), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    media_type: Mapped[str] = mapped_column(String(20), default="image")
+    object_key: Mapped[str] = mapped_column(String(500), nullable=False, unique=True, index=True)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    internal_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="queued", index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

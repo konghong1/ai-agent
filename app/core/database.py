@@ -6,6 +6,7 @@ from collections.abc import Generator
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+from app.db_url import normalize_db_url
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ class Base(DeclarativeBase):
 
 
 settings = get_settings()
-_database_url = settings.database_url
+_database_url = normalize_db_url(settings.database_url)
 
 # Detect dialect from the database URL prefix.
 if _database_url.startswith("sqlite"):

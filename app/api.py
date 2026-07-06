@@ -708,21 +708,73 @@ def delete_provider_model(provider_id: int, model_id: int, current_user: User = 
     ProviderService.delete_model(db, model)
 # ── Helper: guess model type from name ──
 
-def _suggest_model_type(model_id: str) -> str:
-    """Heuristically guess the model type from its ID string."""
-    lower = model_id.lower()
+def _suggest_model_type(model_id: str, raw: dict | None = None) -> str:
+    """Heuristically guess the model type from its ID string and any metadata.
+
+    Returns one of: chat | image | video | embedding.
+    Order matters — image/video/embedding are checked before the generic "chat"
+    fallback so that multimodal models are not silently swallowed as chat models.
+    """
+    lower = (model_id or "").lower()
+
+    # Some providers expose a type/category/capabilities field — trust it when present.
+    if isinstance(raw, dict):
+        for key in ("type", "category", "capabilities", "model_type"):
+            val = raw.get(key)
+            if isinstance(val, str) and val.strip():
+                v = val.strip().lower()
+                if v in ("image", "images", "text-to-image", "image-generation"):
+                    return "image"
+                if v in ("video", "videos", "text-to-video", "video-generation", "ttv"):
+                    return "video"
+                if v in ("embedding", "embeddings", "text-embedding"):
+                    return "embedding"
+            if isinstance(val, (list, tuple)):
+                joined = " ".join(str(x).lower() for x in val)
+                if "image" in joined:
+                    return "image"
+                if "video" in joined:
+                    return "video"
+                if "embedding" in joined:
+                    return "embedding"
+
     # Image models
-    if any(k in lower for k in ("dall-e", "dalle", "image", "stable-diffusion", "sd-", "midjourney", "flux", "imagen")):
+    if any(k in lower for k in (
+        "dall-e", "dalle", "image", "imagen", "stable-diffusion", "sd-", "sd1", "sd2",
+        "sdxl", "midjourney", "flux", "cogview", "ideogram", "recraft", "kolors",
+        "playcartoon", "dreamshaper", "juggernaut", "anything", "deliberate",
+        "epicrealism", "realisticvision", "chilloutmix", "abyssorange", "meina",
+        "anime", "ponydiffusion", "revanimated", "counterfeit", "dreamlike",
+        "lyriel", "protogen", "breakdomain", "edges", "analog", "rcnz",
+        "openjourney", "toonyou", "aom", "hasdx", "shonin", "gape", "f222",
+        "niji", "noobai", "illustrious", "pony", "draw", "paint", "cartoon",
+        "illustration", "portrait",
+    )):
         return "image"
+
     # Video models
-    if any(k in lower for k in ("sora", "video", "kling", "cogvideo", "runway", "pika", "luma")):
+    if any(k in lower for k in (
+        "sora", "video", "kling", "cogvideo", "runway", "pika", "luma", "veo",
+        "hunyuanvideo", "hunyuan-video", "wan", "wan2", "mochi", "minimax-video",
+        "lightricks", "ltx", "trellis", "viv", "moonvalley", "haiper", "step-video",
+        "t2v", "i2v", "anim", "movie", "film", "seedance",
+    )):
         return "video"
+
     # Embedding models
-    if any(k in lower for k in ("embedding", "bge", "text-embedding", "e5-", "gte-", "stella")):
+    if any(k in lower for k in (
+        "embedding", "bge", "text-embedding", "e5-", "gte-", "stella", "m3e", "bce",
+        "acge", "jina-embed", "voyage", "cohere-embed", "embed", "uae",
+    )):
         return "embedding"
-    # TTS / audio
-    if any(k in lower for k in ("tts", "whisper", "speech", "audio")):
-        return "chat"  # fallback — not supported yet
+
+    # TTS / audio / music — not separately managed yet, keep as chat fallback
+    if any(k in lower for k in (
+        "tts", "whisper", "speech", "audio", "voice", "music", "suno", "udio",
+        "seed-tts", "cosyvoice", "fish", "bark", "audiocraft", "musicgen",
+    )):
+        return "chat"
+
     return "chat"
 
 
@@ -746,7 +798,7 @@ def _fetch_models_from_api(base_url: str, api_key: str) -> tuple[list[RemoteMode
                 continue
             entries.append(RemoteModelEntry(
                 name=mid,
-                suggested_type=_suggest_model_type(mid),
+                suggested_type=_suggest_model_type(mid, m),
             ))
         return entries, None
 

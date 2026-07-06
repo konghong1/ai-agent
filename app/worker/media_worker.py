@@ -24,11 +24,25 @@ import httpx
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+from app.db_url import normalize_db_url
+
 logger = logging.getLogger(__name__)
+
+
+def _parse_db_type(url: str) -> str:
+    """Extract database type from URL."""
+    if "mysql" in url:
+        return "MySQL"
+    elif "postgresql" in url:
+        return "PostgreSQL"
+    elif "sqlite" in url:
+        return "SQLite"
+    return "Unknown"
+
 
 # ── Config ──────────────────────────────────────────────────────
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = normalize_db_url()
 if not DATABASE_URL:
     logger.error("DATABASE_URL environment variable is not set!")
     sys.exit(1)
@@ -56,17 +70,6 @@ def _handle_signal(signum, frame):
 
 signal.signal(signal.SIGINT, _handle_signal)
 signal.signal(signal.SIGTERM, _handle_signal)
-
-
-def _parse_db_type(url: str) -> str:
-    """Extract database type from URL."""
-    if "mysql" in url:
-        return "MySQL"
-    elif "postgresql" in url:
-        return "PostgreSQL"
-    elif "sqlite" in url:
-        return "SQLite"
-    return "Unknown"
 
 
 # ── Worker ──────────────────────────────────────────────────────

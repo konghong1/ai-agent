@@ -59,6 +59,21 @@ const TYPE_COLORS: Record<string, string> = {
   "other": "default",
 }
 
+// Group labels / colors for the remote-model fetch list (chat/image/video/embedding)
+const MODEL_GROUP_LABELS: Record<string, string> = {
+  chat: "💬 聊天模型",
+  image: "🖼 图片模型",
+  video: "🎬 视频模型",
+  embedding: "📊 嵌入模型",
+}
+
+const MODEL_GROUP_COLORS: Record<string, string> = {
+  chat: "#2563EB",
+  image: "#059669",
+  video: "#7C3AED",
+  embedding: "#D97706",
+}
+
 // ============ Component ============
 
 export default function ProviderManagement() {
@@ -510,6 +525,136 @@ export default function ProviderManagement() {
     image: "图片模型 (Image)",
   }
 
+  // Render the remote-fetched model list grouped by type so chat/image/video/embedding
+  // are clearly separated (instead of a flat list where everything looks like "对话").
+  const renderRemoteGrouped = (
+    models: RemoteModel[],
+    typeMap: Record<string, string>,
+    selected: Set<string>,
+    onToggle: (name: string) => void,
+    onTypeChange: (name: string, val: string) => void,
+    existingNames?: Set<string>,
+  ) => {
+    const order = ["chat", "image", "video", "embedding"] as const
+    return (
+      <div style={{ maxHeight: 300, overflowY: "auto", marginBottom: 12 }}>
+        {order.map((mtype) => {
+          const group = models.filter((m) => (typeMap[m.name] || "chat") === mtype)
+          if (group.length === 0) return null
+          return (
+            <div key={mtype} style={{ marginBottom: 10 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: MODEL_GROUP_COLORS[mtype],
+                  marginBottom: 4,
+                }}
+              >
+                {MODEL_GROUP_LABELS[mtype]} ({group.length})
+              </div>
+              {group.map(({ name, suggested_type }) => {
+                const checked = selected.has(name)
+                const alreadyAdded = existingNames?.has(name)
+                const currentType = typeMap[name] || suggested_type || "chat"
+                return (
+                  <div
+                    key={name}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                      padding: "5px 10px",
+                      marginBottom: 4,
+                      border: `1px solid ${checked ? "#1677ff" : "var(--ice-border)"}`,
+                      borderRadius: 6,
+                      background: alreadyAdded
+                        ? "var(--ice-bg-hover)"
+                        : checked
+                        ? "rgba(22,119,255,0.05)"
+                        : "transparent",
+                      opacity: alreadyAdded ? 0.5 : 1,
+                    }}
+                  >
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        cursor: alreadyAdded ? "not-allowed" : "pointer",
+                        flex: 1,
+                        fontSize: 13,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={alreadyAdded}
+                        onChange={() => onToggle(name)}
+                        style={{ cursor: alreadyAdded ? "not-allowed" : "pointer" }}
+                      />
+                      <span
+                        style={{
+                          textDecoration: alreadyAdded ? "line-through" : "none",
+                          color: "var(--ice-text-primary)",
+                        }}
+                      >
+                        {name}
+                      </span>
+                      <Tag
+                        color={
+                          suggested_type === "image"
+                            ? "green"
+                            : suggested_type === "video"
+                            ? "purple"
+                            : suggested_type === "embedding"
+                            ? "orange"
+                            : "blue"
+                        }
+                        style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px" }}
+                      >
+                        {suggested_type === "image"
+                          ? "图片"
+                          : suggested_type === "video"
+                          ? "视频"
+                          : suggested_type === "embedding"
+                          ? "嵌入"
+                          : "对话"}
+                      </Tag>
+                    </label>
+                    <Select
+                      size="small"
+                      value={currentType}
+                      onChange={(val) => onTypeChange(name, val)}
+                      style={{ width: 85, fontSize: 11 }}
+                      options={[
+                        { value: "chat", label: "💬 对话" },
+                        { value: "image", label: "🖼 图片" },
+                        { value: "video", label: "🎬 视频" },
+                        { value: "embedding", label: "📊 嵌入" },
+                      ]}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const setAllModalType = (type: string | null) => {
+    setModalModelTypeMap((prev) => {
+      const next = { ...prev }
+      modalRemoteModels.forEach((m) => {
+        next[m.name] = type ?? (m.suggested_type || "chat")
+      })
+      return next
+    })
+  }
+
   const renderModelsByType = (
     models: ProviderModel[],
     type: "chat" | "embedding" | "video" | "image"
@@ -778,67 +923,14 @@ export default function ProviderManagement() {
                             })
                           }}>恢复建议类型</Button>
                         </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexWrap: "wrap",
-                            gap: 8,
-                            marginBottom: 12,
-                            maxHeight: 300,
-                            overflowY: "auto",
-                          }}
-                        >
-                          {remoteModels.map(({ name, suggested_type }) => {
-                            const checked = selectedRemoteModels.has(name)
-                            const existingModels = p.models.map(m => m.model_name)
-                            const alreadyAdded = existingModels.includes(name)
-                            const currentType = modelTypeMap[name] || suggested_type || "chat"
-                            return (
-                              <div
-                                key={name}
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  padding: "3px 8px",
-                                  border: `1px solid ${checked ? "#1677ff" : "var(--ice-border)"}`,
-                                  borderRadius: 6,
-                                  background: alreadyAdded ? "var(--ice-bg-hover)" : (checked ? "rgba(22,119,255,0.06)" : "transparent"),
-                                  opacity: alreadyAdded ? 0.5 : 1,
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  disabled={alreadyAdded}
-                                  onChange={() => toggleRemoteModel(name)}
-                                  style={{ cursor: alreadyAdded ? "not-allowed" : "pointer" }}
-                                />
-                                <span style={{
-                                  fontSize: 12,
-                                  textDecoration: alreadyAdded ? "line-through" : "none",
-                                  color: "var(--ice-text-primary)",
-                                  minWidth: 60,
-                                }}>
-                                  {name}
-                                </span>
-                                <Select
-                                  size="small"
-                                  value={currentType}
-                                  onChange={(val) => setModelTypeMap(prev => ({ ...prev, [name]: val }))}
-                                  style={{ width: 85, fontSize: 11 }}
-                                  options={[
-                                    { value: "chat", label: "💬 对话" },
-                                    { value: "image", label: "🖼 图片" },
-                                    { value: "video", label: "🎬 视频" },
-                                    { value: "embedding", label: "📊 嵌入" },
-                                  ]}
-                                  popupMatchSelectWidth={false}
-                                />
-                              </div>
-                            )
-                          })}
-                        </div>
+                        {renderRemoteGrouped(
+                          remoteModels,
+                          modelTypeMap,
+                          selectedRemoteModels,
+                          toggleRemoteModel,
+                          (name, val) => setModelTypeMap(prev => ({ ...prev, [name]: val })),
+                          new Set(p.models.map(m => m.model_name)),
+                        )}
 
                         <div style={{
                           display: "flex",
@@ -986,72 +1078,18 @@ export default function ProviderManagement() {
           )}
 
           {modalRemoteModels.length > 0 && (
-            <Form.Item label="选择要添加的模型（可逐个调整类型）">
+            <Form.Item label="选择要添加的模型（按类型分组，可逐个调整）">
               <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 12 }}>
-                <Button size="small" onClick={() => {
-                  setModalModelTypeMap(prev => {
-                    const next = { ...prev }
-                    modalRemoteModels.forEach(m => { next[m.name] = "chat" })
-                    return next
-                  })
-                }}>全部设为对话</Button>
-                <Button size="small" onClick={() => {
-                  setModalModelTypeMap(prev => {
-                    const next = { ...prev }
-                    modalRemoteModels.forEach(m => { next[m.name] = m.suggested_type || "chat" })
-                    return next
-                  })
-                }}>恢复建议类型</Button>
+                <Button size="small" onClick={() => setAllModalType("chat")}>全部设为对话</Button>
+                <Button size="small" onClick={() => setAllModalType(null)}>恢复建议类型</Button>
               </div>
-              <div style={{ maxHeight: 250, overflowY: "auto", marginBottom: 12 }}>
-                {modalRemoteModels.map(({ name, suggested_type }) => {
-                  const checked = modalSelectedModels.has(name)
-                  const currentType = modalModelTypeMap[name] || suggested_type || "chat"
-                  return (
-                    <div
-                      key={name}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 8,
-                        padding: "5px 10px",
-                        marginBottom: 4,
-                        border: `1px solid ${checked ? "#1677ff" : "var(--ice-border)"}`,
-                        borderRadius: 6,
-                        background: checked ? "rgba(22,119,255,0.05)" : "transparent",
-                      }}
-                    >
-                      <label style={{
-                        display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
-                        flex: 1, fontSize: 13,
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => toggleModalRemoteModel(name)}
-                        />
-                        <span>{name}</span>
-                        <Tag color={suggested_type === "image" ? "green" : suggested_type === "video" ? "purple" : suggested_type === "embedding" ? "orange" : "blue"} style={{ fontSize: 10, lineHeight: "16px", padding: "0 4px" }}>
-                          {suggested_type === "image" ? "图片" : suggested_type === "video" ? "视频" : suggested_type === "embedding" ? "嵌入" : "对话"}
-                        </Tag>
-                      </label>
-                      <Select
-                        size="small"
-                        value={currentType}
-                        onChange={(val) => setModalModelTypeMap(prev => ({ ...prev, [name]: val }))}
-                        style={{ width: 85, fontSize: 11 }}
-                        options={[
-                          { value: "chat", label: "💬 对话" },
-                          { value: "image", label: "🖼 图片" },
-                          { value: "video", label: "🎬 视频" },
-                          { value: "embedding", label: "📊 嵌入" },
-                        ]}
-                      />
-                    </div>
-                  )
-                })}
-              </div>
+              {renderRemoteGrouped(
+                modalRemoteModels,
+                modalModelTypeMap,
+                modalSelectedModels,
+                toggleModalRemoteModel,
+                (name, val) => setModalModelTypeMap(prev => ({ ...prev, [name]: val })),
+              )}
               <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   每种类型第一个选中的模型自动设为该类型的默认

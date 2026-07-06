@@ -313,26 +313,6 @@ export default function ChatSelector({
 
   const noProviders = providers.length === 0
 
-  if (noProviders) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          fontSize: 12,
-          color: 'var(--ice-text-muted)',
-          cursor: 'pointer',
-        }}
-        onClick={() => navigate('/agents/providers')}
-      >
-        <ModelIcon muted />
-        <span>请先配置 AI 提供商</span>
-        <ChevronDownIcon muted />
-      </div>
-    )
-  }
-
   return (
     <>
       <style>{noBorderCss}</style>
@@ -344,41 +324,67 @@ export default function ChatSelector({
           fontSize: 12,
         }}
       >
-        {/* ═══ Model Selector ═══ */}
-        <div style={tagStyle(hasModel)}>
-          <ModelIcon muted={!hasModel} />
-          <Select
-            className="chat-selector-model"
-            value={modelValue}
-            onChange={handleModelSelect as any}
-            size="small"
-            variant="borderless"
-            placeholder="模型"
-            options={modelOptions}
-            suffixIcon={null}
-            getPopupContainer={() => document.body}
-            classNames={{ popup: { root: "chat-selector-model-dropdown" } }}
-            popupMatchSelectWidth={false}
-            styles={{ popup: { root: { minWidth: 220 } } }}
-            filterOption={(input: string, option: any) => {
-              if (!input || !option?.value) return true
-              const val = String(option.value)
-              // Allow filtering by model name (skip type headers)
-              if (val.startsWith('__header__')) return false
-              return val.toLowerCase().includes(input.toLowerCase())
+        {/* ═══ Model / Provider section ═══ */}
+        {noProviders ? (
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: 'var(--ice-primary)',
+              cursor: 'pointer',
+              padding: '2px 8px',
+              borderRadius: 6,
+              border: '1px dashed var(--ice-primary)',
+              background: 'rgba(22,119,255,0.06)',
+              transition: 'background 0.15s ease',
             }}
-            labelRender={(props: any) => {
-              const val = props.value as string || ''
-              const parts = val.split('::')
-              const name = parts.length >= 2 ? parts[1] : ''
-              if (!name) return <span style={{ color: '#666' }}>模型</span>
-              return <span style={{ color: '#1a1a1a' }}>{name}</span>
-            }}
-          />
-          <ChevronDownIcon muted={!hasModel} />
-        </div>
+            onClick={() => navigate('/providers')}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(22,119,255,0.12)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(22,119,255,0.06)' }}
+            title="前往添加 AI 提供商"
+          >
+            <ModelIcon muted />
+            <span style={{ fontWeight: 500 }}>请先配置 AI 提供商</span>
+            <ChevronDownIcon muted />
+          </div>
+        ) : (
+          <div style={tagStyle(hasModel)}>
+            <ModelIcon muted={!hasModel} />
+            <Select
+              className="chat-selector-model"
+              value={modelValue}
+              onChange={handleModelSelect as any}
+              size="small"
+              variant="borderless"
+              placeholder="模型"
+              options={modelOptions}
+              suffixIcon={null}
+              getPopupContainer={() => document.body}
+              classNames={{ popup: { root: "chat-selector-model-dropdown" } }}
+              popupMatchSelectWidth={false}
+              styles={{ popup: { root: { minWidth: 220 } } }}
+              filterOption={(input: string, option: any) => {
+                if (!input || !option?.value) return true
+                const val = String(option.value)
+                // Allow filtering by model name (skip type headers)
+                if (val.startsWith('__header__')) return false
+                return val.toLowerCase().includes(input.toLowerCase())
+              }}
+              labelRender={(props: any) => {
+                const val = props.value as string || ''
+                const parts = val.split('::')
+                const name = parts.length >= 2 ? parts[1] : ''
+                if (!name) return <span style={{ color: '#666' }}>模型</span>
+                return <span style={{ color: '#1a1a1a' }}>{name}</span>
+              }}
+            />
+            <ChevronDownIcon muted={!hasModel} />
+          </div>
+        )}
 
-        {/* ═══ Template Selector ═══ */}
+        {/* ═══ Template Selector (always visible, independent of provider) ═══ */}
         <div style={tagStyle(hasTemplate)}>
           <TemplateIcon muted={!hasTemplate} />
           <Select
@@ -387,7 +393,7 @@ export default function ChatSelector({
             onChange={handleTemplateSelect}
             size="small"
             variant="borderless"
-            placeholder="模板"
+            placeholder={templates.length > 0 ? '提示词' : '提示词(暂无)'}
             suffixIcon={null}
             getPopupContainer={() => document.body}
             classNames={{ popup: { root: "chat-selector-tmpl-dropdown" } }}
