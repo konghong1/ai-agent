@@ -17,7 +17,6 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-import base64
 import requests
 
 from app.models import Provider
@@ -380,34 +379,22 @@ def _normalize_reference_images(refs: list[str] | None, storage=None) -> list[st
     """Normalise reference-image references into provider-friendly forms.
 
     - ``data:`` URL  -> kept as-is (most reliable for img2img/i2v).
-    - Internal by-key proxy URL (``/api/media/assets/by-key/<key>``) ->
-      downloaded via object storage and inlined as a base64 data URL,
-      because the provider cannot reach our private proxy.
+    - Internal by-key proxy URL (``/api/media/assets/by-key/<key>?bucket=``) ->
+      downloaded via object storage and inlined as a base64 data URL
+      (bucket-aware), because the provider cannot reach our private proxy /
+      local MinIO. This is delegated to ``app.storage.inline_reference_image``
+      so chat and generation paths stay consistent.
     - External ``http(s)`` URL -> kept as-is (provider fetches directly).
 
     Returns a list of strings; capped at 8 references.
     """
     if not refs:
         return []
+    from app.storage import inline_reference_image
     out: list[str] = []
     for ref in refs[:8]:
         if not isinstance(ref, str):
             continue
-        if ref.startswith("data:"):
-            out.append(ref)
-            continue
-        if "/api/media/assets/by-key/" in ref:
-            try:
-                key = ref.split("/api/media/assets/by-key/", 1)[1].split("?")[0]
-                if storage is None:
-                    from app.storage import get_storage_backend
-                    storage = get_storage_backend()
-                raw = storage.get(key)
-                if raw:
-                    mt = mimetypes.guess_type(key)[0] or "image/png"
-                    out.append(f"data:{mt};base64,{base64.b64encode(raw).decode()}")
-                    continue
-            except Exception as exc:
-                logger.warning("Failed to inline by-key reference %s: %s", ref, exc)
-        out.append(ref)
+        inlined = inline_reference_image(ref)
+        out.append(inlined if inlined is not None else ref)
     return out

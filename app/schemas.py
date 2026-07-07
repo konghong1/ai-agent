@@ -544,3 +544,149 @@ class KBStatsResponse(BaseModel):
     status_breakdown: dict
     hot_queries: list[str]
 
+
+# ============================================================
+# 电商套图模块 Schemas
+# ============================================================
+
+class GalleryProjectImageRead(BaseModel):
+    id: int
+    project_id: int
+    filename: str
+    url: str
+    original: bool
+    order: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryPlanItemRead(BaseModel):
+    id: int
+    project_id: int
+    type_id: str
+    order: int
+    personal_settings: dict = Field(default_factory=dict)
+    common_settings: dict = Field(default_factory=dict)
+    output_settings: dict = Field(default_factory=dict)
+    note: str = ""
+    reference_images: list = Field(default_factory=list)
+    status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryRecordRead(BaseModel):
+    id: int
+    project_id: int
+    plan_item_id: int | None
+    type_id: str
+    title: str
+    result_filename: str | None
+    result_url: str | None
+    status: str
+    prompt: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryShowcaseRead(BaseModel):
+    id: int
+    category: str
+    name: str
+    original_url: str
+    image_urls: list = Field(default_factory=list)
+    total_count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryTemplateRead(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryProjectRead(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    status: str
+    selling_points: str
+    market_config: dict = Field(default_factory=dict)
+    output_config: dict = Field(default_factory=dict)
+    estimated_points: int
+    estimated_minutes: float
+    images: list[GalleryProjectImageRead] = Field(default_factory=list)
+    plan_items: list[GalleryPlanItemRead] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryProjectCreate(BaseModel):
+    name: str = Field(default="未命名套图", max_length=200)
+
+
+class GalleryProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    selling_points: str | None = None
+    market_config: dict | None = None
+    output_config: dict | None = None
+    status: str | None = None
+
+
+class GalleryPlanItemCreate(BaseModel):
+    type_id: str = Field(..., min_length=1, max_length=40)
+    personal_settings: dict = Field(default_factory=dict)
+    common_settings: dict = Field(default_factory=dict)
+    output_settings: dict = Field(default_factory=dict)
+    note: str = ""
+    reference_images: list = Field(default_factory=list)
+
+
+class GalleryPlanItemUpdate(BaseModel):
+    type_id: str | None = Field(default=None, max_length=40)
+    personal_settings: dict | None = None
+    common_settings: dict | None = None
+    output_settings: dict | None = None
+    note: str | None = None
+    reference_images: list | None = None
+    order: int | None = None
+
+
+class GalleryPlanReorder(BaseModel):
+    ordered_ids: list[int] = Field(default_factory=list)
+
+
+class GalleryTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    payload: dict = Field(default_factory=dict)
+
+
+class GalleryGenerateResponse(BaseModel):
+    project_id: int
+    status: str
+    total_images: int
+    total_points: int
+    total_minutes: float
+    records: list[GalleryRecordRead] = Field(default_factory=list)
+
+
+class GalleryTypesResponse(BaseModel):
+    types: list[dict] = Field(default_factory=list)
+    options: dict = Field(default_factory=dict)
+
+
+class GalleryEstimateResponse(BaseModel):
+    total_points: int
+    total_minutes: float
+    total_images: int
+
+

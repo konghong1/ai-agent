@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.llm import LLMFactory, LLMConfig
 from app.llm.openai_compat import OpenAICompatibleAdapter
+from app.storage import inline_reference_image
 
 
 from app.models import AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBChunk, Message, Provider, ProviderModel, Thread, RetrievalLog
@@ -18,6 +19,27 @@ from app.services import new_thread_id, HybridRetriever, ContextBuilder, RAG_SYS
 from app.settings import get_settings
 
 _BLOCK_BLOCKS_RE = re.compile(r"<blocks>(.*?)</blocks>", re.DOTALL)
+
+
+def _reference_images_to_blocks(reference_images: list[str] | None) -> list[dict]:
+    """Convert reference-image references into OpenAI-style multimodal blocks.
+
+    Each reference is inlined via :func:`app.storage.inline_reference_image`:
+    ``data:`` URLs pass through, internal by-key proxy URLs (and any other
+    local/private address) are fetched from object storage and inlined as
+    base64 — the remote model cannot reach our private MinIO/proxy, so base64
+    is the reliable path. External ``http(s)`` URLs are passed through as-is.
+    """
+    blocks: list[dict] = []
+    for ref in (reference_images or [])[:8]:
+        if not isinstance(ref, str):
+            continue
+        url = inline_reference_image(ref)
+        if url is None:
+            url = ref
+        if url.startswith("data:") or url.startswith("http"):
+            blocks.append({"type": "image_url", "image_url": {"url": url}})
+    return blocks
 
 
 def _extract_blocks(text: str) -> tuple[str, dict]:
@@ -220,6 +242,7 @@ def ask_agent(
     provider_type: str | None = None,
     provider_id: int | None = None,
     temperature: float | None = None,
+    reference_images: list[str] | None = None,
 ) -> tuple[str, str, dict]:
     settings = get_settings()
     
@@ -306,9 +329,23 @@ def ask_agent(
     langchain_messages = [
         {"role": "system", "content": system_prompt or RAG_SYSTEM_PROMPT},
     ]
-    for msg in stored_messages:
-        if msg.role in ("user", "assistant"):
-            langchain_messages.append({"role": msg.role, "content": msg.content})
+    # Find the index of the current (last) user message so we can attach
+    # reference images to exactly that turn — earlier user turns stay text-only.
+    last_user_idx = None
+    for _i, _m in enumerate(stored_messages):
+        if _m.role == "user":
+            last_user_idx = _i
+
+    image_blocks = _reference_images_to_blocks(reference_images) if reference_images else []
+
+    for _i, msg in enumerate(stored_messages):
+        if msg.role not in ("user", "assistant"):
+            continue
+        content = msg.content
+        if msg.role == "user" and image_blocks and _i == last_user_idx:
+            # Multimodal content: text first, then the attached images.
+            content = [{"type": "text", "text": content}, *image_blocks]
+        langchain_messages.append({"role": msg.role, "content": content})
 
     # Inject RAG context
     if rag_context:

@@ -55,6 +55,23 @@ const themeColors: Record<string, { primary: string; accent: string }> = {
   elegantPurple: { primary: "#7C3AED", accent: "#A78BFA" },
 }
 
+// The video model requires num_frames to be of the form 8*n + 1
+// (e.g. 1, 9, 17, 25, 33, ...). Given a desired duration (seconds) at the
+// given fps, round to the nearest valid value so we never send an invalid
+// frame count (which previously returned HTTP 400 from the provider).
+export function toValidNumFrames(durationSec: number, fps = 24, max = 241): number {
+  const ideal = Math.max(1, Math.round((durationSec || 0) * fps))
+  let n = Math.round((ideal - 1) / 8)
+  if (n < 0) n = 0
+  let frames = 8 * n + 1
+  // Keep the result within a safe upper bound that is itself 8*n + 1.
+  if (frames > max) {
+    const maxN = Math.floor((max - 1) / 8)
+    frames = 8 * maxN + 1
+  }
+  return frames
+}
+
 export default function ChatInterface() {
   const theme = useLayoutStore((s) => s.theme)
   const [templates, setTemplates] = useState<PromptTemplate[]>([])
@@ -498,7 +515,7 @@ export default function ChatInterface() {
           model_name: modelName,
           reference_images: referenceImages,
           size: genSize,
-          num_frames: Math.round(genDuration * 24),
+          num_frames: toValidNumFrames(genDuration),
           frame_rate: 24,
         }),
         signal: abortCtrl.signal,
@@ -682,21 +699,45 @@ export default function ChatInterface() {
   }
 
   // ── Reference image (图生图 / 图生视频) helpers ──
-  const handleRefFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Upload flow (per requirement): the selected image is first uploaded to a
+  // dedicated MinIO bucket via /api/chat/upload; the returned same-origin proxy
+  // URL is what we keep + send to the backend. The backend later inlines it as
+  // base64 before calling the (remote) model, because the local MinIO URL is
+  // not reachable by the model. Falls back to a local base64 data URL if the
+  // upload endpoint is unavailable.
+  const handleRefFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
-    const readers: Promise<string>[] = []
-    for (const file of Array.from(files).slice(0, 8)) {
-      readers.push(downscaleImage(file))
+    const fileList = Array.from(files).slice(0, 8)
+    const uploaded: string[] = []
+    for (const file of fileList) {
+      try {
+        const fd = new FormData()
+        fd.append("file", file)
+        const res = await fetch("/api/chat/upload", {
+          method: "POST",
+          headers: authHeaders(),
+          body: fd,
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data?.url) uploaded.push(data.url)
+        } else {
+          const dataUrl = await downscaleImage(file)
+          if (dataUrl) uploaded.push(dataUrl)
+        }
+      } catch {
+        const dataUrl = await downscaleImage(file)
+        if (dataUrl) uploaded.push(dataUrl)
+      }
     }
-    Promise.all(readers).then((dataUrls) => {
-      const valid = dataUrls.filter(Boolean)
+    if (uploaded.length) {
       setReferenceImages(prev => {
-        const next = [...prev, ...valid].slice(0, 8)
-        if (prev.length + valid.length > 8) message.info("最多支持 8 张参考图")
+        const next = [...prev, ...uploaded].slice(0, 8)
+        if (prev.length + uploaded.length > 8) message.info("最多支持 8 张参考图")
         return next
       })
-    })
+    }
     e.target.value = ""
   }
 

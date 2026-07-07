@@ -12,7 +12,7 @@ import {
 
   MenuFoldOutlined, MenuUnfoldOutlined, UserOutlined, LogoutOutlined,
 
-  SunOutlined, MoonOutlined, CloudServerOutlined,
+  SunOutlined, MoonOutlined, CloudServerOutlined, AppstoreOutlined,
 
 } from "@ant-design/icons"
 
@@ -76,6 +76,8 @@ const menuItems = [
   },
 
   { key: "/users", icon: <TeamOutlined />, label: "用户管理" },
+
+  { key: "/ecommerce-gallery", icon: <AppstoreOutlined />, label: "电商套图" },
 
   { key: "/settings", icon: <SettingOutlined />, label: "系统设置" },
 
@@ -279,11 +281,16 @@ export default function BasicLayout() {
 
           background: "transparent",
 
-          minHeight: `calc(100vh - ${isMobile ? 104 : 64}px)`,
+          // 固定高度 = 视口高度减去顶栏，使其成为独立的滚动容器：
+          // - 内容不超出可视框时，不出现滚动条（overflow: auto 的默认行为）
+          // - 内容超出时，自动出现滚动条，顶栏与侧边栏保持固定
+          height: `calc(100vh - ${isMobile ? 104 : 64}px)`,
 
-          height: isChatPage ? `calc(100vh - ${isMobile ? 104 : 64}px)` : undefined,
+          // 聊天页自行管理内部滚动（其组件内已使用 overflowY: auto 区域），
+          // 故保持 hidden；其余页面（如 AI 提供商）由 Content 统一滚动。
+          overflow: isChatPage ? "hidden" : "auto",
 
-          overflow: "hidden", position: "relative", zIndex: 1,
+          position: "relative", zIndex: 1,
 
         }}>
 

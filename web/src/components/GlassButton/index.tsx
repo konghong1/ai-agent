@@ -1,7 +1,11 @@
 import React from 'react'
 import { Button, type ButtonProps } from 'antd'
 
-export interface GlassButtonProps extends ButtonProps {
+// Omit antd's own `variant` (which only allows 'solid'|'outlined'|'dashed'|
+// 'filled'|'text'|'link') so our custom `variant` union doesn't clash with
+// ButtonProps and trigger TS2430. `variant` is consumed locally for styling
+// and is NOT forwarded to <Button> (it is destructured out of ...rest).
+export interface GlassButtonProps extends Omit<ButtonProps, 'variant'> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
   glow?: boolean
 }

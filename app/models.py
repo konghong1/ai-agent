@@ -379,3 +379,129 @@ class MediaAsset(TimestampMixin, Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+# ============================================================
+# 电商套图模块 (E-commerce Gallery)
+#   低耦合：与 Agent/KB 等业务无外键关联，仅关联 user。
+#   高扩展：策划项的内容(个性化/通用/出图设置)均为 JSON，schema 演进不迁表。
+# ============================================================
+
+class GalleryProject(TimestampMixin, Base):
+    """一个套图工作项目（草稿 → 生成中 → 已完成）。"""
+
+    __tablename__ = "gallery_projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200), default="未命名套图")
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True)
+    # 核心卖点文本
+    selling_points: Mapped[str] = mapped_column(Text, default="")
+    # 市场配置：{platform, market, language, style}
+    market_config: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+    # 全局输出配置：{model, resolution, per_type_count, ratio}
+    output_config: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+    # 估算成本（由策划项聚合，落库以便展示）
+    estimated_points: Mapped[int] = mapped_column(Integer, default=0)
+    estimated_minutes: Mapped[float] = mapped_column(Float, default=0)
+
+    images: Mapped[list["GalleryProjectImage"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan", order_by="GalleryProjectImage.order"
+    )
+    plan_items: Mapped[list["GalleryPlanItem"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan", order_by="GalleryPlanItem.order"
+    )
+    records: Mapped[list["GalleryRecord"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan", order_by="GalleryRecord.created_at"
+    )
+
+
+class GalleryProjectImage(TimestampMixin, Base):
+    """上传到项目中的产品原图（多视角）。"""
+
+    __tablename__ = "gallery_project_images"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("gallery_projects.id", ondelete="CASCADE"), index=True)
+    # 落盘文件名（位于 uploads/gallery/ 下），用于 /api/gallery/files/{filename} 回显
+    filename: Mapped[str] = mapped_column(String(500), index=True)
+    url: Mapped[str] = mapped_column(String(1000), default="")
+    original: Mapped[bool] = mapped_column(Boolean, default=False)
+    order: Mapped[int] = mapped_column(Integer, default=0)
+
+    project: Mapped["GalleryProject"] = relationship(back_populates="images")
+
+    __table_args__ = (
+        Index("uq_gallery_img", "project_id", "filename", unique=True, mysql_length={"filename": 255}),
+    )
+
+
+class GalleryPlanItem(TimestampMixin, Base):
+    """策划台中的一个出图类型条目（如：首屏视觉图 ×1）。"""
+
+    __tablename__ = "gallery_plan_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("gallery_projects.id", ondelete="CASCADE"), index=True)
+    type_id: Mapped[str] = mapped_column(String(40), index=True)
+    order: Mapped[int] = mapped_column(Integer, default=0)
+    # 个性化设置：{field_label: value, ...}
+    personal_settings: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+    # 通用设置：{copy_language, target_market, ecommerce_platform, visual_style, copy_need, tone_tendency}
+    common_settings: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+    # 出图设置：{model, resolution, count, ratio}
+    output_settings: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+    # 补充说明（≤2000 字）
+    note: Mapped[str] = mapped_column(Text, default="")
+    # 参考图文件名列表（落盘于 uploads/gallery/）
+    reference_images: Mapped[list] = mapped_column(SA_JSON, default=list)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+
+    project: Mapped["GalleryProject"] = relationship(back_populates="plan_items")
+
+
+class GalleryTemplate(TimestampMixin, Base):
+    """用户保存的策划模板（另存为模板）。"""
+
+    __tablename__ = "gallery_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    # 模板内容：{plan_items:[{type_id, personal_settings, common_settings, output_settings, note}], market_config, output_config, selling_points}
+    payload: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+
+
+class GalleryRecord(TimestampMixin, Base):
+    """一次生成产生的单张结果图（创作记录的最小单元）。"""
+
+    __tablename__ = "gallery_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("gallery_projects.id", ondelete="CASCADE"), index=True)
+    plan_item_id: Mapped[int | None] = mapped_column(ForeignKey("gallery_plan_items.id", ondelete="CASCADE"), nullable=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    type_id: Mapped[str] = mapped_column(String(40), default="")
+    title: Mapped[str] = mapped_column(String(200), default="")
+    # 生成结果图（落盘文件名 + 回显 url）
+    result_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    result_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # 实际发送给模型的提示词（便于排查）
+    prompt: Mapped[str] = mapped_column(Text, default="")
+
+    project: Mapped["GalleryProject"] = relationship(back_populates="records")
+
+
+class GalleryShowcase(TimestampMixin, Base):
+    """热门套图示例（种子数据，可编辑扩展）。"""
+
+    __tablename__ = "gallery_showcases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    category: Mapped[str] = mapped_column(String(40), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    original_url: Mapped[str] = mapped_column(String(1000), default="")
+    image_urls: Mapped[list] = mapped_column(SA_JSON, default=list)
+    total_count: Mapped[int] = mapped_column(Integer, default=0)
+
+

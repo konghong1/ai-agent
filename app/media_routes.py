@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models import MediaAsset
-from app.storage import create_storage_backend, get_storage_backend
+from app.storage import create_storage_backend, get_storage_backend, get_storage_backend_for_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +89,17 @@ def get_media_by_key(
     Useful for direct access without database lookup. Returns a proper
     content-type (derived from the object key) and supports HTTP Range
     requests so videos can be seeked in the browser.
+
+    Optional ``?bucket=`` selects a non-default bucket (e.g. ``chat-uploads``
+    for user-uploaded chat images), keeping generated media and user uploads
+    in separate buckets.
     """
     # URL decode the key
     object_key = urllib.parse.unquote(object_key)
 
-    # Check if exists in storage
-    storage = get_storage_backend()
+    # Resolve bucket (default = generated-media bucket).
+    bucket = request.query_params.get("bucket")
+    storage = get_storage_backend_for_bucket(bucket)
     if not storage.exists(object_key):
         raise HTTPException(status_code=404, detail="Media not found")
 

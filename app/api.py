@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
+import os
 import urllib.request
+import uuid
+from datetime import datetime
 from urllib.parse import urlparse, unquote
 
 import requests as _requests
@@ -23,6 +27,7 @@ from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.deps import get_current_user, get_current_user_sse
 from app.media import MediaService
+from app.storage import get_storage_backend_for_bucket
 from app.models import (
     KBFeedback, RetrievalLog,
 AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBFolder, KBDocument,
@@ -328,7 +333,50 @@ def get_thread_messages(thread_id: str, current_user: User = Depends(get_current
     thread = db.scalar(select(Thread).where(Thread.id == thread_id, Thread.user_id == current_user.id))
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found.")
-    return list(db.scalars(select(Message).where(Message.thread_id == thread.id).order_by(Message.created_at)))
+    messages = list(db.scalars(select(Message).where(Message.thread_id == thread.id).order_by(Message.created_at)))
+    # Defensive: older rows may have extra=NULL in the DB, but MessageRead.extra
+    # is a required dict. Coerce None -> {} so response validation never fails.
+    for m in messages:
+        if m.extra is None:
+            m.extra = {}
+    return messages
+
+
+# Dedicated bucket for user-uploaded chat images — kept separate from
+# generated media (ai-agent-minio) per the storage design.
+CHAT_UPLOAD_BUCKET = os.getenv("CHAT_UPLOAD_BUCKET", "chat-uploads")
+
+
+@router.post("/chat/upload", response_model=dict)
+def upload_chat_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upload a user-attached chat image to a dedicated MinIO bucket.
+
+    Flow (per requirement): user image -> MinIO (separate ``chat-uploads``
+    bucket) -> returns a same-origin proxy URL -> frontend sends that URL to
+    the model. Because MinIO is on a private/local address the remote model
+    cannot fetch it, so ``ask_agent`` inlines it as base64 before the call.
+    """
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="空文件")
+
+    original = file.filename or ""
+    ext = original.rsplit(".", 1)[-1].lower() if "." in original else ""
+    mime = file.content_type or mimetypes.guess_type(original)[0] or "image/png"
+    if not ext:
+        ext = (mime.split("/")[-1] if "/" in mime else "png").lower()
+
+    now = datetime.now()
+    key = f"uploads/{current_user.id}/{now:%Y/%m/%d}/{uuid.uuid4().hex}.{ext}"
+    backend = get_storage_backend_for_bucket(CHAT_UPLOAD_BUCKET)
+    backend.put(data, key, mime_type=mime)
+
+    url = f"/api/media/assets/by-key/{key}?bucket={CHAT_UPLOAD_BUCKET}"
+    return {"object_key": key, "bucket": CHAT_UPLOAD_BUCKET, "url": url, "mime_type": mime}
 
 
 # ============================================================
@@ -343,6 +391,40 @@ def _resolve_provider_model(db: Session, provider_id: int, model_name: str) -> P
             ProviderModel.model_name == model_name,
         )
     )
+
+
+def _normalize_num_frames(n: int | None, default: int = 121, max_frames: int = 241) -> int:
+    """The video model requires num_frames to equal 8*n + 1
+    (e.g. 1, 9, 17, 25, 33, ...). Round any incoming value to the nearest
+    valid form. This is a server-side guard so a malformed client request can
+    never produce an HTTP 400 from the provider."""
+    if not n or n < 1:
+        return default
+    k = round((n - 1) / 8)
+    if k < 0:
+        k = 0
+    frames = 8 * k + 1
+    if frames > max_frames:
+        max_k = (max_frames - 1) // 8
+        frames = 8 * max_k + 1
+    return frames
+
+
+def _normalize_error(err: object | None) -> str:
+    """Coerce a provider error (which may be a dict/list from a JSON body,
+    or already a string) into a clean, display-safe string. Storing a dict in
+    blocks.error would crash the React UI ("Objects are not valid as a React
+    child") and blank the entire chat."""
+    if err is None:
+        return ""
+    if isinstance(err, str):
+        return err
+    if isinstance(err, (dict, list)):
+        try:
+            return json.dumps(err, ensure_ascii=False)
+        except Exception:
+            return str(err)
+    return str(err)
 
 
 def _handle_image_generation(
@@ -366,7 +448,7 @@ def _handle_image_generation(
 
     images = result.get("data", [])
     image_url = images[0].get("url", "") if images else ""
-    error = result.get("error", "")
+    error = _normalize_error(result.get("error"))
 
     thread = _get_or_create_thread(db, current_user.id, payload.agent_id, payload.message, payload.thread_id)
     db.add(Message(
@@ -437,7 +519,7 @@ def _handle_video_generation(
         prompt=payload.message,
         width=payload.width or 1152,
         height=payload.height or 768,
-        num_frames=payload.num_frames or 121,
+        num_frames=_normalize_num_frames(payload.num_frames),
         frame_rate=payload.frame_rate or 24,
         reference_images=payload.reference_images,
         mode=payload.mode,
@@ -447,7 +529,7 @@ def _handle_video_generation(
 
     task_id = result.get("id") or result.get("task_id", "")
     video_id = result.get("video_id", "")
-    error = result.get("error", "")
+    error = _normalize_error(result.get("error"))
 
     thread = _get_or_create_thread(db, current_user.id, payload.agent_id, payload.message, payload.thread_id)
     db.add(Message(
@@ -546,6 +628,7 @@ def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), d
             provider_base_url=provider_base_url,
             provider_type=payload.provider_type,
             provider_id=payload.provider_id,
+            reference_images=payload.reference_images,
         )
         return ChatResponse(answer=answer, thread_id=thread_id, blocks=blocks)
     except HTTPException:
@@ -655,6 +738,7 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
                     provider_base_url=provider_base_url,
                     provider_type=payload.provider_type,
                     provider_id=payload.provider_id,
+                    reference_images=payload.reference_images,
                 )
                 
                 # Send final answer
@@ -1549,7 +1633,7 @@ def watch_video_status(
             if not video_url and remixed and str(remixed).startswith("http"):
                 video_url = remixed
 
-            error = result.get("error", "")
+            error = _normalize_error(result.get("error"))
 
             if status in ("completed", "succeeded") or (video_url and status not in ("failed", "error")):
                 _record_video_asset(db, current_user.id, result)

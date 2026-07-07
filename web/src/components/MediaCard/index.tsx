@@ -468,7 +468,16 @@ function VideoCard({
   }
 
   // ── Failed state ──
-  if (block.status === "failed" || block.error) {
+  // Coerce block.error to a string defensively: a provider may return a
+  // structured error (dict), which would otherwise crash React with
+  // "Objects are not valid as a React child" and blank the whole chat.
+  const failedError =
+    block.error == null
+      ? ""
+      : typeof block.error === "string"
+        ? block.error
+        : (() => { try { return JSON.stringify(block.error) } catch { return String(block.error) } })()
+  if (block.status === "failed" || failedError) {
     return (
       <div style={{
         marginBottom: 12,
@@ -495,9 +504,9 @@ function VideoCard({
             <div style={{ fontSize: 14, fontWeight: 500, color: "#DC2626" }}>
               视频生成失败
             </div>
-            {block.error && (
+            {failedError && (
               <div style={{ fontSize: 12, color: "var(--ice-text-muted)", marginTop: 2 }}>
-                {block.error}
+                {failedError}
               </div>
             )}
           </div>

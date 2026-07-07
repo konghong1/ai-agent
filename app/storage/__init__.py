@@ -14,13 +14,14 @@ All backends expose the same interface:
 """
 from __future__ import annotations
 
+import base64
 import logging
 import mimetypes
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, parse_qs
 
 logger = logging.getLogger(__name__)
 
@@ -344,3 +345,64 @@ def reset_storage_backend() -> None:
     """Drop the cached singleton (useful for tests / config reloads)."""
     global _storage_backend
     _storage_backend = None
+
+
+# Per-bucket backend cache (so chat uploads can live in a separate bucket
+# from generated media without reconstructing clients on every call).
+_bucket_backends: dict[str, StorageBackend] = {}
+
+
+def get_storage_backend_for_bucket(bucket: str | None = None) -> StorageBackend:
+    """Return a storage backend scoped to ``bucket``.
+
+    ``None`` (or the configured default) returns the global singleton, which
+    keeps the generated-media bucket (``ai-agent-minio``) as the default.
+    Other buckets (e.g. ``chat-uploads``) get their own cached backend so
+    uploaded chat images never mix with generated assets.
+    """
+    if not bucket:
+        return get_storage_backend()
+    if bucket not in _bucket_backends:
+        _bucket_backends[bucket] = create_storage_backend(
+            backend_type=os.getenv("STORAGE_BACKEND", "minio"),
+            endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
+            access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+            secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+            bucket=bucket,
+            public_url=os.getenv("MINIO_PUBLIC_URL", f"http://localhost:9000/{bucket}"),
+            use_ssl=os.getenv("MINIO_USE_SSL", "false").lower() == "true",
+        )
+    return _bucket_backends[bucket]
+
+
+def inline_reference_image(ref: str) -> str | None:
+    """Turn a reference-image reference into an inline base64 ``data:`` URL.
+
+    Returns the original string when it cannot / should not be inlined:
+
+    - ``data:`` URL            -> returned as-is (already inline).
+    - Internal by-key proxy URL (``/api/media/assets/by-key/<key>?bucket=``)
+      -> downloaded from object storage and inlined as base64, because the
+      downstream model cannot reach our private proxy / local MinIO.
+    - Other ``http(s)`` URL    -> returned as-is (provider fetches directly).
+
+    This is the single source of truth for "local address -> base64" so both
+    the chat path and the image/video generation path behave identically.
+    """
+    if not ref or not isinstance(ref, str):
+        return None
+    if ref.startswith("data:"):
+        return ref
+    if "/api/media/assets/by-key/" in ref:
+        try:
+            key = ref.split("/api/media/assets/by-key/", 1)[1].split("?")[0]
+            qs = parse_qs(urlparse(ref).query)
+            bucket = qs.get("bucket", [None])[0]
+            backend = get_storage_backend_for_bucket(bucket)
+            raw = backend.get(key)
+            if raw:
+                mt = mimetypes.guess_type(key)[0] or "image/png"
+                return f"data:{mt};base64,{base64.b64encode(raw).decode()}"
+        except Exception as exc:  # pragma: no cover - network/storage edge cases
+            logger.warning("Failed to inline by-key reference %s: %s", ref, exc)
+    return None

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from app.api import router
 from app.media_routes import router as media_router
 from app.media_management import router as media_manage_router
+from app.gallery_routes import router as gallery_router
 from app.core.database import init_db
 
 # ── Suppress noisy loggers ───────────────────────────────────────
@@ -34,6 +35,7 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(media_router)
 app.include_router(media_manage_router)
+app.include_router(gallery_router)
 
 
 @app.on_event("startup")

@@ -17,6 +17,7 @@ import SkillManagement from '@/pages/SkillManagement'
 import SettingsPage from '@/pages/Settings'
 import ProviderManagement from '@/pages/ProviderManagement'
 import MediaLibrary from '@/pages/MediaLibrary'
+import EcommerceGallery from '@/pages/EcommerceGallery'
 import './styles/variables.css'
 import './styles/global-theme.css'
 
@@ -94,6 +95,7 @@ export default function App() {
             <Route path="skills" element={<SkillManagement />} />
             <Route path="providers" element={<ProviderManagement />} />
             <Route path="media-library" element={<MediaLibrary />} />
+            <Route path="ecommerce-gallery" element={<EcommerceGallery />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>
