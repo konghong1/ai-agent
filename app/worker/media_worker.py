@@ -50,8 +50,8 @@ if not DATABASE_URL:
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
-MINIO_BUCKET = os.getenv("MINIO_BUCKET", "media-assets")
-MINIO_PUBLIC_URL = os.getenv("MINIO_PUBLIC_URL", "http://localhost:9000/media-assets")
+MINIO_BUCKET = os.getenv("MINIO_BUCKET", "ai-agent-minio")
+MINIO_PUBLIC_URL = os.getenv("MINIO_PUBLIC_URL", "http://localhost:9000/ai-agent-minio")
 POLL_INTERVAL = int(os.getenv("WORKER_POLL_INTERVAL", "5"))  # seconds
 
 # ── Sync Engine Setup ──────────────────────────────────────────
@@ -102,7 +102,7 @@ def download_to_storage(internal_url: str) -> dict | None:
             "video/quicktime": ".mov",
         }
         ext = ext_map.get(mime_type, ".bin")
-        object_key = f"media/{date_str}/{file_uuid}{ext}"
+        object_key = f"videos/{date_str}/{file_uuid}{ext}"
 
         from app.storage import create_storage_backend
         storage = create_storage_backend(
@@ -140,12 +140,12 @@ def update_task_status(session: Session, task_id, status: str, error_msg: str | 
     try:
         if status == "completed":
             session.execute(
-                text("UPDATE media_assets SET status = 'completed', updated_at = NOW() WHERE id = :id"),
+                text("UPDATE media_assets SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = :id"),
                 {"id": task_id}
             )
         else:
             session.execute(
-                text("UPDATE media_assets SET status = 'failed', error_message = :msg, updated_at = NOW() WHERE id = :id"),
+                text("UPDATE media_assets SET status = 'failed', error_message = :msg, updated_at = CURRENT_TIMESTAMP WHERE id = :id"),
                 {"msg": error_msg, "id": task_id}
             )
         session.commit()

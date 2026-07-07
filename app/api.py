@@ -73,11 +73,16 @@ _MEDIA_PROXY_ALLOWED_DOMAINS = {
 def proxy_media(
     url: str,
     request: Request,
-    current_user: User = Depends(get_current_user),
 ):
     """Proxy external CDN media content to bypass client proxy/network issues.
 
     Supports HTTP Range requests for video seeking.
+
+    NOTE: intentionally has NO auth dependency. Media elements (<img>/<video>)
+    loaded directly by the browser cannot attach a Bearer token, so requiring
+    authentication would always return 401 for them. Access is restricted by
+    the domain whitelist below (SSRF protection), which is sufficient for an
+    internal tool.
     """
     target_url = unquote(url)
 
@@ -288,7 +293,7 @@ def create_thread(payload: ThreadCreate, current_user: User = Depends(get_curren
         agent = db.scalar(select(AgentConfig).where(AgentConfig.id == payload.agent_id, AgentConfig.user_id == current_user.id))
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found.")
-    thread = Thread(id=new_thread_id(), user_id=current_user.id, agent_id=agent.id if agent else 0, title=payload.title)
+    thread = Thread(id=new_thread_id(), user_id=current_user.id, agent_id=agent.id if agent else None, title=payload.title)
     db.add(thread)
     db.commit()
     db.refresh(thread)
@@ -352,6 +357,11 @@ def _handle_image_generation(
         provider=provider,
         model_name=model.model_name,
         prompt=payload.message,
+        size=payload.size or "1024x768",
+        n=payload.n or 1,
+        reference_images=payload.reference_images,
+        tags=payload.tags,
+        seed=payload.seed,
     )
 
     images = result.get("data", [])
@@ -359,17 +369,51 @@ def _handle_image_generation(
     error = result.get("error", "")
 
     thread = _get_or_create_thread(db, current_user.id, payload.agent_id, payload.message, payload.thread_id)
-    db.add(Message(thread_id=thread.id, role="user", content=payload.message))
+    db.add(Message(
+        thread_id=thread.id, role="user", content=payload.message,
+        extra={"blocks": {"reference_images": payload.reference_images}} if payload.reference_images else None,
+    ))
 
     if error:
         answer = f"Image generation failed: {error}"
-        blocks = {"type": "image", "error": error}
+        blocks = {"type": "image", "error": error, "reference_images": payload.reference_images}
     elif image_url:
-        answer = f"![Generated Image]({image_url})"
-        blocks = {"type": "image", "image_url": image_url, "images": images}
+        # Persist the image into object storage (MinIO) so it is served via an
+        # internal by-key URL rather than depending on the external CDN. Falls
+        # back to the original URL (which still works through the proxy) on
+        # any failure, so generation never breaks because of storage issues.
+        served_url = image_url
+        try:
+            if image_url.startswith("http"):
+                stored = MediaService._download_and_store(
+                    image_url, "image", user_id=current_user.id
+                )
+                if stored.get("object_key"):
+                    served_url = stored["url"]
+                    logger.info("Image uploaded to object storage: key=%s", stored["object_key"])
+                    # Persist a management record for the hosted asset.
+                    try:
+                        from app.models import MediaAsset
+                        db.add(MediaAsset(
+                            user_id=current_user.id,
+                            media_type="image",
+                            object_key=stored["object_key"],
+                            internal_url=served_url,
+                            mime_type=stored.get("mime_type"),
+                            file_size=stored.get("file_size"),
+                            status="completed",
+                        ))
+                        db.flush()
+                    except Exception as rec_exc:
+                        logger.warning("Image MediaAsset record skipped: %s", rec_exc)
+        except Exception as exc:  # pragma: no cover - best-effort
+            logger.warning("Image store skipped (using CDN url): %s", exc)
+
+        answer = f"![Generated Image]({served_url})"
+        blocks = {"type": "image", "image_url": served_url, "images": images, "reference_images": payload.reference_images}
     else:
         answer = "Image generation completed but no image URL returned."
-        blocks = {"type": "image", "raw_result": result}
+        blocks = {"type": "image", "raw_result": result, "reference_images": payload.reference_images}
 
     db.add(Message(
         thread_id=thread.id, role="assistant", content=answer,
@@ -391,6 +435,14 @@ def _handle_video_generation(
         provider=provider,
         model_name=model.model_name,
         prompt=payload.message,
+        width=payload.width or 1152,
+        height=payload.height or 768,
+        num_frames=payload.num_frames or 121,
+        frame_rate=payload.frame_rate or 24,
+        reference_images=payload.reference_images,
+        mode=payload.mode,
+        negative_prompt=payload.negative_prompt,
+        seed=payload.seed,
     )
 
     task_id = result.get("id") or result.get("task_id", "")
@@ -398,11 +450,14 @@ def _handle_video_generation(
     error = result.get("error", "")
 
     thread = _get_or_create_thread(db, current_user.id, payload.agent_id, payload.message, payload.thread_id)
-    db.add(Message(thread_id=thread.id, role="user", content=payload.message))
+    db.add(Message(
+        thread_id=thread.id, role="user", content=payload.message,
+        extra={"blocks": {"reference_images": payload.reference_images}} if payload.reference_images else None,
+    ))
 
     if error:
         answer = f"Video generation failed: {error}"
-        blocks = {"type": "video", "status": "failed", "error": error}
+        blocks = {"type": "video", "status": "failed", "error": error, "reference_images": payload.reference_images}
     else:
         answer = f"正在生成视频..."
         blocks = {
@@ -411,6 +466,7 @@ def _handle_video_generation(
             "video_id": video_id,
             "status": "processing",
             "provider_id": provider.id,
+            "reference_images": payload.reference_images,
         }
 
     db.add(Message(
@@ -708,71 +764,107 @@ def delete_provider_model(provider_id: int, model_id: int, current_user: User = 
     ProviderService.delete_model(db, model)
 # ── Helper: guess model type from name ──
 
+# ── Type hint keyword sets (substring-matched, lowercased) ──
+_IMAGE_HINTS = (
+    "dall-e", "dalle", "image", "imagen", "stable-diffusion", "sd-", "sd1", "sd2",
+    "sd3", "sd35", "sdxl", "midjourney", "flux", "cogview", "ideogram", "recraft",
+    "kolors", "playcartoon", "dreamshaper", "juggernaut", "anything", "deliberate",
+    "epicrealism", "realisticvision", "chilloutmix", "abyssorange", "meina", "anime",
+    "ponydiffusion", "revanimated", "counterfeit", "dreamlike", "lyriel", "protogen",
+    "breakdomain", "edges", "analog", "rcnz", "openjourney", "toonyou", "aom", "hasdx",
+    "shonin", "gape", "f222", "niji", "noobai", "illustrious", "pony", "draw", "paint",
+    "cartoon", "illustration", "portrait", "sketch", "design", "pixel", "avatar",
+    "art", "painting", "render", "gen", "gpt-image", "vision",
+)
+_VIDEO_HINTS = (
+    "sora", "video", "kling", "cogvideo", "runway", "pika", "luma", "veo",
+    "hunyuanvideo", "hunyuan-video", "wan", "wan2", "mochi", "minimax-video",
+    "lightricks", "ltx", "trellis", "viv", "moonvalley", "haiper", "step-video",
+    "t2v", "i2v", "anim", "movie", "film", "seedance", "hailuo", "vido", "dream",
+    "video", "video-", "hunyuanvideo",
+)
+_EMBEDDING_HINTS = (
+    "embedding", "bge", "text-embedding", "e5-", "gte-", "stella", "m3e", "bce",
+    "acge", "jina-embed", "voyage", "cohere-embed", "embed", "uae", "nv-embed",
+)
+_TTS_HINTS = (
+    "tts", "whisper", "speech", "audio", "voice", "music", "suno", "udio",
+    "seed-tts", "cosyvoice", "fish", "bark", "audiocraft", "musicgen",
+)
+_TYPE_VALUES_IMAGE = ("image", "images", "text-to-image", "image-generation")
+_TYPE_VALUES_VIDEO = ("video", "videos", "text-to-video", "video-generation", "ttv")
+_TYPE_VALUES_EMBEDDING = ("embedding", "embeddings", "text-embedding")
+
+
 def _suggest_model_type(model_id: str, raw: dict | None = None) -> str:
     """Heuristically guess the model type from its ID string and any metadata.
 
     Returns one of: chat | image | video | embedding.
     Order matters — image/video/embedding are checked before the generic "chat"
     fallback so that multimodal models are not silently swallowed as chat models.
+
+    Strategy:
+      1. Trust explicit provider metadata (type/category/capabilities/modality/
+         architecture.modality) when present — this is the most reliable signal.
+      2. Fall back to keyword heuristics on the model id.
     """
     lower = (model_id or "").lower()
 
-    # Some providers expose a type/category/capabilities field — trust it when present.
+    # ── 1) Trust explicit provider metadata when present ──
     if isinstance(raw, dict):
-        for key in ("type", "category", "capabilities", "model_type"):
+        for key in ("type", "category", "model_type"):
             val = raw.get(key)
             if isinstance(val, str) and val.strip():
                 v = val.strip().lower()
-                if v in ("image", "images", "text-to-image", "image-generation"):
+                if v in _TYPE_VALUES_IMAGE:
                     return "image"
-                if v in ("video", "videos", "text-to-video", "video-generation", "ttv"):
+                if v in _TYPE_VALUES_VIDEO:
                     return "video"
-                if v in ("embedding", "embeddings", "text-embedding"):
+                if v in _TYPE_VALUES_EMBEDDING:
                     return "embedding"
+
+        # list/tuple capabilities or modality fields (e.g. ["image", "text"])
+        for key in ("capabilities", "modality", "modalities", "input_modalities", "output_modalities"):
+            val = raw.get(key)
+            joined = ""
             if isinstance(val, (list, tuple)):
                 joined = " ".join(str(x).lower() for x in val)
-                if "image" in joined:
+            elif isinstance(val, str):
+                joined = val.lower()
+            if joined:
+                if any(k in joined for k in ("image", "images", "vision", "text-to-image", "image-generation")):
                     return "image"
-                if "video" in joined:
+                if any(k in joined for k in ("video", "videos", "text-to-video", "video-generation")):
                     return "video"
-                if "embedding" in joined:
+                if any(k in joined for k in ("embedding", "embed")):
                     return "embedding"
 
-    # Image models
-    if any(k in lower for k in (
-        "dall-e", "dalle", "image", "imagen", "stable-diffusion", "sd-", "sd1", "sd2",
-        "sdxl", "midjourney", "flux", "cogview", "ideogram", "recraft", "kolors",
-        "playcartoon", "dreamshaper", "juggernaut", "anything", "deliberate",
-        "epicrealism", "realisticvision", "chilloutmix", "abyssorange", "meina",
-        "anime", "ponydiffusion", "revanimated", "counterfeit", "dreamlike",
-        "lyriel", "protogen", "breakdomain", "edges", "analog", "rcnz",
-        "openjourney", "toonyou", "aom", "hasdx", "shonin", "gape", "f222",
-        "niji", "noobai", "illustrious", "pony", "draw", "paint", "cartoon",
-        "illustration", "portrait",
-    )):
+        # OpenRouter-style architecture.modality, e.g. "text+image->text"
+        arch = raw.get("architecture")
+        if isinstance(arch, dict):
+            modality = arch.get("modality") or arch.get("input_modalities") or ""
+            if isinstance(modality, (list, tuple)):
+                modality = " ".join(str(x) for x in modality)
+            modality = (modality or "").lower()
+            if "image" in modality:
+                return "image"
+            if "video" in modality:
+                return "video"
+            if "audio" in modality:
+                return "chat"
+
+    # ── 2) Keyword heuristics (image/video/embedding before chat fallback) ──
+    if any(k in lower for k in _IMAGE_HINTS):
         return "image"
 
-    # Video models
-    if any(k in lower for k in (
-        "sora", "video", "kling", "cogvideo", "runway", "pika", "luma", "veo",
-        "hunyuanvideo", "hunyuan-video", "wan", "wan2", "mochi", "minimax-video",
-        "lightricks", "ltx", "trellis", "viv", "moonvalley", "haiper", "step-video",
-        "t2v", "i2v", "anim", "movie", "film", "seedance",
-    )):
+    if any(k in lower for k in _VIDEO_HINTS):
         return "video"
 
-    # Embedding models
-    if any(k in lower for k in (
-        "embedding", "bge", "text-embedding", "e5-", "gte-", "stella", "m3e", "bce",
-        "acge", "jina-embed", "voyage", "cohere-embed", "embed", "uae",
-    )):
+    if any(k in lower for k in _EMBEDDING_HINTS):
         return "embedding"
 
     # TTS / audio / music — not separately managed yet, keep as chat fallback
-    if any(k in lower for k in (
-        "tts", "whisper", "speech", "audio", "voice", "music", "suno", "udio",
-        "seed-tts", "cosyvoice", "fish", "bark", "audiocraft", "musicgen",
-    )):
+    if any(k in lower for k in _TTS_HINTS):
         return "chat"
 
     return "chat"
@@ -1117,14 +1209,26 @@ def create_prompt_template(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> PromptTemplate:
-    # Check slug uniqueness
-    if db.scalar(select(PromptTemplate).where(PromptTemplate.slug == payload.slug)):
-        raise HTTPException(status_code=409, detail="Slug already exists.")
-    
+    import re
+    import uuid as _uuid
+
+    # Auto-generate a slug on the backend when the client didn't supply one.
+    def _slugify(value: str) -> str:
+        s = re.sub(r"[^\w\u4e00-\u9fa5]+", "_", value.strip().lower()).strip("_")
+        return s or f"tpl_{_uuid.uuid4().hex[:8]}"
+
+    base = payload.slug or _slugify(payload.name)
+    slug = base
+    # Ensure slug uniqueness (append numeric suffix on collision).
+    n = 1
+    while db.scalar(select(PromptTemplate).where(PromptTemplate.slug == slug)):
+        n += 1
+        slug = f"{base}_{n}"
+
     template = PromptTemplate(
         user_id=current_user.id,
         name=payload.name,
-        slug=payload.slug,
+        slug=slug,
         system_prompt=payload.system_prompt,
         variables=payload.variables,
         category=payload.category,
@@ -1133,7 +1237,8 @@ def create_prompt_template(
         is_default=payload.is_default,
     )
     db.add(template)
-    db.flush()
+    db.commit()
+    db.refresh(template)
     return template
 
 
@@ -1152,7 +1257,8 @@ def update_prompt_template(
     for key, value in update_data.items():
         setattr(template, key, value)
     
-    db.flush()
+    db.commit()
+    db.refresh(template)
     return template
 
 
@@ -1166,7 +1272,7 @@ def delete_prompt_template(
     if not template or template.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Template not found.")
     db.delete(template)
-    db.flush()
+    db.commit()
 
 
 @router.get("/prompt-templates/default", response_model=PromptTemplateRead)
@@ -1291,6 +1397,35 @@ def get_all_providers(
 
 # ── Video task status ──
 
+
+def _record_video_asset(db: Session, user_id: int, result: dict) -> None:
+    """Persist a completed video as a ``MediaAsset`` so it shows up in the
+    media library. Idempotent: skips if the object_key already exists."""
+    key = result.get("object_key")
+    if not key:
+        return
+    from app.models import MediaAsset
+
+    try:
+        existing = db.scalar(
+            select(MediaAsset).where(MediaAsset.object_key == key)
+        )
+        if existing:
+            return
+        db.add(MediaAsset(
+            user_id=user_id,
+            media_type="video",
+            object_key=key,
+            internal_url=result.get("video_url") or result.get("stored_video_url"),
+            mime_type="video/mp4",
+            file_size=result.get("file_size") or 0,
+            status="completed",
+        ))
+        db.flush()
+    except Exception as rec_exc:  # pragma: no cover - best-effort bookkeeping
+        logger.warning("Video MediaAsset record skipped: %s", rec_exc)
+
+
 @router.get("/videos/{task_id}/status")
 def get_video_status(
     task_id: str,
@@ -1333,8 +1468,13 @@ def get_video_status(
     )
     error = result.get("error", "")
 
+    # Record the hosted video asset so it appears in the media library.
+    if result.get("object_key") and status in ("completed", "succeeded"):
+        _record_video_asset(db, current_user.id, result)
+
     if status in ("completed", "succeeded", "failed", "error") or video_url:
         _persist_video_status(db, current_user.id, task_id, status, video_url, error)
+        db.commit()
 
     return result
 
@@ -1412,15 +1552,18 @@ def watch_video_status(
             error = result.get("error", "")
 
             if status in ("completed", "succeeded") or (video_url and status not in ("failed", "error")):
+                _record_video_asset(db, current_user.id, result)
                 _persist_video_status(db, current_user.id, task_id,
                                        status if status else "completed",
                                        video_url, "")
+                db.commit()
                 yield f"data: {json.dumps({'status': 'completed', 'video_url': video_url, 'poll_count': poll_count})}\n\n"
                 return
 
             if status in ("failed", "error"):
                 _persist_video_status(db, current_user.id, task_id,
                                        status, "", error or "")
+                db.commit()
                 yield f"data: {json.dumps({'status': 'failed', 'error': error or '视频生成失败'})}\n\n"
                 return
 
@@ -1434,6 +1577,7 @@ def watch_video_status(
         # Timeout
         _persist_video_status(db, current_user.id, task_id,
                                "failed", "", "视频生成超时")
+        db.commit()
         yield f"data: {json.dumps({'status': 'failed', 'error': '视频生成超时，请重试'})}\n\n"
 
     return StreamingResponse(

@@ -2,24 +2,15 @@ import { useEffect, useState } from 'react'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { Typography, Form, Input, Button, Space, Table, Modal, Select, Switch, Tag, message } from 'antd'
-import { useLayoutStore } from '@/stores/layout'
 import { authHeaders } from '@/services/auth'
 
 const { Title, Text } = Typography
 
 export default function MCPManagement() {
-  const theme = useLayoutStore((s) => s.theme)
   const [items, setItems] = useState<any[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
-
-  const themeColorMap: Record<string, string> = {
-    techBlue: '#2563EB',
-    naturalGreen: '#22C55E',
-    elegantPurple: '#7C3AED',
-  }
-  const primaryColor = themeColorMap[theme] || '#22C55E'
 
   const fetchItems = async () => {
     try {
@@ -74,14 +65,14 @@ export default function MCPManagement() {
             <Select options={[{ value: 'stdio', label: 'stdio' }, { value: 'http', label: 'http' }]} />
           </Form.Item>
           <Form.Item name="command" label="命令" dependencies={['transport']}
-            rules={(getFieldValue: any) => getFieldValue('transport') === 'stdio' ? [{ required: true }] : []}>
+            rules={((getFieldValue: any) => getFieldValue('transport') === 'stdio' ? [{ required: true }] : []) as any}>
             <Input placeholder="npx" />
           </Form.Item>
           <Form.Item name="args" label="参数">
             <Input placeholder="逗号分隔的参数" />
           </Form.Item>
           <Form.Item name="url" label="URL" dependencies={['transport']}
-            rules={(getFieldValue: any) => getFieldValue('transport') === 'http' ? [{ required: true }] : []}>
+            rules={((getFieldValue: any) => getFieldValue('transport') === 'http' ? [{ required: true }] : []) as any}>
             <Input placeholder="https://api.example.com/mcp" />
           </Form.Item>
           <Form.Item name="enabled" valuePropName="checked" label="启用"><Switch /></Form.Item>

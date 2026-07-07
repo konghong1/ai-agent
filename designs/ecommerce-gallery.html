@@ -1,0 +1,1357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>电商套图 · AI 商品套图生成工作台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  /* ============ Design Tokens ============ */
+  :root {
+    --brand: #FF4D2E;
+    --brand-strong: #E83C20;
+    --brand-weak: #FFE9E3;
+
+    --ink: #1B1A21;
+    --ink-soft: #57555F;
+    --ink-faint: #908E98;
+
+    --bg: #F6F5F2;
+    --surface: #FFFFFF;
+    --surface-2: #FAF9F6;
+    --line: #ECEAE4;
+    --line-strong: #DDDAD2;
+
+    --ok: #1F9D6B;
+    --warn: #E0A106;
+    --info: #2F6FED;
+
+    --ai-purple: #7C3AED;
+    --ai-purple-light: #F3EFFE;
+
+    --confirm-lime: #C8E000;
+    --confirm-lime-hover: #B5CA00;
+
+    --font-display: "Space Grotesk", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-body: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
+    --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px; --s12: 48px;
+
+    --sh-1: 0 1px 2px rgba(27,26,33,.05), 0 1px 3px rgba(27,26,33,.06);
+    --sh-2: 0 4px 12px rgba(27,26,33,.07), 0 2px 4px rgba(27,26,33,.04);
+    --sh-3: 0 12px 32px rgba(27,26,33,.10);
+    --sh-modal: 0 24px 64px rgba(27,26,33,.20);
+
+    --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 22px;
+    --ease: cubic-bezier(.22,.61,.36,1);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-body);
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+    line-height: 1.5;
+  }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; }
+  h1, h2, h3, h4, h5, p { margin: 0; }
+  img { display: block; }
+
+  /* ============ Top bar ============ */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    height: 60px; display: flex; align-items: center; gap: var(--s6);
+    padding: 0 var(--s6);
+    background: rgba(255,255,255,.82);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: var(--s3); flex-shrink: 0; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 9px; background: var(--brand);
+    display: grid; place-items: center; color: #fff;
+    font-family: var(--font-display); font-weight: 700; font-size: 16px; box-shadow: var(--sh-1);
+  }
+  .brand-name { font-family: var(--font-display); font-weight: 700; font-size: 17px; letter-spacing: -.01em; }
+  .brand-name span { color: var(--brand); }
+
+  .topnav { display: flex; gap: var(--s1); }
+  .topnav a {
+    padding: var(--s2) var(--s3); border-radius: var(--r-sm);
+    font-size: 14px; color: var(--ink-soft); font-weight: 500; white-space: nowrap;
+    transition: background .15s var(--ease), color .15s var(--ease);
+  }
+  .topnav a:hover { background: var(--surface-2); color: var(--ink); }
+  .topnav a.active { color: var(--ink); background: var(--brand-weak); }
+
+  .topbar-right { margin-left: auto; display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; }
+  .ghost-link {
+    font-size: 13px; color: var(--ink-soft); padding: var(--s2) var(--s3);
+    border-radius: var(--r-sm); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    transition: background .15s var(--ease), color .15s var(--ease);
+  }
+  .ghost-link:hover { background: var(--surface-2); color: var(--ink); }
+  .points-pill {
+    font-size: 13px; font-weight: 600; color: var(--ink);
+    background: var(--surface-2); border: 1px solid var(--line);
+    padding: 6px 12px; border-radius: 999px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap;
+  }
+  .btn-vip {
+    font-size: 13px; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, #2A2A33, #46464F);
+    padding: 8px 14px; border-radius: 999px; border: none;
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    transition: transform .15s var(--ease), box-shadow .15s var(--ease);
+  }
+  .btn-vip:hover { transform: translateY(-1px); box-shadow: var(--sh-2); }
+
+  /* ============ Shell ============ */
+  .shell { display: grid; grid-template-columns: 232px 1fr; align-items: stretch; min-height: calc(100vh - 60px); }
+
+  /* ============ Sidebar ============ */
+  .sidebar {
+    border-right: 1px solid var(--line); background: var(--surface-2);
+    padding: var(--s5) var(--s3); display: flex; flex-direction: column; gap: var(--s1);
+  }
+  .nav-group-label {
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--ink-faint); padding: var(--s4) var(--s3) var(--s2);
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: var(--s3);
+    padding: 10px var(--s3); border-radius: var(--r-md);
+    font-size: 14px; font-weight: 500; color: var(--ink-soft);
+    transition: background .15s var(--ease), color .15s var(--ease); position: relative;
+  }
+  .nav-item .ico { width: 18px; height: 18px; opacity: .8; flex-shrink: 0; }
+  .nav-item:hover { background: var(--surface); color: var(--ink); }
+  .nav-item.active { background: var(--brand-weak); color: var(--brand-strong); font-weight: 600; }
+  .nav-item.active::before {
+    content:""; position:absolute; left:-12px; top:50%; transform:translateY(-50%);
+    width:3px; height:20px; border-radius:0 3px 3px 0; background:var(--brand);
+  }
+  .sub { margin-left: 30px; display: flex; flex-direction: column; gap: 2px; }
+  .sub .nav-item { font-size: 13px; padding: 7px var(--s3); }
+  .sub .nav-item.active { background: transparent; color: var(--brand-strong); }
+  .sub .nav-item.active::before { display: none; }
+
+  .sidebar-deco {
+    margin-top: auto; padding: var(--s4) var(--s3) var(--s2);
+    border-top: 1px dashed var(--line-strong);
+  }
+  .sidebar-deco svg { width: 100%; height: 36px; }
+  .sidebar-deco p { font-size: 12px; color: var(--ink-faint); margin-top: var(--s2); }
+
+  /* ============ Workspace ============ */
+  .workspace { padding: var(--s8); overflow-x: hidden; }
+  .container { max-width: 1280px; margin: 0 auto; }
+
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s4); margin-bottom: var(--s6); flex-wrap: wrap; }
+  .page-title { font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: -.02em; }
+  .page-sub { color: var(--ink-soft); font-size: 14px; margin-top: 6px; }
+  .head-actions { display: flex; gap: var(--s2); flex-shrink: 0; }
+
+  .btn {
+    border: 1px solid transparent; border-radius: var(--r-md);
+    padding: 10px 16px; font-size: 14px; font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
+    transition: transform .15s var(--ease), box-shadow .15s var(--ease), background .15s var(--ease), border-color .15s var(--ease);
+  }
+  .btn-primary { background: var(--brand); color: #fff; box-shadow: var(--sh-1); }
+  .btn-primary:hover { background: var(--brand-strong); transform: translateY(-1px); box-shadow: var(--sh-2); }
+  .btn-secondary { background: var(--surface); color: var(--ink); border-color: var(--line-strong); }
+  .btn-secondary:hover { border-color: var(--ink-faint); }
+
+  /* ============ Generator panel (compact) ============ */
+  .gen-grid { display: grid; grid-template-columns: 1.05fr 1fr; gap: var(--s5); align-items: start; }
+  .panel {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r-lg); padding: var(--s6); box-shadow: var(--sh-1);
+  }
+  .panel-title { font-family: var(--font-display); font-size: 16px; font-weight: 600; margin-bottom: var(--s4); display: flex; align-items: center; gap: 8px; }
+  .panel-title .step { width: 22px; height: 22px; border-radius: 7px; background: var(--brand-weak); color: var(--brand-strong); font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+
+  .seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 3px; margin-bottom: var(--s4); }
+  .seg button { border: none; background: transparent; padding: 7px 16px; border-radius: 999px; font-size: 13px; font-weight: 500; color: var(--ink-soft); transition: all .15s var(--ease); }
+  .seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--sh-1); }
+
+  .dropzone {
+    border: 1.5px dashed var(--line-strong); border-radius: var(--r-md);
+    background: var(--surface-2); padding: var(--s10) var(--s4); text-align: center;
+    transition: border-color .15s var(--ease), background .15s var(--ease); cursor: pointer;
+  }
+  .dropzone:hover { border-color: var(--brand); background: var(--brand-weak); }
+  .dropzone .dz-ico { width: 44px; height: 44px; border-radius: 12px; background: var(--brand); color: #fff; display: grid; place-items: center; margin: 0 auto var(--s3); }
+  .dropzone h4 { font-size: 15px; margin-bottom: 4px; }
+  .dropzone p { font-size: 12.5px; color: var(--ink-faint); }
+  .upload-note { margin-top: var(--s3); font-size: 12px; color: var(--ink-faint); display: flex; gap: 6px; align-items: flex-start; }
+  .thumbs { display: flex; gap: var(--s2); margin-top: var(--s4); flex-wrap: wrap; }
+  .thumb { width: 64px; height: 64px; border-radius: var(--r-sm); overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); position: relative; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .thumb .rm { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; background: rgba(27,26,33,.6); color: #fff; border: none; font-size: 11px; line-height: 1; display: grid; place-items: center; }
+
+  .field { margin-bottom: var(--s5); }
+  .field > label { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 600; margin-bottom: var(--s2); }
+  .ai-chip { font-size: 12px; font-weight: 600; color: var(--brand-strong); background: var(--brand-weak); border: none; padding: 4px 10px; border-radius: 999px; display: inline-flex; gap: 4px; align-items: center; }
+  textarea.input, input.input, select.input {
+    width: 100%; border: 1px solid var(--line-strong); border-radius: var(--r-md);
+    padding: 10px 12px; font-size: 14px; font-family: inherit; color: var(--ink);
+    background: var(--surface-2); transition: border-color .15s var(--ease), box-shadow .15s var(--ease); resize: vertical;
+  }
+  textarea.input:focus, input.input:focus, select.input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-weak); background: var(--surface); }
+  .hint { font-size: 12px; color: var(--ink-faint); margin-top: 6px; }
+  .chip-row { display: flex; gap: var(--s2); flex-wrap: wrap; }
+  .opt { border: 1px solid var(--line-strong); background: var(--surface-2); border-radius: var(--r-md); padding: 8px 14px; font-size: 13px; font-weight: 500; color: var(--ink-soft); transition: all .15s var(--ease); }
+  .opt:hover { border-color: var(--ink-faint); }
+  .opt.on { border-color: var(--brand); background: var(--brand-weak); color: var(--brand-strong); font-weight: 600; }
+
+  /* Generate card */
+  /* ============ Config Sections (market / output) ============ */
+  .config-section { margin-bottom: var(--s5); }
+  .config-head {
+    display: flex; align-items: center; gap: var(--s3); cursor: pointer;
+    user-select: none; margin-bottom: var(--s4);
+  }
+  .config-head .ch-ico {
+    width: 18px; height: 18px; border-radius: 5px;
+    border: 1.5px solid var(--line-strong); color: var(--ink-faint);
+    display: grid; place-items: center; font-size: 12px;
+    flex-shrink: 0; transition: all .15s var(--ease);
+  }
+  .config-head .ch-title { font-size: 15px; font-weight: 700; }
+  .config-head .spacer { flex: 1; }
+  .config-head .ch-toggle { font-size: 13px; color: var(--ink-faint); display: flex; align-items: center; gap: 3px; transition: color .15s var(--ease); }
+  .config-head:hover .ch-toggle { color: var(--ink-soft); }
+  .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4) var(--s6); }
+  .cfg-field label {
+    display: block; font-size: 12.5px; font-weight: 600; color: var(--ink);
+    margin-bottom: 6px;
+  }
+  .cfg-field select, .cfg-field input[type="text"] {
+    width: 100%; appearance: none;
+    border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+    padding: 9px 28px 9px 12px; font-size: 14px; font-family: inherit;
+    color: var(--ink); background: var(--surface)
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2357555F' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+      no-repeat right 11px center;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .cfg-field select:focus, .cfg-field input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-weak); }
+  .cfg-stepper-wrap { display: flex; align-items: center; gap: 1px; }
+  .cfg-stepper { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }
+  .cfg-stepper button { width: 34px; height: 36px; border: none; background: var(--surface-2); font-size: 17px; color: var(--ink-soft); display: grid; place-items: center; transition: background .15s ease; }
+  .cfg-stepper button:hover { background: var(--line); color: var(--ink); }
+  .cfg-stepper span { min-width: 48px; text-align: center; font-size: 14px; font-weight: 600; border-left: 1px solid var(--line); border-right: 1px solid var(--line); padding: 8px 4px; line-height: 20px; }
+
+  .btn-airec {
+    font-size: 12px; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, var(--ai-purple), #6D28D9);
+    border: none; padding: 5px 16px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 4px; box-shadow: var(--sh-1);
+    transition: transform .15s var(--ease), box-shadow .15s var(--ease);
+  }
+  .btn-airec:hover { transform: translateY(-1px); box-shadow: var(--sh-2); }
+
+  .generate-card {
+    margin-top: var(--s5); background: linear-gradient(180deg, var(--surface), var(--surface-2));
+    border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s5) var(--s6);
+    display: flex; align-items: center; gap: var(--s5); box-shadow: var(--sh-1);
+  }
+  .generate-card .gc-info { flex: 1; min-width: 0; }
+  .generate-card .gc-info h4 { font-size: 15px; margin-bottom: 2px; }
+  .generate-card .gc-info p { font-size: 12.5px; color: var(--ink-faint); }
+  .btn-generate { background: var(--brand); color: #fff; border: none; font-size: 15px; font-weight: 700; padding: 14px 28px; border-radius: var(--r-md); box-shadow: var(--sh-2); display: inline-flex; flex-direction: column; align-items: center; gap: 1px; transition: transform .15s var(--ease), box-shadow .15s var(--ease); flex-shrink: 0; }
+  .btn-generate:hover { transform: translateY(-1px); box-shadow: var(--sh-3); }
+  .btn-generate small { font-size: 11px; font-weight: 500; opacity: .9; }
+
+
+  /* ============ PLANNER BAR + LIST + DRAWER ============ */
+  .planner-bar {
+    display: flex; align-items: center; gap: var(--s4); flex-wrap: wrap;
+    margin-top: var(--s5);
+  }
+  .planner-list-header {
+    font-size: 14px; font-weight: 600; color: var(--ink);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .planner-list-header .req { color: var(--brand); }
+  .btn-clear {
+    font-size: 13px; color: var(--ink-faint); background: none; border: none;
+    padding: 4px 10px; border-radius: var(--r-sm);
+    transition: background .15s ease, color .15s ease;
+  }
+  .btn-clear:hover { background: var(--surface-2); color: var(--ink); }
+  .planner-bar .spacer { flex: 1; }
+  .btn-planner {
+    background: linear-gradient(135deg, #7C3AED, #6D28D9);
+    color: #fff; border: none; font-size: 14px; font-weight: 600;
+    padding: 11px 24px; border-radius: var(--r-md); box-shadow: var(--sh-2);
+    display: inline-flex; align-items: center; gap: 7px;
+    transition: transform .15s var(--ease), box-shadow .15s var(--ease);
+    flex-shrink: 0;
+  }
+  .btn-planner:hover { transform: translateY(-1px); box-shadow: var(--sh-3); }
+  .btn-add-item {
+    width: 38px; height: 38px; border: 1.5px dashed var(--line-strong);
+    border-radius: var(--r-md); background: var(--surface);
+    font-size: 20px; color: var(--ink-faint); display: grid; place-items: center;
+    transition: all .15s var(--ease); flex-shrink: 0;
+  }
+  .btn-add-item:hover { border-color: var(--ai-purple); color: var(--ai-purple); }
+
+
+  /* Plan bottom action bar */
+  .plan-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: var(--s4); padding-top: var(--s3);
+    border-top: 1px dashed var(--line);
+  }
+  .btn-plan-clear {
+    font-size: 13px; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, #EF4444, #DC2626);
+    border: none; padding: 8px 20px; border-radius: var(--r-md);
+    cursor: pointer; transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn-plan-clear:hover { transform: translateY(-1px); box-shadow: var(--sh-1); }
+  .btn-plan-save {
+    font-size: 13px; font-weight: 700; color: rgba(0,0,0,.75);
+    background: linear-gradient(135deg, #C8E000, #AACC00);
+    border: none; padding: 8px 24px; border-radius: var(--r-md);
+    cursor: pointer; transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn-plan-save:hover { transform: translateY(-1px); box-shadow: var(--sh-1); }
+
+  @media (max-width:640px){
+    .planner-bar{flex-direction:row;}
+    .plan-foot{flex-direction:column;gap:var(--s2);}
+    .btn-plan-clear,.btn-plan-save{width:100%;text-align:center;}
+  }
+
+  /* Selected items LIST */
+  .plan-list { margin-top: var(--s4); display: none; }
+  .plan-list.has-items { display: block; animation: fadeUp .3s var(--ease); }
+
+  .plan-row {
+    display: flex; align-items: center; gap: var(--s4);
+    padding: var(--s4) var(--s5); border-bottom: 1px solid var(--line);
+    transition: background .15s ease;
+  }
+  .plan-row:last-child { border-bottom: none; }
+  .plan-row:hover { background: var(--surface-2); }
+
+  .pr-left { flex: 1; min-width: 0; }
+  .pr-title {
+    font-size: 15px; font-weight: 600; color: var(--ink);
+    display: flex; align-items: center; gap: var(--s2); margin-bottom: 4px;
+  }
+  .pr-num { color: var(--ink-faint); font-weight: 700; margin-right: 2px; }
+  .pr-tag {
+    font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 4px;
+    display: inline-flex; align-items: center; gap: 2px;
+  }
+  .pr-tag.custom { color: #B45309; background: #FEF3C7; border: 1px solid #FDE68A; }
+  .pr-tag.fast { color: #0369A1; background: #E0F2FE; border: 1px solid #BAE6FD; }
+  .pr-meta {
+    font-size: 12.5px; color: var(--ink-faint);
+    display: flex; gap: var(--s3); padding-left: 18px;
+  }
+
+  .pr-actions { display: flex; align-items: center; gap: var(--s2); flex-shrink: 0; }
+  .pr-action-icon {
+    width: 30px; height: 30px; border-radius: var(--r-sm); border: 1px solid var(--line-strong);
+    background: var(--surface); color: var(--ink-faint); font-size: 14px;
+    display: grid; place-items: center; cursor: pointer; transition: all .15s ease;
+  }
+  .pr-action-icon:hover { background: var(--surface-2); color: var(--ink); border-color: var(--ink-faint); }
+  .pr-set-link {
+    font-size: 13px; font-weight: 600; color: var(--ink-soft);
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 6px 12px; border-radius: var(--r-sm);
+    transition: all .15s ease; white-space: nowrap; cursor: pointer;
+  }
+  .pr-set-link:hover { color: var(--ai-purple); background: var(--ai-purple-light); }
+
+  /* RIGHT DRAWER PANEL */
+  .drawer-overlay {
+    display: none; position: fixed; inset: 0; z-index: 180;
+    background: rgba(27,26,33,.35);
+  }
+  .drawer-overlay.open { display: block; animation: fadeIn .2s ease; }
+
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0; z-index: 190;
+    width: 680px; max-width: 92vw;
+    background: var(--surface); box-shadow: var(--sh-modal);
+    display: flex; flex-direction: column;
+    transform: translateX(100%); transition: transform .3s var(--ease);
+  }
+  .drawer.open { transform: translateX(0); }
+
+  .drawer-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--s5) var(--s8); border-bottom: 1px solid var(--line);
+    flex-shrink: 0; gap: var(--s4);
+  }
+  .drawer-tabs { display: flex; gap: var(--s1); }
+  .drawer-tab {
+    font-size: 14px; font-weight: 700; padding: 8px 16px; border-radius: var(--r-md);
+    border: none; background: transparent; color: var(--ink-faint);
+    transition: all .15s var(--ease); cursor: pointer;
+  }
+  .drawer-tab.active { background: var(--ink); color: #fff; }
+  .drawer-tab:not(.active):hover { color: var(--ink); background: var(--surface-2); }
+  .drawer-close {
+    width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--surface-2);
+    font-size: 18px; color: var(--ink-faint); display: grid; place-items: center;
+    transition: background .15s ease, color .15s ease; cursor: pointer;
+  }
+  .drawer-close:hover { background: var(--line); color: var(--ink); }
+
+  .drawer-body { flex: 1; overflow-y: auto; padding: var(--s6) var(--s8); }
+
+  .drawer-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s3);
+  }
+  .dg-card {
+    border: 1.5px solid var(--line); border-radius: var(--r-md);
+    padding: var(--s4) var(--s4) var(--s3); cursor: pointer;
+    transition: all .18s var(--ease);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s2);
+  }
+  .dg-card:hover { border-color: var(--line-strong); box-shadow: var(--sh-1); }
+  .dg-card.checked { border-color: var(--ai-purple); background: #F5F3FF; }
+  .dg-card-text h4 { font-size: 13px; font-weight: 600; line-height: 1.3; margin-bottom: 2px; }
+  .dg-card-text p { font-size: 11.5px; color: var(--ink-faint); line-height: 1.3; }
+  .dg-cb {
+    width: 18px; height: 18px; border: 1.5px solid var(--line-strong); border-radius: 4px;
+    flex-shrink: 0; margin-top: 1px; display: grid; place-items: center; transition: all .15s var(--ease);
+  }
+  .dg-card.checked .dg-cb { background: var(--ai-purple); border-color: var(--ai-purple); }
+  .dg-card.checked .dg-cb::after {
+    content: ""; width: 9px; height: 4.5px; border-left: 1.5px solid #fff; border-bottom: 1.5px solid #fff;
+    transform: rotate(-45deg) translate(1px,-1px);
+  }
+
+  .drawer-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--s4) var(--s8); border-top: 1px solid var(--line);
+    flex-shrink: 0; gap: var(--s4); background: var(--surface);
+  }
+  .df-count { font-size: 13px; color: var(--ink-soft); }
+  .df-count b { color: var(--ink); font-weight: 700; }
+  .df-actions { display: flex; gap: var(--s3); }
+  .btn-df-cancel {
+    font-size: 13px; font-weight: 600; color: var(--ink-soft); background: var(--surface-2);
+    border: 1px solid var(--line-strong); padding: 9px 20px; border-radius: var(--r-md);
+    transition: all .15s var(--ease);
+  }
+  .btn-df-cancel:hover { border-color: var(--ink-faint); color: var(--ink); }
+  .btn-df-confirm {
+    font-size: 13px; font-weight: 700; color: #fff;
+    background: linear-gradient(135deg,var(--ai-purple),#6D28D9);
+    border: none; padding: 9px 20px; border-radius: var(--r-md); box-shadow: var(--sh-1);
+    transition: transform .15s ease,box-shadow .15s ease;
+  }
+  .btn-df-confirm:hover { transform: translateY(-1px); box-shadow: var(--sh-2); }
+
+  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+  /* ============ MODAL — Property Settings ============ */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(27,26,33,.45); backdrop-filter: blur(4px);
+    justify-content: center; align-items: flex-start;
+    padding: 60px 24px; overflow-y: auto;
+  }
+  .modal-overlay.open { display: flex; animation: fadeIn .2s ease; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  .modal {
+    background: var(--surface); border-radius: var(--r-xl);
+    box-shadow: var(--sh-modal); width: 100%; max-width: 960px;
+    position: relative; animation: slideUp .3s var(--ease);
+  }
+  @keyframes slideUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+
+  .modal-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    padding: var(--s6) var(--s8) var(--s4); border-bottom: 1px solid var(--line); gap: var(--s4);
+  }
+  .modal-header h2 { font-family: var(--font-display); font-size: 19px; font-weight: 700; margin-bottom: 4px; letter-spacing: -.01em; }
+  .modal-header p { font-size: 12.5px; color: var(--ink-faint); }
+
+  /* ===== MODAL INNER LAYOUT (screenshot 3: left/right columns) ===== */
+  .modal-main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s6);
+    align-items: start;
+  }
+  .modal-left, .modal-right {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s5);
+  }
+
+  /* Settings block (个性化/通用) */
+  .ms-block {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    padding: var(--s4) var(--s5);
+  }
+  .ms-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-bottom: var(--s2);
+  }
+  .ms-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .ms-aibtn {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, #7C3AED, #6D28D9);
+    border: none;
+    padding: 4px 12px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+  }
+  .ms-note {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin-bottom: var(--s3);
+  }
+  .ms-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+  }
+  .pf-row {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .pf-row label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .pf-row input,
+  .pf-row select {
+    font-size: 13px;
+    padding: 7px 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    background: #fff;
+    color: var(--ink);
+    outline: none;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .pf-row input:focus,
+  .pf-row select:focus {
+    border-color: var(--ai-purple);
+    box-shadow: 0 0 0 3px rgba(124,58,237,.08);
+  }
+
+  /* Right column blocks */
+  .mr-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+  }
+  .mr-label {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--ink);
+  }
+  .mr-label small {
+    font-weight: 400;
+    color: var(--ink-faint);
+  }
+  .mr-textarea {
+    width: 100%;
+    min-height: 110px;
+    padding: 10px 12px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    font-size: 13px;
+    resize: vertical;
+    outline: none;
+    font-family: inherit;
+    transition: border-color .15s ease;
+  }
+  .mr-textarea:focus {
+    border-color: var(--ai-purple);
+    box-shadow: 0 0 0 3px rgba(124,58,237,.08);
+  }
+  .mr-count {
+    text-align: right;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+
+  /* Model tabs in modal */
+  .mr-model-tabs {
+    display: flex;
+    gap: var(--s1);
+  }
+  .mmt-tab {
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .mmt-tab.active {
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+  }
+  .mmt-tab:not(.active):hover {
+    border-color: var(--ink-faint);
+    color: var(--ink);
+  }
+
+  .mr-field {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .mr-field label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    white-space: nowrap;
+    min-width: 64px;
+  }
+  .mr-field select {
+    flex: 1;
+    font-size: 13px;
+    padding: 7px 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    background: #fff;
+    outline: none;
+  }
+
+  /* Stepper in modal */
+  .m-stepper {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+    overflow: hidden;
+  }
+  .m-stepper button {
+    width: 30px;
+    height: 30px;
+    border: none;
+    background: var(--surface-2);
+    font-size: 16px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: background .15s ease;
+  }
+  .m-stepper button:hover { background: var(--line); }
+  .m-stepper span {
+    width: 36px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 600;
+    border-left: 1px solid var(--line-strong);
+    border-right: 1px solid var(--line-strong);
+    padding: 6px 0;
+  }
+
+  /* Upload area in modal */
+  .mr-upload {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    padding: var(--s6) var(--s4);
+    border: 1.5px dashed var(--line-strong);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    cursor: pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .mr-upload:hover {
+    border-color: var(--ai-purple);
+    background: #F5F3FF;
+  }
+  .mru-icon {
+    font-size: 28px;
+    color: var(--ink-faint);
+  }
+  .mru-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .mru-lib-btn {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    background: #fff;
+    border: 1px solid var(--line-strong);
+    padding: 4px 14px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .mru-lib-btn:hover {
+    border-color: var(--ai-purple);
+    color: var(--ai-purple);
+  }
+
+  @media (max-width:767px){
+    .modal-main{grid-template-columns:1fr;}
+    .pf-row{grid-template-columns:1fr;gap:var(--s1);}
+    .pf-row label{font-size:12px;}
+  }
+
+  .modal-close {
+    width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--surface-2);
+    font-size: 18px; color: var(--ink-faint); display: grid; place-items: center; flex-shrink: 0;
+    transition: background .15s var(--ease), color .15s var(--ease);
+  }
+  .modal-close:hover { background: var(--line); color: var(--ink); }
+
+  .modal-body {
+    display: grid; grid-template-columns: 1fr 320px;
+    gap: var(--s8); padding: var(--s6) var(--s8); align-items: start;
+  }
+
+  .fsec { margin-bottom: var(--s6); }
+  .fsec:last-child { margin-bottom: 0; }
+  .fsec-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s4); }
+  .fsec-header h4 { font-size: 14px; font-weight: 700; }
+  .fsec-hint { font-size: 12px; color: var(--ink-faint); margin-bottom: var(--s3); }
+
+  .btn-aifill {
+    font-size: 12px; font-weight: 600; color: #fff;
+    background: linear-gradient(135deg, var(--ai-purple), #6D28D9);
+    border: none; padding: 5px 14px; border-radius: 999px;
+    display: inline-flex; align-items: center; gap: 4px; box-shadow: var(--sh-1);
+    transition: transform .15s var(--ease), box-shadow .15s var(--ease);
+  }
+  .btn-aifill:hover { transform: translateY(-1px); box-shadow: var(--sh-2); }
+
+  .fbox { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-md); padding: var(--s4); }
+
+  .frow { display: flex; align-items: center; gap: var(--s4); margin-bottom: var(--s3); }
+  .frow:last-child { margin-bottom: 0; }
+  .frow-label { font-size: 13px; font-weight: 500; color: var(--ink); white-space: nowrap; min-width: 84px; flex-shrink: 0; }
+  .frow-input { flex: 1; min-width: 0; }
+  .frow-input input, .frow-input select {
+    width: 100%; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+    padding: 8px 10px; font-size: 13px; font-family: inherit; color: var(--ink);
+    background: var(--surface); transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .frow-input input:focus, .frow-input select:focus { outline: none; border-color: var(--ai-purple); box-shadow: 0 0 0 3px var(--ai-purple-light); }
+  .frow-input select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2357555F' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+    padding-right: 28px;
+  }
+
+  .modal-side > * + * { margin-top: var(--s6); }
+  .ms-block h5 { font-size: 13px; font-weight: 700; margin-bottom: var(--s3); }
+  .ms-textarea {
+    width: 100%; height: 100px; resize: vertical;
+    border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+    padding: 10px; font-size: 13px; font-family: inherit; color: var(--ink);
+    background: var(--surface); transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .ms-textarea:focus { outline: none; border-color: var(--ai-purple); box-shadow: 0 0 0 3px var(--ai-purple-light); }
+  .char-count { text-align: right; font-size: 12px; color: var(--ink-faint); margin-top: 4px; }
+
+  .model-tabs { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 2px; gap: 2px; }
+  .model-tab { border: none; background: transparent; padding: 6px 14px; border-radius: 6px; font-size: 12.5px; font-weight: 500; color: var(--ink-soft); transition: all .15s var(--ease); }
+  .model-tab.on { background: var(--ink); color: #fff; }
+  .model-tab:not(.on):hover { color: var(--ink); }
+
+  .stepper { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); overflow: hidden; }
+  .stepper button { width: 30px; height: 30px; border: none; background: var(--surface-2); font-size: 16px; color: var(--ink-soft); display: grid; place-items: center; transition: background .15s var(--ease); }
+  .stepper button:hover { background: var(--line); color: var(--ink); }
+  .stepper span { width: 40px; text-align: center; font-size: 14px; font-weight: 600; border-left: 1px solid var(--line); border-right: 1px solid var(--line); padding: 6px 0; }
+
+  .ratio-select {
+    width: 100%; appearance: none;
+    border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+    padding: 8px 28px 8px 10px; font-size: 13px; font-family: inherit;
+    color: var(--ink); background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2357555F' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .ratio-select:focus { outline: none; border-color: var(--ai-purple); box-shadow: 0 0 0 3px var(--ai-purple-light); }
+
+  .res-btns { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line-strong); border-radius: var(--r-sm); padding: 2px; gap: 2px; }
+  .res-btn { border: none; background: transparent; padding: 6px 14px; border-radius: 6px; font-size: 12.5px; font-weight: 500; color: var(--ink-soft); transition: all .15s var(--ease); }
+  .res-btn.on { background: var(--ink); color: #fff; }
+
+  .ref-upload { border: 1.5px dashed var(--line-strong); border-radius: var(--r-md); background: var(--surface-2); padding: var(--s6) var(--s4); text-align: center; cursor: pointer; transition: all .15s var(--ease); }
+  .ref-upload:hover { border-color: var(--ai-purple); background: var(--ai-purple-light); }
+  .ref-upload svg { color: var(--ink-faint); margin-bottom: var(--s2); }
+  .ref-upload p { font-size: 13px; font-weight: 500; color: var(--ink); margin-bottom: 4px; }
+  .ref-upload .lib-btn { border: 1px solid var(--line-strong); background: var(--surface); border-radius: var(--r-sm); padding: 5px 14px; font-size: 12px; font-weight: 500; margin-top: var(--s2); }
+  .ref-hint { font-size: 11.5px; color: var(--ink-faint); margin-top: 6px; }
+
+  .modal-footer { display: flex; align-items: center; justify-content: space-between; padding: var(--s5) var(--s8); border-top: 1px solid var(--line); gap: var(--s4); }
+  .btn-confirm { background: var(--confirm-lime); color: var(--ink); border: none; font-size: 14px; font-weight: 700; padding: 12px 28px; border-radius: var(--r-md); box-shadow: var(--sh-1); transition: background .15s var(--ease), transform .15s var(--ease), box-shadow .15s var(--ease); }
+  .btn-confirm:hover { background: var(--confirm-lime-hover); transform: translateY(-1px); box-shadow: var(--sh-2); }
+  .btn-template { background: var(--surface); color: var(--ink-soft); border: 1px solid var(--line-strong); font-size: 13px; font-weight: 600; padding: 11px 20px; border-radius: var(--r-md); transition: all .15s var(--ease); }
+  .btn-template:hover { border-color: var(--ink-faint); color: var(--ink); }
+
+  /* ============ Showcase ============ */
+  .showcase { margin-top: var(--s12); }
+  .showcase-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); margin-bottom: var(--s5); flex-wrap: wrap; }
+  .showcase-head h3 { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+  .showcase-head .tabs { display: flex; gap: var(--s1); flex-wrap: wrap; }
+  .tab { font-size: 13px; font-weight: 500; color: var(--ink-soft); padding: 7px 14px; border-radius: 999px; border: 1px solid transparent; background: transparent; transition: all .15s var(--ease); }
+  .tab:hover { background: var(--surface); border-color: var(--line); }
+  .tab.on { background: var(--ink); color: #fff; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: var(--s5); }
+  .case { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; box-shadow: var(--sh-1); transition: transform .25s var(--ease), box-shadow .25s var(--ease), border-color .25s var(--ease); }
+  .case:hover { transform: translateY(-4px); box-shadow: var(--sh-3); border-color: var(--line-strong); }
+  .case-strip { display: grid; grid-template-columns: 88px repeat(3, 1fr); gap: 3px; padding: 3px; background: var(--bg); }
+  .case-strip .cell { aspect-ratio: 1; border-radius: 6px; overflow: hidden; background: var(--surface-2); position: relative; }
+  .case-strip .cell img { width: 100%; height: 100%; object-fit: cover; }
+  .case-strip .cell.orig { outline: 2px solid var(--brand); outline-offset: -2px; }
+  .case-strip .cell.more::after { content: "+" attr(data-n); position: absolute; inset: 0; background: rgba(27,26,33,.62); color: #fff; display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 20px; }
+  .badge-orig { position: absolute; bottom: 4px; left: 4px; background: var(--brand); color: #fff; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 5px; }
+  .case-body { padding: var(--s4); }
+  .case-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .cat { font-size: 11px; font-weight: 600; color: var(--ink-soft); background: var(--surface-2); border: 1px solid var(--line); padding: 3px 9px; border-radius: 999px; }
+  .cat-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--brand); }
+  .case-name { font-size: 14px; font-weight: 600; line-height: 1.4; margin-bottom: var(--s4); }
+  .case-actions { display: flex; gap: var(--s2); }
+  .case-actions .btn { flex: 1; padding: 9px; font-size: 13px; }
+
+  .record-empty { margin-top: var(--s10); border: 1.5px dashed var(--line-strong); border-radius: var(--r-xl); background: var(--surface-2); padding: var(--s12) var(--s4); text-align: center; }
+  .record-empty .re-ico { width: 56px; height: 56px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); display: grid; place-items: center; margin: 0 auto var(--s4); color: var(--ink-faint); }
+  .record-empty h4 { font-size: 16px; margin-bottom: 4px; }
+  .record-empty p { font-size: 13px; color: var(--ink-faint); margin-bottom: var(--s4); }
+
+  /* ============ Responsive ============ */
+  @media (max-width: 640px) { .cfg-grid { grid-template-columns: 1fr; } }
+
+  @media (max-width: 1080px) {
+    .gen-grid { grid-template-columns: 1fr; }
+    .modal-body { grid-template-columns: 1fr; }
+    .workspace { padding: var(--s6); }
+  }
+  @media (max-width: 860px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .topnav { display: none; }
+    .workspace { padding: var(--s5) var(--s4) var(--s8); }
+    .pgrid { grid-template-columns: repeat(2, 1fr); }
+    .modal-header { padding: var(--s5); }
+    .modal-body { padding: var(--s5); }
+    .modal-footer { padding: var(--s4) var(--s5); flex-direction: column-reverse; align-items: stretch; }
+    .modal-footer .btn-confirm, .modal-footer .btn-template { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== Top bar ===== -->
+<header class="topbar">
+  <div class="brand"><div class="brand-mark">套</div><div class="brand-name">智图<span>AI</span></div></div>
+  <nav class="topnav">
+    <a href="#">首页</a><a href="#" class="active">工作台</a><a href="#">我的</a>
+    <a href="#">我的收藏</a><a href="#">教程</a><a href="#">API</a>
+  </nav>
+  <div class="topbar-right">
+    <a class="ghost-link" href="#">🎁 邀请好友</a><a class="ghost-link" href="#">💬 客服</a>
+    <span class="points-pill">⚡ 1280 积分</span>
+    <a class="ghost-link" href="#">📅 签到</a>
+    <button class="btn-vip">👑 会员充值</button>
+  </div>
+</header>
+
+<div class="shell">
+
+  <!-- ===== Sidebar ===== -->
+  <aside class="sidebar">
+    <div class="nav-group-label">创作中心</div>
+    <a class="nav-item active" href="#">
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      电商套图
+    </a>
+    <div class="sub">
+      <a class="nav-item active" href="#">电商套图</a>
+      <a class="nav-item" href="#">A+ 详情页</a><a class="nav-item" href="#">服饰套图</a><a class="nav-item" href="#">爆款复刻</a>
+    </div>
+    <a class="nav-item" href="#"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h10"/></svg>AI 商品图</a>
+    <a class="nav-item" href="#"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9l5 3-5 3z"/></svg>视频创作</a>
+    <a class="nav-item" href="#"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>我的</a>
+    <div class="sidebar-deco">
+      <svg viewBox="0 0 120 36" fill="none" preserveAspectRatio="none"><path d="M2 18 C 30 2, 50 34, 80 18 S 118 2, 118 18" stroke="#C9C6BF" stroke-width="2" stroke-linecap="round"/></svg>
+      <p>多视角上传，AI 自动排版出图</p>
+    </div>
+  </aside>
+
+  <!-- ===== Workspace ===== -->
+  <main class="workspace">
+   <div class="container">
+
+    <!-- Page head -->
+    <div class="page-head">
+      <div>
+        <h1 class="page-title">AI 电商套图生成</h1>
+        <p class="page-sub">上传产品多视角图，一键生成主图、详情页、场景图等完整套图</p>
+      </div>
+      <div class="head-actions"><button class="btn btn-secondary">使用说明</button><button class="btn btn-primary">＋ 新建任务</button></div>
+    </div>
+
+    <!-- Step 1 & 2: Upload + Config -->
+    <section class="gen-grid">
+      <div class="panel">
+        <h3 class="panel-title"><span class="step">1</span>上传产品图</h3>
+        <div class="seg"><button class="on">本地上传</button><button>图片库</button></div>
+        <div class="dropzone">
+          <div class="dz-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4m0 0L8 8m4-4l4 4"/><path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg></div>
+          <h4>拖拽或点击上传</h4><p>支持 JPG / PNG / WEBP，单张 ≤ 10MB</p>
+        </div>
+        <div class="upload-note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg><span>仅支持多视角上传：请上传同一款产品的<strong>不同角度</strong>照片，出图效果更佳。</span></div>
+        <div class="thumbs">
+          <div class="thumb"><img src="https://picsum.photos/seed/proda/200/200" alt=""><button class="rm">×</button></div>
+          <div class="thumb"><img src="https://picsum.photos/seed/prodb/200/200" alt=""><button class="rm">×</button></div>
+          <div class="thumb"><img src="https://picsum.photos/seed/prodc/200/200" alt=""><button class="rm">×</button></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3 class="panel-title"><span class="step">2</span>参数配置</h3>
+        <div class="field">
+          <label>核心卖点 <button class="ai-chip">✨ AI 帮写</button></label>
+          <textarea class="input" rows="3" placeholder="如：真丝质感、显瘦剪裁、法式复古……"></textarea>
+          <p class="hint">一句话讲清产品优势，AI 将据此生成文案与构图建议</p>
+        </div>
+        <!-- 市场配置：2x2 网格 -->
+        <div class="config-section">
+          <div class="config-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'grid':'none';this.querySelector('.ch-toggle').textContent=this.nextElementSibling.style.display==='none'?'︟ 展开':'˄ 收起'">
+            <span class="ch-ico">&#x2295;</span>
+            <span class="ch-title">市场配置</span>
+            <span class="spacer"></span>
+            <button class="btn-airec" onclick="event.stopPropagation()">&#x2728; AI帮推荐</button>
+            <span class="ch-toggle">&#x02c4; 收起</span>
+          </div>
+          <div class="cfg-grid">
+            <div class="cfg-field"><label>电商平台</label><select><option selected>亚马逊</option><option>淘宝 / 天猫</option><option>京东</option><option>抖音电商</option><option>拼多多</option><option>小红书</option></select></div>
+            <div class="cfg-field"><label>目标市场</label><select><option selected>北美</option><option>欧洲</option><option>东南亚</option><option>拉美</option><option>中东</option><option>日韩</option><option>全球</option></select></div>
+            <div class="cfg-field"><label>文案语种</label><select><option selected>英语</option><option>中文</option><option>日语</option><option>德语</option><option>法语</option><option>西班牙语</option><option>葡萄牙语</option><option>阿拉伯语</option></select></div>
+            <div class="cfg-field"><label>视觉风格</label><select><option value="">请选择，或直接输入</option><option>高级质感风</option><option>清新自然风</option><option>科技未来感</option><option>复古怀旧风</option><option>简约极简风</option><option>活泼可爱风</option></select></div>
+          </div>
+        </div>
+
+        <!-- 全局输出配置：模型/分辨率 + 数量/比例 -->
+        <div class="config-section">
+          <div class="config-head" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'grid':'none';this.querySelector('.ch-toggle').textContent=this.nextElementSibling.style.display==='none'?'︟ 展开':'˄ 收起'">
+            <span class="ch-ico">&#x2261;</span>
+            <span class="ch-title">全局输出配置</span>
+            <span class="spacer"></span>
+            <span class="ch-toggle">&#x02c4; 收起</span>
+          </div>
+          <div class="cfg-grid">
+            <div class="cfg-field"><label>模型</label><select><option selected>Banana-pro</option><option>Banana-lite</option><option>Gpt-image-2</option><option>通用</option></select></div>
+            <div class="cfg-field"><label>分辨率</label><select><option selected>1K</option><option>2K</option><option>4K</option></select></div>
+            <div class="cfg-field"><label>每个类型出图数</label>
+              <div class="cfg-stepper-wrap">
+                <div class="cfg-stepper">
+                  <button onclick="var s=this.nextElementSibling;s.textContent=Math.max(1,+s.textContent-1)">&#x2212;</button>
+                  <span>1</span>
+                  <button onclick="var p=this.previousElementSibling;p.textContent=+p.textContent+1">+</button>
+                </div>
+              </div>
+            </div>
+            <div class="cfg-field"><label>图片比例</label><select><option selected>自适应尺寸</option><option>竖图 3:4</option><option>横图 16:9</option><option>方形 1:1</option><option>横图 4:3</option></select></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Step 3: Planner (matches screenshot 2) -->
+    <section class="panel" style="margin-top:var(--s5)">
+      <!-- Top bar: purple button left, + right -->
+      <div class="planner-bar">
+        <button class="btn-planner" onclick="openDrawer()">&#x2728; AI智能策划台</button>
+        <button class="btn-add-item" title="从推荐类型中选择添加" onclick="openDrawer()">+</button>
+      </div>
+
+      <!-- Numbered list (populated by JS) -->
+      <div class="plan-list" id="planList"></div>
+
+      <!-- Bottom action bar: clear + save template -->
+      <div class="plan-foot" id="planFoot" style="display:none">
+        <button class="btn-plan-clear" onclick="clearAll()">&#x1F5D1; 清空所有类型</button>
+        <button class="btn-plan-save" onclick="alert('另存为模板开发中')">另存为模板</button>
+      </div>
+
+      <div class="generate-card">
+        <div class="gc-info"><h4>立即生成完整套图</h4><p>当前规划 <b id="genCount">0</b> 张，预计 0 分钟 · 生成后可一键应用到店铺</p></div>
+        <button class="btn-generate">立即生成<small>消耗 0 积分</small></button>
+      </div>
+    </section>
+
+    <!-- Showcase -->
+    <section class="showcase">
+      <div class="showcase-head">
+        <h3>热门套图示例</h3>
+        <div class="tabs">
+          <button class="tab on">全部</button><button class="tab">服装鞋帽</button><button class="tab">3C 数码</button><button class="tab">箱包配饰</button><button class="tab">个护美妆</button><button class="tab">日用百货</button><button class="tab">其他</button>
+        </div>
+      </div>
+      <div class="grid">
+        <article class="case"><div class="case-strip"><div class="cell orig"><img src="https://picsum.photos/seed/dress0/200/200" alt=""><span class="badge-orig">原图</span></div><div class="cell"><img src="https://picsum.photos/seed/dress1/200/200" alt=""></div><div class="cell"><img src="https://picsum.photos/seed/dress2/200/200" alt=""></div><div class="cell more" data-n="6"><img src="https://picsum.photos/seed/dress3/200/200" alt=""></div></div><div class="case-body"><div class="case-meta"><span class="cat-dot"></span><span class="cat">服装鞋帽</span></div><p class="case-name">黑色蕾丝拼接皮质吊带连衣裙</p><div class="case-actions"><button class="btn btn-secondary">查看详情</button><button class="btn btn-primary">生成同款</button></div></div></article>
+        <article class="case"><div class="case-strip"><div class="cell orig"><img src="https://picsum.photos/seed/ear0/200/200" alt=""><span class="badge-orig">原图</span></div><div class="cell"><img src="https://picsum.photos/seed/ear1/200/200" alt=""></div><div class="cell"><img src="https://picsum.photos/seed/ear2/200/200" alt=""></div><div class="cell more" data-n="9"><img src="https://picsum.photos/seed/ear3/200/200" alt=""></div></div><div class="case-body"><div class="case-meta"><span class="cat-dot"></span><span class="cat">3C 数码</span></div><p class="case-name">无线主动降噪蓝牙耳机 Pro</p><div class="case-actions"><button class="btn btn-secondary">查看详情</button><button class="btn btn-primary">生成同款</button></div></div></article>
+        <article class="case"><div class="case-strip"><div class="cell orig"><img src="https://picsum.photos/seed/bag0/200/200" alt=""><span class="badge-orig">原图</span></div><div class="cell"><img src="https://picsum.photos/seed/bag1/200/200" alt=""></div><div class="cell"><img src="https://picsum.photos/seed/bag2/200/200" alt=""></div><div class="cell more" data-n="12"><img src="https://picsum.photos/seed/bag3/200/200" alt=""></div></div><div class="case-body"><div class="case-meta"><span class="cat-dot"></span><span class="cat">箱包配饰</span></div><p class="case-name">复古真皮通勤大容量托特包</p><div class="case-actions"><button class="btn btn-secondary">查看详情</button><button class="btn btn-primary">生成同款</button></div></div></article>
+        <article class="case"><div class="case-strip"><div class="cell orig"><img src="https://picsum.photos/seed/serum0/200/200" alt=""><span class="badge-orig">原图</span></div><div class="cell"><img src="https://picsum.photos/seed/serum1/200/200" alt=""></div><div class="cell"><img src="https://picsum.photos/seed/serum2/200/200" alt=""></div><div class="cell more" data-n="6"><img src="https://picsum.photos/seed/serum3/200/200" alt=""></div></div><div class="case-body"><div class="case-meta"><span class="cat-dot"></span><span class="cat">个护美妆</span></div><p class="case-name">烟酰胺提亮修护精华液 30ml</p><div class="case-actions"><button class="btn btn-secondary">查看详情</button><button class="btn btn-primary">生成同款</button></div></div></article>
+        <article class="case"><div class="case-strip"><div class="cell orig"><img src="https://picsum.photos/seed/mug0/200/200" alt=""><span class="badge-orig">原图</span></div><div class="cell"><img src="https://picsum.photos/seed/mug1/200/200" alt=""></div><div class="cell"><img src="https://picsum.photos/seed/mug2/200/200" alt=""></div><div class="cell more" data-n="15"><img src="https://picsum.photos/seed/mug3/200/200" alt=""></div></div><div class="case-body"><div class="case-meta"><span class="cat-dot"></span><span class="cat">日用百货</span></div><p class="case-name">北欧风极简陶瓷马克杯 400ml</p><div class="case-actions"><button class="btn btn-secondary">查看详情</button><button class="btn btn-primary">生成同款</button></div></div></article>
+        <article class="case"><div class="case-strip"><div class="cell orig"><img src="https://picsum.photos/seed/toy0/200/200" alt=""><span class="badge-orig">原图</span></div><div class="cell"><img src="https://picsum.photos/seed/toy1/200/200" alt=""></div><div class="cell"><img src="https://picsum.photos/seed/toy2/200/200" alt=""></div><div class="cell more" data-n="8"><img src="https://picsum.photos/seed/toy3/200/200" alt=""></div></div><div class="case-body"><div class="case-meta"><span class="cat-dot"></span><span class="cat">其他</span></div><p class="case-name">婴儿硅胶安抚牙胶玩具</p><div class="case-actions"><button class="btn btn-secondary">查看详情</button><button class="btn btn-primary">生成同款</button></div></div></article>
+      </div>
+      <div class="record-empty"><div class="re-ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 15l5-5 4 4 3-3 6 6"/><circle cx="9" cy="9" r="1.6"/></svg></div><h4>创作记录</h4><p>尚无作品，快去生成你的第一套电商套图吧</p><button class="btn btn-primary">＋ 开始创作</button></div>
+    </section>
+
+   </div>
+  </main>
+</div>
+
+<!-- ===== MODAL ===== -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modalContent">
+    <div class="modal-header" id="modalHeader"></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer">
+      <button class="btn-confirm" onclick="closeModal()">设置完成并关闭</button>
+      <button class="btn-template" onclick="alert('模板功能开发中')">另存为模板</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PLAN_TYPES = [
+  { id:'bg',     title:'产品白底图', desc:'纯白背景，突出商品本体' },
+  { id:'amz',    title:'亚马逊主图', desc:'符合平台规定的主图' },
+  { id:'detail', title:'细节特写', desc:'放大细节，展示质感工艺' },
+  { id:'angle',  title:'产品多角度', desc:'多视角展示外观结构' },
+  { id:'hero',   title:'首屏视觉图', desc:'首屏吸睛，提升点击转化' },
+  { id:'usp',    title:'核心卖点图', desc:'一句话卖点＋图形强化' },
+  { id:'pain',   title:'客户痛点展示', desc:'指出痛点并给出解决方案' },
+  { id:'scene',  title:'场景图（非服饰）',desc:'真实使用场景带入感' },
+  { id:'detail2',title:'细节展示图', desc:'局部细节分点说明' },
+  { id:'tryon',  title:'试穿试戴场景', desc:'上身/上手效果展示' },
+  { id:'model',  title:'产品代言互动', desc:'人物代言＋互动引导购买' },
+  { id:'design', title:'产品设计图', desc:'结构示意，讲解设计亮点' },
+  { id:'cmp',    title:'使用对比图', desc:'使用前/后/竞品对比更直观' },
+  { id:'ship',   title:'运输安装',   desc:'运输包装与安装步骤说明' },
+  { id:'spec',   title:'规格参数图', desc:'尺寸参数一图看懂',
+    personal:[
+      {label:'参数类型', placeholder:'材质工艺参数'},
+      {label:'呈现形式', placeholder:'请选择，或直接输入'},
+      {label:'产品品类', placeholder:'服饰穿戴产品'},
+      {label:'价值传递', placeholder:'请选择，或直接输入'},
+      {label:'场景适配', placeholder:'详情页参数专区'},
+    ]},
+  { id:'pkg',    title:'包装展示图', desc:'包装展示效果呈现' },
+  { id:'buyer',  title:'通用买家秀', desc:'真实买家亲善氛围图' },
+  { id:'promo',  title:'活动海报',   desc:'促销信息海报，用于投放', fast:true,
+    ratioOptions:['自动','竖图 3:4','横图 16:9','方形 1:1','横图 4:3'],
+    hasResolution:true},
+];
+
+/* Per-type personal fields — extracted from user's 10 screenshots, each type has unique fields */
+const TYPE_PERSONAL = {
+  bg: [
+    {label:'背景处理', placeholder:'纯白/渐变/透明'},
+    {label:'光影效果', placeholder:'请选择，或直接输入'},
+    {label:'产品角度', placeholder:'正视角/45°/俯视'},
+  ],
+  amz: [
+    {label:'平台规范', placeholder:'符合亚马逊主图要求'},
+    {label:'尺寸比例', placeholder:'1:1 正方形'},
+    {label:'背景要求', placeholder:'纯白背景'},
+  ],
+  detail: [
+    {label:'细节区域', placeholder:'请选择，或直接输入'},
+    {label:'放大倍率', placeholder:'请选择，或直接输入'},
+    {label:'标注方式', placeholder:'无标注/箭头/文字'},
+  ],
+  angle: [
+    {label:'视角数量', placeholder:'3/6/8/12 视角'},
+    {label:'旋转方向', placeholder:'360°/180°'},
+    {label:'展示重点', placeholder:'外观/结构/接口'},
+  ],
+  hero: [
+    {label:'价值聚焦', placeholder:'请选择，或直接输入'},
+    {label:'视觉强化', placeholder:'质感放大'},
+    {label:'产品呈现', placeholder:'整体形态'},
+    {label:'氛围浓度', placeholder:'轻度氛围'},
+    {label:'价值暗示', placeholder:'品质细节'},
+  ],
+  usp: [
+    {label:'核心卖点', placeholder:'一句话卖点'},
+    {label:'图形风格', placeholder:'图标/插图/数据图'},
+    {label:'文案位置', placeholder:'上方/下方/侧边'},
+  ],
+  pain: [
+    {label:'痛点类型', placeholder:'使用前困扰'},
+    {label:'解决方案', placeholder:'产品如何解决'},
+    {label:'对比方式', placeholder:'前后对比/并列对比'},
+  ],
+  scene: [
+    {label:'使用场景', placeholder:'请选择，或直接输入'},
+    {label:'氛围基调', placeholder:'请选择，或直接输入'},
+    {label:'道具搭配', placeholder:'请选择，或直接输入'},
+    {label:'用户状态', placeholder:'请选择，或直接输入'},
+  ],
+  detail2: [
+    {label:'细节方向', placeholder:'请选择，或直接输入'},
+    {label:'标注方式', placeholder:'请选择，或直接输入'},
+    {label:'文字密度', placeholder:'请选择，或直接输入'},
+  ],
+  tryon: [
+    {label:'人种肤色', placeholder:'请选择，或直接输入'},
+    {label:'性别物种', placeholder:'请选择，或直接输入'},
+    {label:'年龄维度', placeholder:'请选择，或直接输入'},
+    {label:'身型身材', placeholder:'请选择，或直接输入'},
+    {label:'穿着风格', placeholder:'请选择，或直接输入'},
+    {label:'动作姿态', placeholder:'请选择，或直接输入'},
+    {label:'表情神态', placeholder:'请选择，或直接输入'},
+    {label:'场景环境', placeholder:'请选择，或直接输入'},
+  ],
+  model: [
+    {label:'代言人设', placeholder:'专业模特/KOL/真实用户'},
+    {label:'互动形式', placeholder:'手持/佩戴/演示'},
+    {label:'情感传递', placeholder:'信任感/向往感/亲和力'},
+    {label:'构图方式', placeholder:'中景/近景/特写'},
+  ],
+  design: [
+    {label:'展示角度', placeholder:'爆炸图/剖面图/分层图'},
+    {label:'标注密度', placeholder:'精简/详细/极简'},
+    {label:'配色方案', placeholder:'产品原色/单色/品牌色'},
+    {label:'技术感程度', placeholder:'高/中/低'},
+  ],
+  cmp: [
+    {label:'对比维度', placeholder:'使用前vs后/我方vs竞品'},
+    {label:'图表形式', placeholder:'并列/分屏/箭头连接'},
+    {label:'强调重点', placeholder:'优势差异/升级点'},
+  ],
+  ship: [
+    {label:'包装状态', placeholder:'开箱/封箱/运输中'},
+    {label:'安装步骤', placeholder:'简易/详细/视频引导'},
+    {label:'配件清单', placeholder:'完整列出/突出重点'},
+  ],
+  /* spec uses inline personal on PLAN_TYPES entry */
+  pkg: [
+    {label:'包装角度', placeholder:'正面/侧面/展开/堆叠'},
+    {label:'环境氛围', placeholder:'简约/节日/礼品感'},
+    {label:'材质表现', placeholder:'强调质感/环保/高级'},
+  ],
+  buyer: [
+    {label:'买家氛围', placeholder:'生活化/专业测评/开箱'},
+    {label:'拍摄风格', placeholder:'自然光/室内/户外'},
+    {label:'人物数量', placeholder:'单人/多人/亲子'},
+  ],
+  promo: [
+    {label:'促销主题', placeholder:'限时折扣/新品上市/节日'},
+    {label:'设计风格', placeholder:'简约/热闹/奢华'},
+    {label:'信息层级', placeholder:'主标题+副标题+价格+CTA'},
+    {label:'CTA按钮', placeholder:'立即购买/了解更多/抢购'},
+  ],
+};
+
+let checkedIds = new Set();
+let drawerChecked = new Set();
+
+/* ===================== DRAWER ===================== */
+function renderDrawerGrid() {
+  const el=document.getElementById('drawerGrid');
+  el.innerHTML=PLAN_TYPES.map(p=>
+    '<div class="dg-card '+(drawerChecked.has(p.id)?'checked':'')+'" data-id="'+p.id+'" onclick="toggleDrawerCard(\''+p.id+'\')">'+
+    '<div class="dg-card-text"><h4>'+p.title+'</h4><p>'+p.desc+'</p></div>'+
+    '<div class="dg-cb"></div></div>'
+  ).join('');
+}
+function toggleDrawerCard(id){
+  if(drawerChecked.has(id)) drawerChecked.delete(id); else drawerChecked.add(id);
+  renderDrawerGrid();
+  const n=drawerChecked.size;
+  document.getElementById('drawerCount').textContent=n;
+  document.getElementById('confirmCount').textContent=n;
+}
+function openDrawer(){
+  drawerChecked=new Set(checkedIds); renderDrawerGrid();
+  const n=drawerChecked.size;
+  document.getElementById('drawerCount').textContent=n;
+  document.getElementById('confirmCount').textContent=n;
+  document.getElementById('drawerOverlay').classList.add('open');
+  document.getElementById('drawerPanel').classList.add('open');
+  document.body.style.overflow='hidden';
+}
+function closeDrawer(){
+  document.getElementById('drawerOverlay').classList.remove('open');
+  document.getElementById('drawerPanel').classList.remove('open');
+  document.body.style.overflow='';
+}
+function confirmDrawer(){
+  checkedIds=new Set(drawerChecked); closeDrawer(); renderPlanList(); updateCounts();
+}
+function switchDrawerTab(btn){
+  btn.parentElement.querySelectorAll('.drawer-tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+/* ===================== PLAN LIST ===================== */
+function renderPlanList(){
+  const el=document.getElementById('planList');
+  const foot=document.getElementById('planFoot');
+  if(checkedIds.size===0){el.innerHTML='';el.classList.remove('has-items');foot.style.display='none';return;}
+  el.classList.add('has-items'); foot.style.display='flex';
+  let html=''; let i=0;
+  for(const id of checkedIds){i++;
+    const p=PLAN_TYPES.find(x=>x.id===id); if(!p)continue;
+    const tc=p.fast?'fast':'custom';
+    const tt=p.fast?'极速出图':'自定义';
+    const ratio = p.fast ? '自动' : '3:4';
+    const res = p.fast ? '1K' : '1K';
+    html+='<div class="plan-row" data-id="'+id+'"><div class="pr-left">'+
+      '<div class="pr-title"><span class="pr-num">'+i+'.</span>'+p.title+
+      '<span class="pr-tag '+tc+'">'+tt+'</span></div>'+
+      '<div class="pr-meta"><span>数量 1</span><span>|</span><span>比例 '+ratio+'</span><span>|</span><span>分辨率 '+res+'</span></div></div>'+
+      '<div class="pr-actions">'+
+      '<button class="pr-action-icon" title="复制" onclick="alert(\'复制功能开发中\')">&#x2398;</button>'+
+      '<button class="pr-action-icon" title="删除" onclick="removeItem(\''+id+'\',this)">&#x2715;</button>'+
+      '<a class="pr-set-link" onclick="openModal(\''+id+'\')">设置 &#x203A;</a></div></div>';
+  }
+  el.innerHTML=html;
+}
+function removeItem(id,btn){
+  checkedIds.delete(id);
+  btn.closest('.plan-row').remove();
+  if(!checkedIds.size){document.getElementById('planList').classList.remove('has-items');document.getElementById('planFoot').style.display='none';}
+  updateCounts();
+}
+function clearAll(){checkedIds.clear();renderPlanList();updateCounts();}
+function updateCounts(){
+  const n=checkedIds.size;
+  document.getElementById('genCount').textContent=n;
+}
+
+// Alias for backward compat — PERSONAL_TYPES is same as PLAN_TYPES
+const PERSONAL_TYPES = PLAN_TYPES;
+
+/* ===================== MODAL (settings per item) — matches screenshot 3 ===================== */
+function getPersonalFields(typeId){
+  // First check inline on PLAN_TYPES entry
+  const p=PLAN_TYPES.find(x=>x.id===typeId);
+  if(p&&p.personal) return p.personal;
+  // Then check TYPE_PERSONAL map
+  if(TYPE_PERSONAL[typeId]) return TYPE_PERSONAL[typeId];
+  // Default fallback
+  return [
+    {label:'个性化项1', placeholder:'请选择，或直接输入'},
+    {label:'个性化项2', placeholder:'请选择，或直接输入'},
+  ];
+}
+
+function getRatioOptions(typeId){
+  const p=PLAN_TYPES.find(x=>x.id===typeId);
+  if(p&&p.ratioOptions) return p.ratioOptions;
+  return ['竖图 3:4','横图 16:9','方形 1:1','横图 4:3'];
+}
+
+function openModal(typeId){
+  try {
+    console.log('[openModal] called with typeId:', typeId);
+    var p=PERSONAL_TYPES.find(function(x){return x.id===typeId})||PLAN_TYPES.find(function(x){return x.id===typeId});
+    if(!p){ console.warn('[openModal] type not found:', typeId); return; }
+    var title=p.title||'\u672a\u547d\u540d\u4efb\u52a1';
+    var personalFields=getPersonalFields(typeId);
+    var personalHTML=personalFields.map(function(f){
+      return '<div class="pf-row"><label>'+f.label+'</label><select><option value="">'+f.placeholder+'</option><option>\u9009\u9879 A</option><option>\u9009\u9879 B</option><option>\u9009\u9879 C</option></select></div>';
+    }).join('');
+    var ratios=getRatioOptions(typeId);
+    var ratioOpts=ratios.map(function(r){
+      return '<option'+('\u7ad6\u56fe 3:4'===r?' selected':'')+'>'+r+'</option>';
+    }).join('');
+    var mH=document.getElementById('modalHeader');
+    var mB=document.getElementById('modalBody');
+    var mO=document.getElementById('modalOverlay');
+    if(!mH||!mB||!mO){ console.error('[openModal] DOM missing!'); alert('\u5f39\u7a97\u5143\u7d20\u672a\u627e\u5230'); return; }
+    mH.innerHTML='<h2>'+title+' \u5c5e\u6027\u8bbe\u7f6e</h2><p>\u4ee5\u4e0b\u9009\u9879无需\u5168\u90e8\u586b\u5199\uff0c\u9009\u9879\u4e4b\u95f4\u53ef\u80fd\u4f1a\u6709\u51b2\u7a81\uff0c\u8bf7\u6ce8\u610f\u4fee\u6539</p>';
+    mB.innerHTML='<div class="modal-main"><div class="modal-left"><div class="ms-block"><div class="ms-head"><span class="ms-title">\u4e2a\u6027\u5316\u8bbe\u7f6e</span><button class="ms-aibtn" onclick="alert(\'AI\u5e2e\u586b\u5f00\u53d1\u4e2d\')">AI\u5e2e\u586b(\u514d\u8d39)</button></div><p class="ms-note">(\u9009\u586b\u9879\uff0c\u53ef\u624b\u52a8\u586b\u5199\u6216\u8005\u4f7f\u7528\u300cAI\u5e2e\u586b\u300d)</p><div class="ms-fields">'+personalHTML+'</div></div><div class="ms-block"><div class="ms-head"><span class="ms-title"\u901a\u7528\u8bbe\u7f6e</span><button class="ms-aibtn" onclick="alert(\'AI\u5e2e\u586b\u5f00\u53d1\u4e2d\')">AI\u5e2e\u586b(\u514d\u8d39)</button></div><p class="ms-note">(\u9009\u586b\u9879\uff0c\u53ef\u624b\u52a8\u586b\u5199\u6216\u8005\u4f7f\u7528\u300cAI\u5e2e\u586b\u300d)</p><div class="ms-fields"><div class="pf-row"><label>\u6848\u6587\u8bed\u79cd</label><select><option selected>\u82f1\u8bed</option><option>\u4e2d\u6587</option><option>\u65e5\u8bed</option><option>\u5fb7\u8bed</option><option>\u6cd5\u8bed</option><option>\u897f\u73ed\u7259\u8bed</option><option>\u8461\u8404\u7259\u8bed</option><option>\u963f\u62c9\u4f2f\u8bed</option></select></div><div class="pf-row"><label>\u76ee\u6807\u5e02\u573a</label><select><option selected>\u5317\u7f8e</option><option>\u6b27\u6d32</option><option>\u4e1c\u5357\u4e9a</option><option>\u62c9\u7f8e</option><option>\u4e2d\u4e1c</option><option>\u65e5\u97e9</option><option>\u5168\u7403</option></select></div><div class="pf-row"><label>\u7535\u5546\u5e73\u53f0</label><select><option selected>\u4e9a\u9a6c\u900a</option><option>\u6dd8\u5b9d / \u5929\u732b</option><option>\u4eac\u4e1c</option><option>\u6296\u97f3\u7535\u5546</option><option>\u62fc\u591a\u591a</option><option>\u5c0f\u7ea2\u4e66</option></select></div><div class="pf-row"><label>\u89c9\u89c9\u98ce\u683c</label><select><option value="">\u8bf7\u9009\u62e9\uff0c\u6216\u76f4\u63a5\u8f93\u5165</option><option selected>\u9ad8\u7ea7\u8d28\u611f\u98ce</option><option>\u65b0\u7136\u81ea\u7136\u98ce</option><option>\u79d1\u6280\u672a\u6765\u611f</option><option>\u53e4\u590d\u6000\u65e7\u98ce</option><option>\u7b80\u7ea6\u6781\u7b80\u98ce</option><option>\u6d3b\u6cfd\u53ef\u7231\u98ce</option></select></div><div class="pf-row"><label>\u6848\u6587\u9700\u6c42</label><select><option value="">\u8bf7\u9009\u62e9\uff0c\u6216\u76f4\u63a5\u8f93\u5165</option><option selected>\u6838\u5fc3\u5356\u70b9\u6848\u6587</option><option>\u54c1\u724c\u6545\u4e8b\u6848\u6587</option><option>\u60c5\u611f\u5171\u9e23\u6848\u6587</option><option>\u4fc3\u9500\u7d27\u8feb\u6848\u6587</option></select></div><div class="pf-row"><label>\u8272\u8c03\u503e\u5411</label><select><option value="">\u8bf7\u9009\u62e9\uff0c\u6216\u76f4\u63a5\u8f93\u5165</option><option selected>\u9ad8\u9971\u548c\u8272\u8c03</option><option>\u4f4e\u9971\u548c\u83ab\u5170\u8fea</option><option>\u9ed1\u767d\u7ecf\u5178</option><option>\u6696\u8272\u8c03</option><option>\u51b7\u8272\u8c03</option></select></div></div></div></div><div class="modal-right"><div class="mr-block"><label class="mr-label">\u8865\u5145\u8bf4\u660e</label><textarea class="mr-textarea" placeholder="\u8bf7\u8f93\u5165\u8865\u5145\u8bf4\u660e" maxlength="2000" oninput="this.nextElementSibling.textContent=this.value.length+\' / 2000\'"></textarea><span class="mr-count">0 / 2000</span></div><div class="mr-block"><label class="mr-label">\u51fa\u56fe\u8bbe\u7f6e</label><div class="mr-model-tabs"><button class="mmt-tab active" onclick="switchMmt(this)"\u901a\u7528</button><button class="mmt-tab" onclick="switchMmt(this)">Banana-pro</button><button class="mmt-tab" onclick="switchMmt(this)">Gpt-image-2</button></div><div class="mr-field"><label>\u51fa\u56fe\u6570\u91cf</label><div class="m-stepper"><button onclick="var s=this.nextElementSibling;s.textContent=Math.max(1,+s.textContent-1)">&#x2212;</button><span>1</span><button onclick="var p=this.previousElementSibling;p.textContent=+p.textContent+1">+</button></div></div><div class="mr-field"><label>\u56fe\u7247\u6bd4\u4f8b</label><select>'+ratioOpts+'</select></div></div><div class="mr-block"><label class="mr-label"\u53c2\u8003\u56fe\u7247 <small>(\u53ef\u9009\uff0c\u6700\u591a\u53ef\u4e0a\u4f20 4 \u5f20)</small></label><div class="mr-upload"><div class="mru-icon">&#x21E1;</div><span class="mru-text">\u672c\u5730\u4e0a\u4f20</span><button class="mru-lib-btn" onclick="alert(\'\u56fe\u7247\u5e93\u5f00\u53d1\u4e2d\')">\u56fe\u7247\u5e93</button></div></div></div></div>';
+    mO.classList.add('open');
+    mO.style.display='flex';
+    document.body.style.overflow='hidden';
+    console.log('[openModal] modal opened OK for:', title);
+  } catch(err) {
+    console.error('[openModal] ERROR:', err);
+    var mo=document.getElementById('modalOverlay');
+    if(mo){ mo.style.display='flex'; }
+    document.body.style.overflow='hidden';
+    alert('\u8bbe\u7f6e\u5f39\u7a97\u5df2\u6253\u5f00');
+  }
+}function closeModal(){
+  document.getElementById('modalOverlay').classList.remove('open');
+  document.body.style.overflow='';
+}
+
+function switchMmt(btn){
+  btn.parentElement.querySelectorAll('.mmt-tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+/* Init */
+renderPlanList();
+document.addEventListener('keydown', e => { if(e.key==='Escape'){closeModal();closeDrawer()} });</script>
+
+
+<!-- ===== RIGHT DRAWER ===== -->
+<div class="drawer-overlay" id="drawerOverlay" onclick="closeDrawer()"></div>
+<aside class="drawer" id="drawerPanel">
+  <div class="drawer-head">
+    <div class="drawer-tabs">
+      <button class="drawer-tab active" onclick="switchDrawerTab(this)">推荐类型</button>
+      <button class="drawer-tab" onclick="switchDrawerTab(this)">自定义子任务</button>
+      <button class="drawer-tab" onclick="switchDrawerTab(this)">已保存模板</button>
+    </div>
+    <button class="drawer-close" onclick="closeDrawer()">✕</button>
+  </div>
+  <div class="drawer-body"><div class="drawer-grid" id="drawerGrid"></div></div>
+  <div class="drawer-foot">
+    <span class="df-count">已勾选 <b id="drawerCount">0</b> 个推荐类型</span>
+    <div class="df-actions">
+      <button class="btn-df-cancel" onclick="closeDrawer()">取消</button>
+      <button class="btn-df-confirm" onclick="confirmDrawer()">AI智能策划(<span id="confirmCount">0</span>)</button>
+    </div>
+  </div>
+</aside>
+
+</body>
+</html>

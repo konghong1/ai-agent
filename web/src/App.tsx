@@ -7,7 +7,6 @@ import BasicLayout from '@/layouts/BasicLayout'
 import LoginLayout from '@/layouts/LoginLayout'
 import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
-import AgentList from '@/pages/AgentList'
 import ChatInterface from '@/pages/ChatInterface'
 import PromptTemplateList from '@/pages/PromptTemplateList'
 import KnowledgeBase from '@/pages/KnowledgeBase'
@@ -17,6 +16,7 @@ import MCPManagement from '@/pages/MCPManagement'
 import SkillManagement from '@/pages/SkillManagement'
 import SettingsPage from '@/pages/Settings'
 import ProviderManagement from '@/pages/ProviderManagement'
+import MediaLibrary from '@/pages/MediaLibrary'
 import './styles/variables.css'
 import './styles/global-theme.css'
 
@@ -93,6 +93,7 @@ export default function App() {
             <Route path="mcp-servers" element={<MCPManagement />} />
             <Route path="skills" element={<SkillManagement />} />
             <Route path="providers" element={<ProviderManagement />} />
+            <Route path="media-library" element={<MediaLibrary />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
         </Routes>

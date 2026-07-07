@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { PlusOutlined, EditOutlined, DeleteOutlined, SettingOutlined, KeyOutlined, SunOutlined, MoonOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { Typography, Form, Input, Button, Space, Table, Modal, message, Tabs, Switch } from 'antd'
-import { authHeaders, authHeadersRaw } from '@/services/auth'
+import { authHeaders } from '@/services/auth'
 import { useLayoutStore } from '@/stores/layout'
 
 const { Title, Text } = Typography
@@ -117,7 +117,7 @@ export default function SettingsPage() {
                 return (
                   <div
                     key={t.key}
-                    onClick={() => { setTheme(t.key); message.success('主题已切换: ' + t.name) }}
+                    onClick={() => { setTheme(t.key as any); message.success('主题已切换: ' + t.name) }}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 16, padding: 16, marginBottom: 12,
                       borderRadius: 12,

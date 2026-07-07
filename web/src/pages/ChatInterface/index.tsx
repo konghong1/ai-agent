@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, useRef } from "react"
-import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown } from "antd"
+import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown, Select, Tooltip } from "antd"
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
   RobotOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
+  PictureOutlined, ControlOutlined, CopyOutlined,
 } from "@ant-design/icons"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -44,6 +45,7 @@ interface Message {
     provider_id?: number
     error?: string
     video_url?: string
+    reference_images?: string[]
   } | null
 }
 
@@ -69,8 +71,17 @@ export default function ChatInterface() {
   const chatAbortRef = useRef<AbortController | null>(null)  // abort SSE when switching threads
   const fetchMsgIdRef = useRef(0)  // race condition guard: only apply latest fetchMessages result
   const skipNextFetchRef = useRef(false)  // skip fetchMessages when creating a new thread (handleSend)
+
+  // ── Reference images (图生图 / 图生视频) ──
+  const [referenceImages, setReferenceImages] = useState<string[]>([])
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [genSize, setGenSize] = useState<string>("1024x1024")
+  const [genDuration, setGenDuration] = useState<number>(5)
+  const refInputRef = useRef<HTMLInputElement>(null)
   
   const { providerId, providerType, modelName, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
+  // 当前选中的提示词模板（用于聊天输入框上方的可见指示）
+  const activeTemplate = templates.find((t) => t.id === templateId) || null
   
   const colors = themeColors[theme] || themeColors.naturalGreen
   const primaryColor = colors.primary
@@ -432,7 +443,7 @@ export default function ChatInterface() {
       const res = await fetch(`/api/threads`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ title: messageContent.slice(0, 8) || "新会话" }),
+        body: JSON.stringify({ title: messageContent.slice(0, 5) || "新会话" }),
       })
         if (res.ok) {
           const data = await res.json()
@@ -485,9 +496,14 @@ export default function ChatInterface() {
           provider_id: providerId,
           provider_type: providerType || 'openai-compatible',
           model_name: modelName,
+          reference_images: referenceImages,
+          size: genSize,
+          num_frames: Math.round(genDuration * 24),
+          frame_rate: 24,
         }),
         signal: abortCtrl.signal,
       })
+      setReferenceImages([])
 
       if (fetchRes.ok) {
         // SSE streaming handler
@@ -540,7 +556,7 @@ export default function ChatInterface() {
                   setThreads(prev => {
                     const exists = prev.find(t => t.id === finalThreadId)
                     if (exists) return prev
-                    return [{ id: finalThreadId, title: messageContent.slice(0, 60), agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]
+                    return [{ id: finalThreadId, title: messageContent.slice(0, 5) || "新会话", agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]
                   })
                   // Skip fetch — we already have the messages in state
                   skipNextFetchRef.current = true
@@ -664,6 +680,135 @@ export default function ChatInterface() {
     if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`
     return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" })
   }
+
+  // ── Reference image (图生图 / 图生视频) helpers ──
+  const handleRefFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    const readers: Promise<string>[] = []
+    for (const file of Array.from(files).slice(0, 8)) {
+      readers.push(downscaleImage(file))
+    }
+    Promise.all(readers).then((dataUrls) => {
+      const valid = dataUrls.filter(Boolean)
+      setReferenceImages(prev => {
+        const next = [...prev, ...valid].slice(0, 8)
+        if (prev.length + valid.length > 8) message.info("最多支持 8 张参考图")
+        return next
+      })
+    })
+    e.target.value = ""
+  }
+
+  const removeRefImage = (idx: number) => {
+    setReferenceImages(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  // Turn any generated media URL into a reference image (inline same-origin
+  // proxy URLs as data URLs; pass external URLs through for the backend).
+  const useAsReference = async (url: string) => {
+    if (!url) return
+    try {
+      if (url.startsWith("/api/")) {
+        const resp = await fetch(url)
+        if (resp.ok) {
+          const blob = await resp.blob()
+          const dataUrl = await new Promise<string>((resolve) => {
+            const r = new FileReader()
+            r.onload = () => resolve(r.result as string)
+            r.readAsDataURL(blob)
+          })
+          setReferenceImages(prev => [...prev, dataUrl].slice(0, 8))
+          message.success("已加入参考图")
+          return
+        }
+      }
+      setReferenceImages(prev => [...prev, url].slice(0, 8))
+      message.success("已加入参考图")
+    } catch {
+      setReferenceImages(prev => [...prev, url].slice(0, 8))
+      message.success("已加入参考图")
+    }
+  }
+
+  // Copy a message's raw content to the clipboard (with fallback for
+  // non-secure contexts where navigator.clipboard is unavailable).
+  const copyMessage = async (content: string) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(content)
+      } else {
+        const ta = document.createElement("textarea")
+        ta.value = content
+        ta.style.position = "fixed"
+        ta.style.opacity = "0"
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand("copy")
+        document.body.removeChild(ta)
+      }
+      message.success("已复制当前消息")
+    } catch {
+      message.error("复制失败，请手动选择文本复制")
+    }
+  }
+
+  // Downscale a locally-selected image before base64-encoding it, so the
+  // chat request body stays small (avoids the nginx 413 body-size limit and
+  // speeds up transmission). Images already under maxDim pass through.
+  const downscaleImage = (file: File, maxDim = 1280, quality = 0.85): Promise<string> =>
+    new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const img = new Image()
+        img.onload = () => {
+          const { width, height } = img
+          if (width <= maxDim && height <= maxDim) {
+            resolve(reader.result as string)
+            return
+          }
+          const scale = Math.min(maxDim / width, maxDim / height)
+          const w = Math.round(width * scale)
+          const h = Math.round(height * scale)
+          const canvas = document.createElement("canvas")
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext("2d")
+          if (!ctx) { resolve(reader.result as string); return }
+          ctx.drawImage(img, 0, 0, w, h)
+          resolve(canvas.toDataURL("image/jpeg", quality))
+        }
+        img.onerror = () => resolve(reader.result as string)
+        img.src = reader.result as string
+      }
+      reader.onerror = () => resolve("")
+      reader.readAsDataURL(file)
+    })
+
+  // Small thumbnail row for reference images (removable when onRemove given)
+  const renderRefThumbs = (urls: string[], onRemove?: (i: number) => void) =>
+    urls.length === 0 ? null : (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+        {urls.map((u, i) => (
+          <div key={i} style={{
+            position: "relative", width: 56, height: 56, borderRadius: 8,
+            overflow: "hidden", border: "1px solid var(--ice-border)", flexShrink: 0,
+          }}>
+            <img src={u} alt="参考图" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            {onRemove && (
+              <span
+                onClick={() => onRemove(i)}
+                style={{
+                  position: "absolute", top: 2, right: 2, width: 18, height: 18,
+                  borderRadius: "50%", background: "rgba(0,0,0,0.6)", color: "#fff",
+                  fontSize: 12, lineHeight: "18px", textAlign: "center", cursor: "pointer",
+                }}
+              >×</span>
+            )}
+          </div>
+        ))}
+      </div>
+    )
 
   if (loading) {
     return (
@@ -955,7 +1100,32 @@ export default function ChatInterface() {
                       border: msg.role === "user"
                         ? `1px solid ${primaryColor}22`
                         : `1px solid var(--ice-border)`,
-                    }}>
+                    }}
+                      className="msg-bubble"
+                    >
+                      {/* Hover-to-copy button for this message */}
+                      <Button
+                        className="msg-copy-btn"
+                        type="text"
+                        size="small"
+                        icon={<CopyOutlined />}
+                        title="复制当前消息"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          copyMessage(msg.content)
+                        }}
+                        style={{
+                          position: "absolute",
+                          top: 4,
+                          right: 4,
+                          width: 26,
+                          height: 26,
+                          padding: 0,
+                          color: "var(--ice-text-muted)",
+                          background: msg.role === "user" ? "rgba(255,255,255,0.6)" : "var(--ice-bg-secondary)",
+                          zIndex: 5,
+                        }}
+                      />
                       {msg.role === "assistant" ? (
                         <div style={{
                           color: "var(--ice-text-primary)",
@@ -1021,6 +1191,32 @@ export default function ChatInterface() {
                                 <div style={{ position: "relative" }}>
                                   {/* Invisible click targets for thumbnails rendered by MediaCard */}
                                   {/* We intercept clicks via event delegation */}
+                                </div>
+                              )}
+                              {msg.blocks.reference_images && msg.blocks.reference_images.length > 0 && (
+                                <div style={{ marginTop: 8 }}>
+                                  <div style={{ fontSize: 11, color: "var(--ice-text-muted)", marginBottom: 4 }}>
+                                    参考图
+                                  </div>
+                                  {renderRefThumbs(msg.blocks.reference_images)}
+                                  <div style={{ marginTop: 8 }}>
+                                    <Button
+                                      size="small"
+                                      icon={<PictureOutlined />}
+                                      disabled={!(
+                                        msg.blocks?.type === "video"
+                                          ? msg.blocks?.video_url
+                                          : msg.blocks?.image_url
+                                      )}
+                                      onClick={() => useAsReference(
+                                        msg.blocks?.type === "video"
+                                          ? (msg.blocks?.video_url || "")
+                                          : (msg.blocks?.image_url || "")
+                                      )}
+                                    >
+                                      用作参考图
+                                    </Button>
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -1110,14 +1306,24 @@ export default function ChatInterface() {
                           </ReactMarkdown>
                         </div>
                       ) : (
-                        <Text style={{
-                          color: "var(--ice-text-primary)",
-                          fontSize: 14,
-                          lineHeight: 1.7,
-                          whiteSpace: "pre-wrap",
-                        }}>
-                          {msg.content}
-                        </Text>
+                        <div>
+                          <Text style={{
+                            color: "var(--ice-text-primary)",
+                            fontSize: 14,
+                            lineHeight: 1.7,
+                            whiteSpace: "pre-wrap",
+                          }}>
+                            {msg.content}
+                          </Text>
+                          {msg.blocks?.reference_images && msg.blocks.reference_images.length > 0 && (
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 11, color: "var(--ice-text-muted)", marginBottom: 4 }}>
+                                参考图
+                              </div>
+                              {renderRefThumbs(msg.blocks.reference_images)}
+                            </div>
+                          )}
+                        </div>
                       )}
                       {/* Timestamp */}
                       <div style={{
@@ -1208,6 +1414,42 @@ export default function ChatInterface() {
               }
             `}</style>
 
+            {activeTemplate && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, color: "#888" }}>已选模板:</span>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    fontSize: 12,
+                    color: primaryColor,
+                    background: `${primaryColor}14`,
+                    padding: "2px 8px",
+                    borderRadius: 12,
+                  }}
+                >
+                  {activeTemplate.name}
+                  <span
+                    style={{ cursor: "pointer", fontWeight: 700, lineHeight: 1 }}
+                    title="清除模板"
+                    onClick={() => setTemplateId(null)}
+                  >
+                    ×
+                  </span>
+                </span>
+              </div>
+            )}
+
+            {referenceImages.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>
+                  参考图（图生图 / 图生视频）· {referenceImages.length}/8
+                </div>
+                {renderRefThumbs(referenceImages, removeRefImage)}
+              </div>
+            )}
+
             <TextArea
               ref={inputRef}
               value={inputValue}
@@ -1234,6 +1476,21 @@ export default function ChatInterface() {
               alignItems: "center",
               gap: 10,
             }}>
+              <Tooltip title="添加参考图（图生图 / 图生视频）">
+                <Button
+                  icon={<PictureOutlined />}
+                  onClick={() => refInputRef.current?.click()}
+                  style={{ borderRadius: 8 }}
+                />
+              </Tooltip>
+              <Tooltip title="高级参数（图片尺寸 / 视频时长）">
+                <Button
+                  icon={<ControlOutlined />}
+                  type={advancedOpen ? "primary" : "default"}
+                  onClick={() => setAdvancedOpen(o => !o)}
+                  style={{ borderRadius: 8 }}
+                />
+              </Tooltip>
               <ChatSelector
                 providerId={providerId}
                 providerType={providerType}
@@ -1260,6 +1517,43 @@ export default function ChatInterface() {
                 }}
               />
             </div>
+
+            {advancedOpen && (
+              <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+                <Select
+                  value={genSize}
+                  onChange={(v) => setGenSize(v)}
+                  style={{ width: 160 }}
+                  size="small"
+                  options={[
+                    { value: "1024x1024", label: "方图 1024×1024" },
+                    { value: "1024x768", label: "横图 1024×768" },
+                    { value: "768x1024", label: "竖图 768×1024" },
+                    { value: "512x512", label: "小图 512×512" },
+                  ]}
+                />
+                <Select
+                  value={genDuration}
+                  onChange={(v) => setGenDuration(Number(v))}
+                  style={{ width: 130 }}
+                  size="small"
+                  options={[
+                    { value: 3, label: "视频 3 秒" },
+                    { value: 5, label: "视频 5 秒" },
+                    { value: 10, label: "视频 10 秒" },
+                  ]}
+                />
+              </div>
+            )}
+
+            <input
+              ref={refInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={handleRefFiles}
+            />
           </div>
 
           <div style={{ textAlign: "center", marginTop: 8 }}>
@@ -1299,6 +1593,19 @@ export default function ChatInterface() {
         }
         @keyframes spin {
           to { transform: rotate(360deg); }
+        }
+        /* Hover-to-copy button on each chat bubble */
+        .msg-bubble {
+          position: relative;
+        }
+        .msg-bubble .msg-copy-btn {
+          opacity: 0;
+          transition: opacity 0.15s ease;
+          pointer-events: none;
+        }
+        .msg-bubble:hover .msg-copy-btn {
+          opacity: 1;
+          pointer-events: auto;
         }
       `}</style>
 

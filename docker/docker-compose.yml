@@ -94,8 +94,19 @@ services:
     entrypoint: >
       /bin/sh -c "
       mc alias set local http://minio:9000 minioadmin minioadmin;
-      mc mb local/media-assets --ignore-existing;
-      mc anonymous set public local/media-assets;
+      mc mb local/ai-agent-minio --ignore-existing;
+      mc anonymous set public local/ai-agent-minio;
+      mc ilm import local/ai-agent-minio <<'EOF' || true
+      {
+        "Rules": [
+          {"ID":"expire-videos","Status":"Enabled","Filter":{"Prefix":"videos/"},"Expiration":{"Days":30}},
+          {"ID":"expire-images","Status":"Enabled","Filter":{"Prefix":"images/"},"Expiration":{"Days":180}},
+          {"ID":"expire-avatars","Status":"Enabled","Filter":{"Prefix":"avatars/"},"Expiration":{"Days":365}},
+          {"ID":"expire-thumbnails","Status":"Enabled","Filter":{"Prefix":"thumbnails/"},"Expiration":{"Days":30}},
+          {"ID":"expire-temp","Status":"Enabled","Filter":{"Prefix":"temp/"},"Expiration":{"Days":7}}
+        ]
+      }
+      EOF
       exit 0;
       "
 
@@ -120,8 +131,8 @@ services:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-media-assets}
-      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000/media-assets}
+      MINIO_BUCKET: ${MINIO_BUCKET:-ai-agent-minio}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000/ai-agent-minio}
       MINIO_USE_SSL: "false"
 
       # ── Agnes AI API ──
@@ -151,6 +162,7 @@ services:
       - -c
       - |
         python -m app.db.init_db
+        python -m app.storage.ilm || true
         exec uvicorn app.server:app --host 0.0.0.0 --port 8010 --reload
 
   # ──────────────────────────────────────────────────────────────
@@ -169,8 +181,8 @@ services:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-media-assets}
-      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000/media-assets}
+      MINIO_BUCKET: ${MINIO_BUCKET:-ai-agent-minio}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000/ai-agent-minio}
       MINIO_USE_SSL: "false"
       AGNES_API_KEY: ${AGNES_API_KEY:-sk-0T1BpcsI51cKxXgWZejpvONrcUs8vDc1Tqzz7NkObIWAyezd}
       AGNES_BASE_URL: ${AGNES_BASE_URL:-https://apihub.agnes-ai.com/v1}

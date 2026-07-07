@@ -68,6 +68,15 @@ const ChevronDownIcon = ({ muted = false }: { muted?: boolean }) => (
   </svg>
 )
 
+/** 警告图标 — 代表当前模型提供商已失效 */
+const WarnIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+    <path d="M8 1.6L15 14H1L8 1.6Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    <path d="M8 6V9.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    <circle cx="8" cy="11.7" r="0.75" fill="currentColor" />
+  </svg>
+)
+
 // ─── Types ──────────────────────────────────────────────────────────
 
 interface ModelInfo {
@@ -312,6 +321,9 @@ export default function ChatSelector({
   if (loading) return null
 
   const noProviders = providers.length === 0
+  // #3: 已记录的 providerId 仍存在（用于检测"已选提供商被删除/切换账户"的情况）
+  const providerExists = providerId != null && providers.some((p) => p.id === providerId)
+  const showProviderMissing = !loading && !noProviders && providerId != null && !providerExists
 
   return (
     <>
@@ -349,6 +361,30 @@ export default function ChatSelector({
             <span style={{ fontWeight: 500 }}>请先配置 AI 提供商</span>
             <ChevronDownIcon muted />
           </div>
+        ) : showProviderMissing ? (
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: '#fa8c16',
+              cursor: 'pointer',
+              padding: '2px 8px',
+              borderRadius: 6,
+              border: '1px dashed #fa8c16',
+              background: 'rgba(250,140,22,0.08)',
+              transition: 'background 0.15s ease',
+            }}
+            onClick={() => navigate('/providers')}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(250,140,22,0.16)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(250,140,22,0.08)' }}
+            title="当前选择的模型提供商已不存在，点击前往添加"
+          >
+            <WarnIcon />
+            <span style={{ fontWeight: 500 }}>模型提供商不存在，去添加</span>
+            <ChevronDownIcon muted />
+          </div>
         ) : (
           <div style={tagStyle(hasModel)}>
             <ModelIcon muted={!hasModel} />
@@ -362,9 +398,9 @@ export default function ChatSelector({
               options={modelOptions}
               suffixIcon={null}
               getPopupContainer={() => document.body}
-              classNames={{ popup: { root: "chat-selector-model-dropdown" } }}
+              dropdownClassName="chat-selector-model-dropdown"
               popupMatchSelectWidth={false}
-              styles={{ popup: { root: { minWidth: 220 } } }}
+              dropdownStyle={{ minWidth: 220 }}
               filterOption={(input: string, option: any) => {
                 if (!input || !option?.value) return true
                 const val = String(option.value)
@@ -384,30 +420,56 @@ export default function ChatSelector({
           </div>
         )}
 
-        {/* ═══ Template Selector (always visible, independent of provider) ═══ */}
-        <div style={tagStyle(hasTemplate)}>
-          <TemplateIcon muted={!hasTemplate} />
-          <Select
-            className="chat-selector-tmpl"
-            value={templateId || undefined}
-            onChange={handleTemplateSelect}
-            size="small"
-            variant="borderless"
-            placeholder={templates.length > 0 ? '提示词' : '提示词(暂无)'}
-            suffixIcon={null}
-            getPopupContainer={() => document.body}
-            classNames={{ popup: { root: "chat-selector-tmpl-dropdown" } }}
-            popupMatchSelectWidth={false}
-            options={templates.map((t) => ({
-              value: t.id,
-              label: t.name + (t.variables?.length > 0 ? `  (${t.variables.length} 个变量)` : ''),
-            }))}
-            optionRender={(opt: any) => (
-              <span style={{ fontSize: 13 }}>{opt.label}</span>
-            )}
-          />
-          <ChevronDownIcon muted={!hasTemplate} />
-        </div>
+        {/* ═══ Template Selector (only the "add" entry when empty, mirrors provider pattern) ═══ */}
+        {templates.length === 0 ? (
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: 'var(--ice-primary)',
+              cursor: 'pointer',
+              padding: '2px 8px',
+              borderRadius: 6,
+              border: '1px dashed var(--ice-primary)',
+              background: 'rgba(22,119,255,0.06)',
+              transition: 'background 0.15s ease',
+            }}
+            onClick={() => navigate('/prompt-templates')}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(22,119,255,0.12)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(22,119,255,0.06)' }}
+            title="前往创建提示词模板"
+          >
+            <TemplateIcon muted />
+            <span style={{ fontWeight: 500 }}>请先添加提示词模板</span>
+            <ChevronDownIcon muted />
+          </div>
+        ) : (
+          <div style={tagStyle(hasTemplate)}>
+            <TemplateIcon muted={!hasTemplate} />
+            <Select
+              className="chat-selector-tmpl"
+              value={templateId || undefined}
+              onChange={handleTemplateSelect}
+              size="small"
+              variant="borderless"
+              placeholder="提示词"
+              suffixIcon={null}
+              getPopupContainer={() => document.body}
+              dropdownClassName="chat-selector-tmpl-dropdown"
+              popupMatchSelectWidth={false}
+              options={templates.map((t) => ({
+                value: t.id,
+                label: t.name + (t.variables?.length > 0 ? `  (${t.variables.length} 个变量)` : ''),
+              }))}
+              optionRender={(opt: any) => (
+                <span style={{ fontSize: 13 }}>{opt.label}</span>
+              )}
+            />
+            <ChevronDownIcon muted={!hasTemplate} />
+          </div>
+        )}
       </div>
     </>
   )

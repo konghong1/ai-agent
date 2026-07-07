@@ -26,6 +26,11 @@ langdetect>=1.0.9
 
 unstructured>=0.14.0
 openai>=1.30.0
+
+# Object storage (MinIO / S3) — required so generated media is actually
+# uploaded to the `ai-agent-minio` bucket instead of staying on the
+# provider's external CDN.
+boto3>=1.34.0
 pdfminer.six>=20221105
 python-docx>=1.1.0
 

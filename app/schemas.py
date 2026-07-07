@@ -109,6 +109,22 @@ class ChatRequest(BaseModel):
     provider_id: int | None = None
     provider_type: str | None = Field(default=None, description="LLM provider type (e.g. 'openai-compatible', 'qwen')")
     model_name: str | None = None
+    # ── Reference images (图生图 / 图生视频) ──
+    # Each entry is a base64 data URL, an http(s) URL, or an internal
+    # by-key URL (which the backend inlines as a data URL before sending
+    # to the provider). Sent by the chat UI when the user attaches images.
+    reference_images: list[str] | None = None
+    # Optional generation overrides (only used by image/video models).
+    size: str | None = None
+    n: int | None = None
+    width: int | None = None
+    height: int | None = None
+    num_frames: int | None = None
+    frame_rate: int | None = None
+    mode: str | None = None
+    negative_prompt: str | None = None
+    seed: int | None = None
+    tags: list[str] | None = None
 
 
 class ChatResponse(BaseModel):
@@ -347,7 +363,7 @@ class SystemSettingRead(BaseModel):
 
 class PromptTemplateCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    slug: str = Field(..., min_length=1, max_length=120)
+    slug: str | None = Field(None, max_length=120)
     system_prompt: str = Field(..., min_length=1)
     variables: list[str] = Field(default_factory=list)
     category: str = "general"
@@ -358,7 +374,7 @@ class PromptTemplateCreate(BaseModel):
 
 class PromptTemplateUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
-    slug: str | None = Field(default=None, min_length=1, max_length=120)
+    slug: str | None = Field(default=None, max_length=120)
     system_prompt: str | None = None
     variables: list[str] | None = None
     category: str | None = None

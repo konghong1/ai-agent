@@ -69,6 +69,7 @@ const menuItems = [
     children: [
 
       { key: "/knowledge-bases", label: "知识库" },
+      { key: "/media-library", label: "媒体库" },
 
     ],
 

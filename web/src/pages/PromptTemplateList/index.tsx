@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Table, Tag, Switch, Button, Space, Modal, Form, Input, Select, message, Typography, Tooltip } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons'
-import { useNavigate } from 'react-router-dom'
+import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { useLayoutStore } from '@/stores/layout'
 import { authHeaders } from '@/services/auth'
@@ -32,7 +31,6 @@ const CATEGORIES = [
 ]
 
 export default function PromptTemplateList() {
-  const navigate = useNavigate()
   const theme = useLayoutStore((s) => s.theme)
   const [templates, setTemplates] = useState<PromptTemplate[]>([])
   const [loading, setLoading] = useState(false)
@@ -201,9 +199,6 @@ export default function PromptTemplateList() {
         <Form form={form} layout="vertical" onFinish={handleSave} initialValues={{ category: 'general', enabled: true, is_default: false }}>
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="例如: 代码审查助手" />
-          </Form.Item>
-          <Form.Item name="slug" label="唯一标识" rules={[{ required: true, message: '请输入slug' }]}>
-            <Input placeholder="例如: code_review (英文字符和下划线)" />
           </Form.Item>
           <Form.Item name="category" label="分类">
             <Select options={CATEGORIES} />

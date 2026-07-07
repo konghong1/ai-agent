@@ -25,7 +25,7 @@ from typing import Any
 import httpx
 import requests
 
-from app.storage import StorageBackend, create_storage_backend
+from app.storage import StorageBackend, create_storage_backend, get_storage_backend
 
 logger = logging.getLogger(__name__)
 
@@ -47,25 +47,8 @@ def _is_agnes(base_url: str) -> bool:
 # Storage Backend Singleton (lazy-initialized from env)
 # ───────────────────────────────────────────────────────────────────
 
-_storage_backend: StorageBackend | None = None
-
-
-def get_storage_backend() -> StorageBackend:
-    """Get or create the global storage backend instance."""
-    global _storage_backend
-    if _storage_backend is None:
-        backend_type = os.getenv("STORAGE_BACKEND", "local")
-        _storage_backend = create_storage_backend(
-            backend_type=backend_type,
-            endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
-            access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-            secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
-            bucket=os.getenv("MINIO_BUCKET", "media-assets"),
-            public_url=os.getenv("MINIO_PUBLIC_URL", "http://localhost:9000/media-assets"),
-            use_ssl=os.getenv("MINIO_USE_SSL", "false").lower() == "true",
-        )
-    return _storage_backend
-
+# NOTE: get_storage_backend() now lives in app.storage (single source of
+# truth, defaults to the MinIO backend). Imported above.
 
 # ───────────────────────────────────────────────────────────────────
 # Media Pipeline Service

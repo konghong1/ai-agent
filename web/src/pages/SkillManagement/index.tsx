@@ -2,24 +2,15 @@ import { useEffect, useState } from 'react'
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons'
 import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { Typography, Form, Input, Button, Space, Table, Modal, Select, Switch, Tag, message } from 'antd'
-import { useLayoutStore } from '@/stores/layout'
 import { authHeaders } from '@/services/auth'
 
 const { Title, Text } = Typography
 
 export default function SkillManagement() {
-  const theme = useLayoutStore((s) => s.theme)
   const [items, setItems] = useState<any[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<any>(null)
   const [form] = Form.useForm()
-
-  const themeColorMap: Record<string, string> = {
-    techBlue: '#2563EB',
-    naturalGreen: '#22C55E',
-    elegantPurple: '#7C3AED',
-  }
-  const primaryColor = themeColorMap[theme] || '#22C55E'
 
   const fetchItems = async () => {
     try {

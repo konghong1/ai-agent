@@ -6,7 +6,7 @@ import { IceCrystalCard } from '@/components/IceCrystalCard'
 import { useLayoutStore } from '@/stores/layout'
 import { authHeaders } from '@/services/auth'
 
-const { Title, Text } = Typography
+const { Title } = Typography
 
 interface Agent {
   id: number; name: string; description: string; system_prompt: string

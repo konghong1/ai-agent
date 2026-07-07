@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Protocol
@@ -109,8 +110,7 @@ class MinIOStorageBackend(StorageBackend):
                 aws_access_key_id=self.access_key,
                 aws_secret_access_key=self.secret_key,
                 config=s3_config,
-                region_name=self.region,
-                aws_signature_version="v4",
+                region_name=self.region or None,
             )
             return client, boto3, botocore
         except ImportError:
@@ -140,27 +140,39 @@ class MinIOStorageBackend(StorageBackend):
         try:
             client, boto3, botocore = self._client()
             content_type = mime_type or mimetypes.guess_type(object_key)[0] or "application/octet-stream"
-            
+
             extra_args = {
                 "ContentType": content_type,
                 "ACL": "public-read",
             }
             extra_args.update(kwargs.get("extra_args", {}))
 
-            client.put_object(
-                Bucket=self.bucket,
-                Key=object_key,
-                Body=file_bytes,
-                ContentType=content_type,
-                ACL="public-read",
-            )
-            
+            try:
+                client.put_object(
+                    Bucket=self.bucket,
+                    Key=object_key,
+                    Body=file_bytes,
+                    ContentType=content_type,
+                    ACL="public-read",
+                )
+            except botocore.exceptions.ClientError as acl_err:
+                # Some MinIO deployments reject canned ACLs when no bucket
+                # policy allows anonymous access. Retry without ACL — the
+                # object is still served through our authenticated proxy.
+                logger.warning("MinIO ACL rejected, retrying without ACL: %s", acl_err)
+                client.put_object(
+                    Bucket=self.bucket,
+                    Key=object_key,
+                    Body=file_bytes,
+                    ContentType=content_type,
+                )
+
             # Return presigned URL as fallback, or construct public URL
             try:
                 url = client.generate_presigned_url(
                     "get_object",
                     Params={"Bucket": self.bucket, "Key": object_key},
-                    ExpiresIn=0,  # 0 means permanent/public access
+                    ExpiresIn=3600,
                 )
                 # Clean up the presigned URL to be a direct access URL
                 url = url.split("?")[0] if "?" in url else url
@@ -285,7 +297,7 @@ def create_storage_backend(
             endpoint=kwargs.get("endpoint", "localhost:9000"),
             access_key=kwargs.get("access_key", "minioadmin"),
             secret_key=kwargs.get("secret_key", "minioadmin"),
-            bucket=kwargs.get("bucket", "media-assets"),
+            bucket=kwargs.get("bucket", "ai-agent-minio"),
             region=kwargs.get("region", ""),
             use_ssl=kwargs.get("use_ssl", False),
             public_url=kwargs.get("public_url"),
@@ -297,3 +309,38 @@ def create_storage_backend(
         )
     else:
         raise ValueError(f"Unknown storage backend: {backend_type}")
+
+
+# ───────────────────────────────────────────────────────────────────
+# Singleton accessor (configured from environment)
+# ───────────────────────────────────────────────────────────────────
+
+_storage_backend: StorageBackend | None = None
+
+
+def get_storage_backend() -> StorageBackend:
+    """Get or create the global storage backend singleton.
+
+    Defaults to the MinIO/S3 backend (bucket ``ai-agent-minio``) because the
+    platform is designed to re-host generated images/videos in object storage.
+    Set ``STORAGE_BACKEND=local`` to fall back to the local filesystem (dev).
+    """
+    global _storage_backend
+    if _storage_backend is None:
+        backend_type = os.getenv("STORAGE_BACKEND", "minio")
+        _storage_backend = create_storage_backend(
+            backend_type=backend_type,
+            endpoint=os.getenv("MINIO_ENDPOINT", "localhost:9000"),
+            access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+            secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+            bucket=os.getenv("MINIO_BUCKET", "ai-agent-minio"),
+            public_url=os.getenv("MINIO_PUBLIC_URL", "http://localhost:9000/ai-agent-minio"),
+            use_ssl=os.getenv("MINIO_USE_SSL", "false").lower() == "true",
+        )
+    return _storage_backend
+
+
+def reset_storage_backend() -> None:
+    """Drop the cached singleton (useful for tests / config reloads)."""
+    global _storage_backend
+    _storage_backend = None

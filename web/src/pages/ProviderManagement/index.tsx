@@ -446,7 +446,6 @@ export default function ProviderManagement() {
     const defaultBorder = "1px solid #faad14"
     const defaultBg = "rgba(250, 173, 20, 0.08)"
     const defaultShadow = "0 0 10px rgba(250, 173, 20, 0.18)"
-    const defaultHoverBorder = "1px solid #ffc53d"
     const defaultHoverShadow = "0 0 16px rgba(250, 173, 20, 0.32)"
 
     return (

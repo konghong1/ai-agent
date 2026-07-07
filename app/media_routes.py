@@ -12,11 +12,12 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import mimetypes
 import urllib.parse
 from pathlib import PurePosixPath
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,7 +39,6 @@ router = APIRouter(prefix="/api/media", tags=["media"])
 @router.get("/assets/{asset_id}")
 def get_media_asset(
     asset_id: str,
-    request: Request | None = None,
     db: Session = Depends(get_db),
 ):
     """Serve a media asset by its database ID.
@@ -46,9 +46,6 @@ def get_media_asset(
     This is the primary way for the frontend to access media —
     it resolves the asset from the database and streams it from MinIO.
     """
-    from fastapi import Depends
-    from sqlalchemy.orm import Session
-    
     stmt = select(MediaAsset).where(MediaAsset.id == asset_id)
     asset = db.scalar(stmt)
     
@@ -84,32 +81,68 @@ def get_media_asset(
 @router.get("/assets/by-key/{object_key:path}")
 def get_media_by_key(
     object_key: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Serve a media asset directly by its storage object key.
-    
-    Useful for direct access without database lookup.
+
+    Useful for direct access without database lookup. Returns a proper
+    content-type (derived from the object key) and supports HTTP Range
+    requests so videos can be seeked in the browser.
     """
     # URL decode the key
     object_key = urllib.parse.unquote(object_key)
-    
+
     # Check if exists in storage
     storage = get_storage_backend()
     if not storage.exists(object_key):
         raise HTTPException(status_code=404, detail="Media not found")
-    
+
     # Stream the file
     file_bytes = storage.get(object_key)
     if not file_bytes:
         raise HTTPException(status_code=503, detail="Media unavailable")
-    
+
+    # Derive a sensible content-type from the key extension.
+    content_type, _ = mimetypes.guess_type(object_key)
+    if not content_type:
+        content_type = "application/octet-stream"
+
+    headers = {
+        "Cache-Control": "public, max-age=86400",
+        "Accept-Ranges": "bytes",
+        "Content-Type": content_type,
+    }
+
+    # Support Range requests for video seeking.
+    range_header = request.headers.get("range")
+    if range_header:
+        try:
+            unit, _, rng = range_header.strip().partition("=")
+            if unit.lower() == "bytes" and rng:
+                start_str, _, end_str = rng.partition("-")
+                start = int(start_str) if start_str else 0
+                end = int(end_str) if end_str else len(file_bytes) - 1
+                end = min(end, len(file_bytes) - 1)
+                if start <= end < len(file_bytes):
+                    chunk = file_bytes[start : end + 1]
+                    headers["Content-Range"] = f"bytes {start}-{end}/{len(file_bytes)}"
+                    headers["Content-Length"] = str(len(chunk))
+                    return Response(
+                        content=chunk,
+                        status_code=206,
+                        media_type=content_type,
+                        headers=headers,
+                    )
+        except (ValueError, IndexError):
+            # Malformed Range — fall through and serve the whole file.
+            pass
+
+    headers["Content-Length"] = str(len(file_bytes))
     return Response(
         content=file_bytes,
-        media_type="application/octet-stream",
-        headers={
-            "Cache-Control": "public, max-age=86400",
-            "Accept-Ranges": "bytes",
-        },
+        media_type=content_type,
+        headers=headers,
     )
 
 

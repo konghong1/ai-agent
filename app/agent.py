@@ -202,7 +202,7 @@ def _get_or_create_thread(db: Session, user_id: int, agent_id: int | None, messa
             raise HTTPException(status_code=404, detail="Thread not found.")
         return thread
 
-    thread = Thread(id=new_thread_id(), user_id=user_id, agent_id=agent_id or 0, title=message[:60] or "New chat")
+    thread = Thread(id=new_thread_id(), user_id=user_id, agent_id=agent_id, title=message[:5] or "新会话")
     db.add(thread)
     db.flush()
     return thread

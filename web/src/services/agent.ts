@@ -21,7 +21,7 @@ export interface AgentCreate {
   knowledge_base_ids?: number[]
 }
 
-import { authHeaders, getToken } from './auth'
+import { authHeaders } from './auth'
 
 export const agentApi = {
   list: () => fetch('/api/agents', { headers: authHeaders() }).then(r => r.json()),

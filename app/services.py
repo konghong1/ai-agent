@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, update as sa_update
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
@@ -846,9 +846,9 @@ class ProviderService:
         from app.models import Provider
         if is_default:
             db.execute(
-                select(Provider).where(
+                sa_update(Provider).where(
                     Provider.user_id == user_id, Provider.is_default == True
-                ).update({"is_default": False})
+                ).values(is_default=False)
             )
         provider = Provider(
             user_id=user_id, name=name, base_url=base_url, api_key=api_key,
@@ -879,11 +879,11 @@ class ProviderService:
             if v is not None and hasattr(provider, k):
                 if k == "is_default" and v:
                     db.execute(
-                        select(Provider).where(
+                        sa_update(Provider).where(
                             Provider.user_id == provider.user_id,
                             Provider.id != provider.id,
                             Provider.is_default == True
-                        ).update({"is_default": False})
+                        ).values(is_default=False)
                     )
                 setattr(provider, k, v)
         db.commit()
@@ -942,13 +942,11 @@ class ProviderService:
         if model_type in _default_flags_map:
             flag_name, flag_value = _default_flags_map[model_type]
             if flag_value:
-                flag_col = getattr(ProviderModel, flag_name)
                 db.execute(
-                    select(ProviderModel).where(
+                    sa_update(ProviderModel).where(
                         ProviderModel.provider_id == provider_id,
                         ProviderModel.model_type == model_type,
-                        flag_col == True
-                    ).update({flag_name: False})
+                    ).values({flag_name: False})
                 )
         pm = ProviderModel(
             provider_id=provider_id, model_name=model_name, model_type=model_type,

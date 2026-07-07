@@ -73,13 +73,16 @@ def seed_database():
     default.
     """
     from app.core.database import SessionLocal
+    from app.core.security import hash_password
     from app.models import Provider, User, PromptTemplate
 
     agnes_api_key = os.getenv(
         "AGNES_API_KEY", "sk-0T1BpcsI51cKxXgWZejpvONrcUs8vDc1Tqzz7NkObIWAyezd"
     )
-    # Password: admin123
-    admin_pw_hash = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewH5F5jPHssXwRiG"
+    # Password: admin123 (hashed with the same pbkdf2_sha256 context the
+    # app uses at runtime — the previous hardcoded bcrypt hash could never
+    # be verified, making the default admin account unloginable).
+    admin_pw_hash = hash_password("admin123")
 
     db = SessionLocal()
     try:

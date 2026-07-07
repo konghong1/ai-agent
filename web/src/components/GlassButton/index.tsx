@@ -1,6 +1,5 @@
 import React from 'react'
 import { Button, type ButtonProps } from 'antd'
-import { LoadingOutlined } from '@ant-design/icons'
 
 export interface GlassButtonProps extends ButtonProps {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'

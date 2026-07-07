@@ -8,7 +8,7 @@ interface ChatSelectorsState {
   templateId: number | null
   
   setProviderAndModel: (providerId: number, modelName: string | null, providerType?: string | null) => void
-  setTemplateId: (templateId: number) => void
+  setTemplateId: (templateId: number | null) => void
   clearSelections: () => void
 }
 
@@ -23,7 +23,7 @@ export const useChatSelectors = create<ChatSelectorsState>()(
       setProviderAndModel: (providerId: number, modelName: string | null, providerType: string | null = null) =>
         set({ providerId, modelName, providerType }),
         
-      setTemplateId: (templateId: number) => set({ templateId }),
+      setTemplateId: (templateId: number | null) => set({ templateId }),
       
       clearSelections: () => set({ providerId: null, providerType: null, modelName: null, templateId: null }),
     }),
