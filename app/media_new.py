@@ -25,6 +25,7 @@ from typing import Any
 import httpx
 import requests
 
+from app.media_retry import post_with_retry, clean_provider_error
 from app.storage import StorageBackend, create_storage_backend, get_storage_backend
 
 logger = logging.getLogger(__name__)
@@ -94,39 +95,43 @@ class MediaService:
 
         logger.info("Image generate: model=%s", model_name)
 
-        try:
-            resp = requests.post(
-                url,
-                json=payload,
-                headers={"Authorization": f"Bearer {provider_api_key}"},
-                timeout=120,
+        outcome = post_with_retry(
+            url,
+            payload,
+            headers={"Authorization": f"Bearer {provider_api_key}"},
+            timeout=300,
+            what="Image",
+            logger=logger,
+        )
+        if not outcome["ok"]:
+            error_detail = clean_provider_error(outcome["text"], outcome["exception"])
+            logger.error(
+                "Image generation failed after %d attempt(s): %s",
+                outcome["attempts"], error_detail,
             )
-            resp.raise_for_status()
-            api_result = resp.json()
+            return {"error": error_detail, "data": [], "attempts": outcome["attempts"]}
 
-            # Download and store each image
-            stored_images = []
-            for img_data in api_result.get("data", []):
-                image_url = img_data.get("url")
-                if not image_url:
-                    continue
-                
-                stored = MediaService._download_and_store(
-                    url=image_url,
-                    media_type="image",
-                    content_type=img_data.get("b64_json"),
-                )
-                stored_images.append(stored)
+        api_result = outcome["json"]
 
-            return {
-                "status": "completed",
-                "data": stored_images,
-                "error": None,
-            }
+        # Download and store each image
+        stored_images = []
+        for img_data in api_result.get("data", []):
+            image_url = img_data.get("url")
+            if not image_url:
+                continue
+            
+            stored = MediaService._download_and_store(
+                url=image_url,
+                media_type="image",
+                content_type=img_data.get("b64_json"),
+            )
+            stored_images.append(stored)
 
-        except requests.RequestException as exc:
-            logger.error("Image generation failed: %s", exc)
-            return {"error": str(exc), "data": []}
+        return {
+            "status": "completed",
+            "data": stored_images,
+            "error": None,
+        }
 
     # ── Video Generation (async) ───────────────────────────────────
 
@@ -164,19 +169,22 @@ class MediaService:
 
         logger.info("Video generate: model=%s", model_name)
 
-        try:
-            resp = requests.post(
-                url,
-                json=payload,
-                headers={"Authorization": f"Bearer {provider_api_key}"},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return resp.json()
-
-        except requests.RequestException as exc:
-            logger.error("Video generation failed: %s", exc)
-            return {"error": str(exc)}
+        outcome = post_with_retry(
+            url,
+            payload,
+            headers={"Authorization": f"Bearer {provider_api_key}"},
+            timeout=120,
+            what="Video",
+            logger=logger,
+        )
+        if outcome["ok"]:
+            return outcome["json"]
+        error_detail = clean_provider_error(outcome["text"], outcome["exception"])
+        logger.error(
+            "Video generation failed after %d attempt(s): %s",
+            outcome["attempts"], error_detail,
+        )
+        return {"error": error_detail, "attempts": outcome["attempts"]}
 
     # ── Video Status Polling + Auto-Store ────────────────────────────
 
@@ -198,7 +206,7 @@ class MediaService:
             resp = requests.get(
                 url,
                 headers={"Authorization": f"Bearer {provider_api_key}"},
-                timeout=15,
+                timeout=60,
             )
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
@@ -249,14 +257,14 @@ class MediaService:
         # Download from external CDN
         try:
             import httpx
-            async_resp = httpx.get(url, timeout=30)
+            async_resp = httpx.get(url, timeout=120)
             async_resp.raise_for_status()
             file_bytes = async_resp.content
         except Exception as exc:
             logger.warning("Failed to download %s: %s", url[:80], exc)
             # Fallback to sync requests
             try:
-                resp = requests.get(url, timeout=30)
+                resp = requests.get(url, timeout=120)
                 resp.raise_for_status()
                 file_bytes = resp.content
             except Exception as exc2:

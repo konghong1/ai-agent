@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react"
-import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown } from "antd"
+import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown, Popconfirm } from "antd"
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
   RobotOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
@@ -55,7 +55,7 @@ export default function AgentDetail() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  const { providerId, providerType, modelName, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
+  const { providerId, providerType, modelName, modelType, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
 
   const colors = themeColors[theme] || themeColors.naturalGreen
   const primaryColor = colors.primary
@@ -138,12 +138,16 @@ export default function AgentDetail() {
         headers: authHeaders(),
       })
       if (res.ok || res.status === 204) {
+        // Update list state immediately so the row disappears right away,
+        // regardless of whether this was the active thread.
         setThreads(prev => prev.filter(t => t.id !== threadId))
         if (activeThreadId === threadId) {
           setActiveThreadId(null)
           setMessages([])
         }
         message.success("会话已删除")
+      } else {
+        message.error("删除失败")
       }
     } catch (e: any) {
       message.error(e.message || "删除失败")
@@ -454,6 +458,7 @@ export default function AgentDetail() {
               <Dropdown
                 key={t.id}
                 trigger={["contextMenu"]}
+                destroyPopupOnHide
                 menu={{
                   items: [
                     { key: "rename", label: "重命名", icon: <EditOutlined />, onClick: () => startRename(t) },
@@ -520,19 +525,25 @@ export default function AgentDetail() {
                       onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
                       onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
                     />
-                    <Button
-                      type="text"
-                      danger
-                      size="small"
-                      icon={<DeleteOutlined />}
-                      onClick={e => {
-                        e.stopPropagation()
-                        deleteThread(t.id)
-                      }}
-                      style={{ opacity: 0.5, flexShrink: 0 }}
-                      onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
-                      onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
-                    />
+                    <Popconfirm
+                      title="删除会话"
+                      description="确定要删除这个会话吗？"
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteThread(t.id)}
+                    >
+                      <Button
+                        type="text"
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        onClick={e => e.stopPropagation()}
+                        style={{ opacity: 0.5, flexShrink: 0 }}
+                        onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
+                        onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
+                      />
+                    </Popconfirm>
                   </Space>
                 </div>
               </Dropdown>
@@ -895,9 +906,10 @@ export default function AgentDetail() {
               providerId={providerId}
               providerType={providerType}
               modelName={modelName}
+              modelType={modelType}
               templateId={templateId}
               templates={[]}
-              onProviderChange={(pid, mname, ptype) => setProviderAndModel(pid, mname, ptype)}
+              onProviderChange={(pid, mname, ptype, mtype) => setProviderAndModel(pid, mname, ptype, mtype)}
               onTemplateChange={(tid) => setTemplateId(tid)}
             />
           </div>

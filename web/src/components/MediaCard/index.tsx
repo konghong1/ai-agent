@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react"
 import {
   LoadingOutlined, DownloadOutlined, ExpandOutlined,
-  CopyOutlined, CheckOutlined,
+  CopyOutlined, CheckOutlined, PictureOutlined,
   ExclamationCircleOutlined, ReloadOutlined,
 } from "@ant-design/icons"
 import { message } from "antd"
@@ -41,6 +41,8 @@ export interface MediaCardProps {
   onContentLoaded?: () => void
   /** Click handler for thumbnail images (index in allImages array) */
   onThumbnailClick?: (index: number) => void
+  /** Click handler to use the generated media as a reference image */
+  onUseAsReference?: () => void
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -143,7 +145,7 @@ function ActionBtn({
 // ═══════════════════════════════════════════════════════════════
 
 function ImageCard({
-  imageUrl, allImages, primaryColor, accentColor, isUserMessage, onLoad, onThumbnailClick,
+  imageUrl, allImages, primaryColor, accentColor, isUserMessage, onLoad, onThumbnailClick, onUseAsReference,
 }: {
   imageUrl: string
   allImages?: { url: string }[]
@@ -152,6 +154,7 @@ function ImageCard({
   isUserMessage: boolean
   onLoad: (url: string) => void
   onThumbnailClick?: (index: number) => void
+  onUseAsReference?: () => void
 }) {
   const [loaded, setLoaded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -294,6 +297,17 @@ function ImageCard({
             primaryColor={primaryColor}
             onClick={handleCopy}
           />
+          {onUseAsReference && (
+            <>
+              <div style={{ width: 1, alignSelf: "stretch", background: "var(--ice-border)" }} />
+              <ActionBtn
+                icon={<PictureOutlined />}
+                label="用作参考图"
+                primaryColor={primaryColor}
+                onClick={(e) => { e.stopPropagation(); onUseAsReference() }}
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -592,7 +606,7 @@ function VideoCard({
 // ═══════════════════════════════════════════════════════════════
 
 export default function MediaCard({
-  block, primaryColor, accentColor, isUserMessage, onContentLoaded, onThumbnailClick,
+  block, primaryColor, accentColor, isUserMessage, onContentLoaded, onThumbnailClick, onUseAsReference,
 }: MediaCardProps) {
   const loadedSetRef = useRef<Set<string>>(new Set())
 
@@ -625,6 +639,7 @@ export default function MediaCard({
         isUserMessage={!!isUserMessage}
         onLoad={handleImageLoad}
         onThumbnailClick={onThumbnailClick}
+        onUseAsReference={onUseAsReference}
       />
     )
   }

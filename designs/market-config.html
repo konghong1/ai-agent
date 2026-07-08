@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>电商套图 · 市场配置 × AI 智能策划台（v3.1）</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  /* ============ Design Tokens (继承 v2 设计系统) ============ */
+  :root {
+    --brand: #FF4D2E;
+    --brand-strong: #E83C20;
+    --brand-weak: #FFE9E3;
+
+    --ink: #1B1A21;
+    --ink-soft: #57555F;
+    --ink-faint: #908E98;
+
+    --bg: #F6F5F2;
+    --surface: #FFFFFF;
+    --surface-2: #FAF9F6;
+    --line: #ECEAE4;
+    --line-strong: #DDDAD2;
+
+    --ok: #1F9D6B;
+    --ok-weak: #E6F6EE;
+    --warn: #E0A106;
+    --warn-weak: #FBF1D8;
+    --info: #2F6FED;
+
+    --ai-purple: #7C3AED;
+    --ai-purple-light: #F3EFFE;
+
+    --confirm-lime: #C8E000;
+    --confirm-lime-hover: #B5CA00;
+
+    --font-display: "Space Grotesk", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-body: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
+    --s5: 20px; --s6: 24px; --s8: 32px; --s10: 40px; --s12: 48px;
+
+    --sh-1: 0 1px 2px rgba(27,26,33,.05), 0 1px 3px rgba(27,26,33,.06);
+    --sh-2: 0 4px 12px rgba(27,26,33,.07), 0 2px 4px rgba(27,26,33,.04);
+    --sh-3: 0 12px 32px rgba(27,26,33,.10);
+    --sh-modal: 0 24px 64px rgba(27,26,33,.20);
+
+    --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 22px;
+    --ease: cubic-bezier(.22,.61,.36,1);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-body);
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+    line-height: 1.55;
+  }
+  h1,h2,h3,h4 { font-family: var(--font-display); margin: 0; letter-spacing: -.01em; }
+  button { font-family: inherit; cursor: pointer; }
+  ::selection { background: var(--brand-weak); }
+
+  /* ============ App Shell ============ */
+  .app { display: grid; grid-template-columns: 248px 1fr; min-height: 100vh; }
+
+  .rail {
+    background: var(--ink);
+    color: #fff;
+    padding: var(--s6) var(--s5);
+    display: flex; flex-direction: column; gap: var(--s6);
+    position: sticky; top: 0; height: 100vh;
+  }
+  .brand { display: flex; align-items: center; gap: var(--s3); }
+  .brand .logo {
+    width: 38px; height: 38px; border-radius: 11px;
+    background: linear-gradient(135deg, var(--brand), #FF8A4C);
+    display: grid; place-items: center; font-weight: 700; font-size: 18px;
+    box-shadow: 0 6px 18px rgba(255,77,46,.35);
+  }
+  .brand .name { font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+  .brand .sub { font-size: 11px; color: #b9b6c2; letter-spacing: .04em; }
+
+  .nav { display: flex; flex-direction: column; gap: 4px; }
+  .nav a {
+    display: flex; align-items: center; gap: var(--s3);
+    padding: 11px 12px; border-radius: 10px; color: #cfccd8;
+    text-decoration: none; font-size: 14px; font-weight: 500;
+    transition: background var(--ease) .18s, color var(--ease) .18s;
+  }
+  .nav a .ic { width: 18px; text-align: center; }
+  .nav a:hover { background: rgba(255,255,255,.06); color: #fff; }
+  .nav a.active { background: rgba(255,77,46,.16); color: #fff; }
+  .nav a.active .ic { color: var(--brand); }
+
+  .rail-foot { margin-top: auto; font-size: 11px; color: #8d8a98; line-height: 1.5; }
+
+  /* ============ Main ============ */
+  .main { padding: var(--s8) var(--s10) var(--s12); max-width: 1240px; }
+
+  .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s4); margin-bottom: var(--s8); flex-wrap: wrap; }
+  .topbar h1 { font-size: 30px; line-height: 1.1; }
+  .topbar .lede { color: var(--ink-soft); font-size: 14px; margin-top: var(--s2); max-width: 600px; }
+
+  /* Step ribbon */
+  .steps { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s8); flex-wrap: wrap; }
+  .step {
+    display: flex; align-items: center; gap: var(--s2);
+    background: var(--surface); border: 1px solid var(--line);
+    padding: 9px 14px 9px 10px; border-radius: 999px; font-size: 13px; font-weight: 500;
+    box-shadow: var(--sh-1);
+  }
+  .step .num {
+    width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--surface-2); color: var(--ink-soft); font-weight: 700; font-size: 12px;
+    font-family: var(--font-display);
+  }
+  .step.done .num { background: var(--ok); color: #fff; }
+  .step.active { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-weak); }
+  .step.active .num { background: var(--brand); color: #fff; }
+  .step .arrow { color: var(--ink-faint); font-size: 14px; }
+
+  .section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); margin: var(--s8) 0 var(--s4); }
+  .section-head h2 { font-size: 20px; }
+  .section-head .hint { font-size: 12px; color: var(--ink-faint); }
+
+  /* ============ Market Config Panel ============ */
+  .mkt {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-xl);
+    box-shadow: var(--sh-2); overflow: hidden;
+  }
+  .mkt-head {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--s4);
+    padding: var(--s5) var(--s6); border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #fff, var(--surface-2));
+  }
+  .mkt-head .ttl { display: flex; align-items: center; gap: var(--s3); }
+  .mkt-head .ttl .badge-pin {
+    width: 34px; height: 34px; border-radius: 10px; background: var(--ai-purple-light);
+    color: var(--ai-purple); display: grid; place-items: center; font-size: 17px;
+  }
+  .mkt-head h3 { font-size: 17px; }
+  .mkt-head .desc { font-size: 12px; color: var(--ink-faint); margin-top: 2px; }
+
+  .mkt-body { padding: var(--s6); display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--s5); }
+  @media (max-width: 880px){ .mkt-body { grid-template-columns: 1fr; } }
+
+  .field { display: flex; flex-direction: column; gap: var(--s2); }
+  .field label { font-size: 13px; font-weight: 600; color: var(--ink-soft); display: flex; align-items: center; gap: 6px; }
+  .field label .req { color: var(--brand); }
+  .field .note { font-size: 11px; color: var(--ink-faint); }
+  select, textarea, input[type=text], input[type=number] {
+    font-family: var(--font-body); font-size: 14px; color: var(--ink);
+    background: var(--surface-2); border: 1px solid var(--line-strong);
+    border-radius: var(--r-md); padding: 11px 12px; width: 100%;
+    transition: border-color var(--ease) .15s, box-shadow var(--ease) .15s, background var(--ease) .15s;
+    appearance: none; -webkit-appearance: none;
+  }
+  select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23908E98' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px;
+  }
+  select:focus, textarea:focus, input:focus {
+    outline: none; border-color: var(--brand); background: #fff;
+    box-shadow: 0 0 0 3px var(--brand-weak);
+  }
+
+  .mkt-foot { padding: 0 var(--s6) var(--s6); display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+
+  /* ============ Buttons ============ */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    border: none; border-radius: var(--r-md); font-weight: 600; font-size: 14px;
+    padding: 11px 18px; transition: transform var(--ease) .15s, box-shadow var(--ease) .15s, background var(--ease) .15s;
+    min-height: 44px;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--brand); color: #fff; box-shadow: 0 6px 16px rgba(255,77,46,.28); }
+  .btn-primary:hover { background: var(--brand-strong); box-shadow: 0 10px 22px rgba(255,77,46,.34); }
+  .btn-lime { background: var(--confirm-lime); color: #1B1A21; box-shadow: 0 6px 16px rgba(200,224,0,.30); }
+  .btn-lime:hover { background: var(--confirm-lime-hover); }
+  .btn-ghost { background: var(--surface); color: var(--ink); border: 1px solid var(--line-strong); box-shadow: var(--sh-1); }
+  .btn-ghost:hover { border-color: var(--ink-faint); background: var(--surface-2); }
+  .btn-purple { background: linear-gradient(135deg, #7C3AED, #6D28D9); color: #fff; box-shadow: 0 6px 16px rgba(124,58,237,.30); }
+  .btn-purple:hover { filter: brightness(1.05); }
+
+  .saved-chip {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600;
+    color: var(--ok); background: var(--ok-weak); border: 1px solid #bfe6d2;
+    padding: 7px 12px; border-radius: 999px; opacity: 0; transform: translateY(4px);
+    transition: opacity var(--ease) .2s, transform var(--ease) .2s;
+  }
+  .saved-chip.show { opacity: 1; transform: translateY(0); }
+
+  /* ============ Planning grid ============ */
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--s4); }
+  @media (max-width: 1080px){ .grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 760px){ .grid { grid-template-columns: repeat(2, 1fr); } }
+
+  .pcard {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+    padding: var(--s4); display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s3);
+    box-shadow: var(--sh-1); min-height: 92px; text-align: left; transition: transform var(--ease) .16s, box-shadow var(--ease) .16s, border-color var(--ease) .16s, background var(--ease) .16s;
+    position: relative;
+  }
+  .pcard:hover { transform: translateY(-2px); box-shadow: var(--sh-3); border-color: var(--line-strong); }
+  .pcard .ttl { font-weight: 600; font-size: 14px; font-family: var(--font-display); }
+  .pcard .desc { font-size: 11.5px; color: var(--ink-faint); margin-top: 3px; line-height: 1.4; }
+  .pcard .check {
+    flex: none; width: 22px; height: 22px; border-radius: 7px; border: 1.5px solid var(--line-strong);
+    display: grid; place-items: center; color: #fff; font-size: 13px; transition: all var(--ease) .15s;
+  }
+  .pcard[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-weak); }
+  .pcard[aria-pressed="true"] .check { background: var(--brand); border-color: var(--brand); }
+
+  /* ============ Selected list ============ */
+  .sel-list { display: flex; flex-direction: column; gap: var(--s3); }
+  .sel-empty {
+    border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg); padding: var(--s6);
+    text-align: center; color: var(--ink-faint); font-size: 13px; background: var(--surface-2);
+  }
+  .sel-row {
+    display: flex; align-items: center; gap: var(--s4);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+    padding: var(--s4) var(--s5); box-shadow: var(--sh-1); transition: border-color var(--ease) .15s, box-shadow var(--ease) .15s;
+  }
+  .sel-row:hover { border-color: var(--line-strong); box-shadow: var(--sh-2); }
+  .sel-idx {
+    flex: none; width: 30px; height: 30px; border-radius: 9px; background: var(--ink); color: #fff;
+    display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; font-size: 14px;
+  }
+  .sel-main { flex: 1; min-width: 0; }
+  .sel-ttl { font-weight: 600; font-size: 15px; font-family: var(--font-display); }
+  .sel-cfg { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .sel-cfg .tag {
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 3px 9px; font-size: 12px; color: var(--ink-soft);
+  }
+  .sel-cfg .tag b { color: var(--ink); font-weight: 600; }
+  .sel-acts { display: flex; align-items: center; gap: var(--s2); flex: none; }
+  .set-link {
+    border: none; background: var(--ai-purple-light); color: var(--ai-purple);
+    font-weight: 600; font-size: 13px; padding: 9px 14px; border-radius: 10px; min-height: 40px;
+    transition: background var(--ease) .15s, transform var(--ease) .15s;
+  }
+  .set-link:hover { background: #e9e0fd; transform: translateY(-1px); }
+  .sel-x {
+    width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--ink-faint); font-size: 16px; transition: all var(--ease) .15s;
+  }
+  .sel-x:hover { border-color: var(--brand); color: var(--brand); background: var(--brand-weak); }
+
+  .gen-bar { display: flex; align-items: center; justify-content: flex-end; gap: var(--s3); margin-top: var(--s5); }
+
+  /* ============ Toast ============ */
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+    background: var(--ink); color: #fff; padding: 13px 20px; border-radius: 12px; font-size: 14px; font-weight: 500;
+    box-shadow: var(--sh-3); opacity: 0; pointer-events: none; transition: all var(--ease) .25s; z-index: 60;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--confirm-lime); }
+
+  /* ============ Modal ============ */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(27,26,33,.42); backdrop-filter: blur(4px);
+    display: none; align-items: flex-start; justify-content: center; padding: 40px 20px; z-index: 50;
+    overflow-y: auto;
+  }
+  .overlay.open { display: flex; animation: fadeIn .2s var(--ease); }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  .modal {
+    background: var(--bg); width: min(960px, 100%); border-radius: var(--r-xl);
+    box-shadow: var(--sh-modal); overflow: hidden; animation: rise .28s var(--ease);
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(16px) scale(.99); } to { opacity: 1; transform: none; } }
+
+  .modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); padding: var(--s5) var(--s6); background: var(--surface); border-bottom: 1px solid var(--line); }
+  .modal-head h3 { font-size: 19px; }
+  .modal-head .x { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); font-size: 18px; color: var(--ink-soft); }
+  .modal-head .x:hover { background: var(--surface-2); }
+
+  .modal-body { padding: var(--s6); display: grid; grid-template-columns: 1.15fr .85fr; gap: var(--s6); }
+  @media (max-width: 860px){ .modal-body { grid-template-columns: 1fr; } }
+
+  .block { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--s5); }
+  .block + .block { margin-top: var(--s5); }
+  .block-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s4); gap: var(--s3); flex-wrap: wrap; }
+  .block-head .bt { font-family: var(--font-display); font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+
+  .brought {
+    display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600;
+    color: var(--ai-purple); background: var(--ai-purple-light); border: 1px solid #e3d8fb;
+    padding: 5px 10px; border-radius: 999px;
+  }
+  .brought .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--ai-purple); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 rgba(124,58,237,.5);} 70%{box-shadow:0 0 0 7px rgba(124,58,237,0);} 100%{box-shadow:0 0 0 0 rgba(124,58,237,0);} }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
+  @media (max-width: 520px){ .form-grid { grid-template-columns: 1fr; } }
+  .form-grid .field.full { grid-column: 1 / -1; }
+
+  .modified-tag { font-size: 11px; font-weight: 600; color: var(--warn); background: var(--warn-weak); border: 1px solid #f0dcab; padding: 3px 8px; border-radius: 999px; display: none; margin-left: auto; }
+  .modified-tag.show { display: inline-block; }
+
+  .modal-foot { display: flex; align-items: center; gap: var(--s3); padding: var(--s5) var(--s6); background: var(--surface); border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .modal-foot .spacer { flex: 1; }
+
+  /* ============ Verify report ============ */
+  .verify {
+    margin-top: var(--s4); border: 1px dashed var(--line-strong); border-radius: var(--r-md);
+    background: var(--surface-2); padding: 0; max-height: 0; overflow: hidden;
+    transition: max-height var(--ease) .3s, padding var(--ease) .3s;
+  }
+  .verify.open { max-height: 560px; padding: var(--s4); }
+  .verify h4 { font-size: 13px; color: var(--ink-soft); margin-bottom: var(--s3); font-family: var(--font-body); font-weight: 600; }
+  .vrow { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .vrow:last-child { border-bottom: none; }
+  .vrow .k { color: var(--ink-soft); }
+  .vrow .v { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .vrow .st { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+  .st.pass { color: var(--ok); background: var(--ok-weak); }
+  .st.from { color: var(--ai-purple); background: var(--ai-purple-light); }
+  .st.edit { color: var(--warn); background: var(--warn-weak); }
+  .vpass {
+    margin-top: var(--s3); display: none; align-items: center; gap: 10px; justify-content: center;
+    background: var(--ok-weak); border: 1px solid #bfe6d2; color: var(--ok);
+    font-weight: 700; font-family: var(--font-display); padding: 10px; border-radius: var(--r-md);
+  }
+  .vpass.show { display: flex; }
+  .vpass .seal { width: 22px; height: 22px; border-radius: 50%; background: var(--ok); color: #fff; display: grid; place-items: center; font-size: 13px; }
+
+  .focus-ring:focus-visible { outline: 3px solid var(--ai-purple); outline-offset: 2px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ Left Rail ============ -->
+  <aside class="rail">
+    <div class="brand">
+      <div class="logo">智</div>
+      <div>
+        <div class="name">智图 AI</div>
+        <div class="sub">电商套图工作台</div>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="#" class="active"><span class="ic">🧠</span> AI 智能策划台</a>
+      <a href="#market"><span class="ic">🌐</span> 市场配置</a>
+      <a href="#"><span class="ic">📁</span> 我的模板</a>
+      <a href="#"><span class="ic">🕘</span> 历史生成</a>
+      <a href="#"><span class="ic">⚙️</span> 偏好设置</a>
+    </nav>
+    <div class="rail-foot">
+      v3.1 · 清单 + 设置页联动<br/>设计令牌继承 v2 系统
+    </div>
+  </aside>
+
+  <!-- ============ Main ============ -->
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <h1>AI 智能策划台</h1>
+        <p class="lede">先设定<strong>市场配置</strong>；在下方添加策划类型后，点该项的「设置 ›」打开设置页，<strong>通用设置</strong>会自动带出市场配置与本类型出图参数，可即时修改并验证。</p>
+      </div>
+      <button class="btn btn-purple" onclick="document.getElementById('market').scrollIntoView({behavior:'smooth'})">✨ 去配置市场</button>
+    </div>
+
+    <!-- Step ribbon -->
+    <div class="steps">
+      <div class="step done" id="step1"><span class="num">✓</span> 配置市场默认值</div>
+      <span class="arrow">→</span>
+      <div class="step" id="step2"><span class="num">2</span> 添加策划类型</div>
+      <span class="arrow">→</span>
+      <div class="step" id="step3"><span class="num">3</span> 设置页 · 通用设置自动带入 · 验证</div>
+    </div>
+
+    <!-- ============ Market Config ============ -->
+    <section id="market">
+      <div class="section-head">
+        <h2>市场配置</h2>
+        <span class="hint">该配置是「通用设置」的市场默认值来源 · 修改后保存即生效</span>
+      </div>
+
+      <div class="mkt">
+        <div class="mkt-head">
+          <div class="ttl">
+            <div class="badge-pin">🌐</div>
+            <div>
+              <h3>默认市场配置</h3>
+              <div class="desc">添加任意策划类型、打开「设置 ›」时，以下三项会自动带入弹窗的「通用设置」</div>
+            </div>
+          </div>
+          <span class="brought"><span class="pulse"></span> 全局默认</span>
+        </div>
+
+        <div class="mkt-body">
+          <div class="field">
+            <label for="cfg-platform">电商平台 <span class="req">*</span></label>
+            <select id="cfg-platform" class="focus-ring">
+              <option value="amazon">亚马逊</option>
+              <option value="douyin" selected>抖音电商</option>
+              <option value="taobao">淘宝天猫</option>
+              <option value="pdd">拼多多</option>
+              <option value="jd">京东</option>
+              <option value="tiktok">TikTok Shop</option>
+              <option value="kuaishou">快手</option>
+              <option value="shein">Shein</option>
+            </select>
+            <span class="note">默认：抖音电商</span>
+          </div>
+
+          <div class="field">
+            <label for="cfg-market">目标市场 <span class="req">*</span></label>
+            <select id="cfg-market" class="focus-ring">
+              <option value="na">北美</option>
+              <option value="eu">欧洲</option>
+              <option value="middle-east" selected>中东</option>
+              <option value="sea">东南亚</option>
+              <option value="jp">日本</option>
+              <option value="sa">南美</option>
+              <option value="africa">非洲</option>
+            </select>
+            <span class="note">默认：中东</span>
+          </div>
+
+          <div class="field">
+            <label for="cfg-lang">文案语种 <span class="req">*</span></label>
+            <select id="cfg-lang" class="focus-ring">
+              <option value="en">英语</option>
+              <option value="zh" selected>中文</option>
+              <option value="ja">日语</option>
+              <option value="de">德语</option>
+              <option value="fr">法语</option>
+              <option value="ar">阿拉伯语</option>
+              <option value="es">西班牙语</option>
+            </select>
+            <span class="note">默认：中文</span>
+          </div>
+        </div>
+
+        <div class="mkt-foot">
+          <button class="btn btn-primary" onclick="saveMarket()">保存默认市场配置</button>
+          <span class="saved-chip" id="savedChip">✓ 已保存，将自动带入通用设置</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Planning grid ============ -->
+    <div class="section-head">
+      <h2>策划选型</h2>
+      <span class="hint">点击卡片添加 → 进入「已选清单」→ 点「设置 ›」带入通用设置</span>
+    </div>
+
+    <div class="grid" id="grid"><!-- injected by JS --></div>
+
+    <!-- ============ Selected list ============ -->
+    <section id="selected">
+      <div class="section-head">
+        <h2>已选清单</h2>
+        <span class="hint">每项可单独「设置 ›」或移除（✕）</span>
+      </div>
+      <div class="sel-list" id="selList">
+        <div class="sel-empty">还没有添加策划类型 — 点上方卡片即可加入清单</div>
+      </div>
+      <div class="gen-bar">
+        <button class="btn btn-lime" onclick="finishAll()">生成套图</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ============ Settings Modal (设置页) ============ -->
+<div class="overlay" id="overlay" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <h3 id="modalTitle">设置</h3>
+        <div id="modalSub" style="font-size:12.5px;color:var(--ink-faint);margin-top:2px"></div>
+      </div>
+      <button class="x focus-ring" onclick="closeModal()" aria-label="关闭">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- LEFT: general + personal -->
+      <div>
+        <div class="block">
+          <div class="block-head">
+            <div class="bt">🧩 通用设置</div>
+            <span class="brought" id="broughtBadge"><span class="pulse"></span> 已自动带入配置</span>
+          </div>
+          <div class="form-grid">
+            <!-- Market-driven -->
+            <div class="field">
+              <label for="m-platform">电商平台 <span class="modified-tag" id="tag-platform">已修改</span></label>
+              <select id="m-platform" class="focus-ring" data-key="platform"></select>
+            </div>
+            <div class="field">
+              <label for="m-market">目标市场 <span class="modified-tag" id="tag-market">已修改</span></label>
+              <select id="m-market" class="focus-ring" data-key="market"></select>
+            </div>
+            <div class="field">
+              <label for="m-lang">文案语种 <span class="modified-tag" id="tag-lang">已修改</span></label>
+              <select id="m-lang" class="focus-ring" data-key="lang"></select>
+            </div>
+            <!-- Type-driven (本类型出图参数) -->
+            <div class="field">
+              <label for="m-count">出图数量 <span class="modified-tag" id="tag-count">已修改</span></label>
+              <select id="m-count" class="focus-ring" data-key="count">
+                <option>1</option><option>2</option><option>3</option><option>4</option><option>6</option><option>8</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="m-ratio">图片比例 <span class="modified-tag" id="tag-ratio">已修改</span></label>
+              <select id="m-ratio" class="focus-ring" data-key="ratio">
+                <option value="1:1">1:1 方图</option>
+                <option value="3:4">3:4 竖图</option>
+                <option value="4:3">4:3 横图</option>
+                <option value="9:16">9:16 长图</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="m-res">分辨率 <span class="modified-tag" id="tag-res">已修改</span></label>
+              <select id="m-res" class="focus-ring" data-key="res">
+                <option value="1K">1K</option>
+                <option value="2K">2K</option>
+                <option value="4K">4K</option>
+              </select>
+            </div>
+            <!-- Fixed own-defaults -->
+            <div class="field"><label>视觉风格</label><select class="focus-ring"><option>高级质感风</option><option>极简白底</option><option>生活方式</option><option>时尚潮酷</option></select></div>
+            <div class="field"><label>文案需求</label><select class="focus-ring"><option>核心卖点文案</option><option>场景故事文案</option><option>参数说明文案</option></select></div>
+            <div class="field"><label>色调倾向</label><select class="focus-ring"><option>高饱和色调</option><option>低饱和莫兰迪</option><option>黑白灰</option><option>品牌色系</option></select></div>
+          </div>
+
+          <!-- Verify report -->
+          <div class="verify" id="verifyBox">
+            <h4>配置验证报告</h4>
+            <div id="verifyRows"></div>
+            <div class="vpass" id="vpass"><span class="seal">✓</span> 配置验证通过</div>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <div class="bt">🎯 个性化设置</div>
+            <button class="btn btn-purple" style="min-height:36px;padding:7px 14px;font-size:13px">✨ AI帮填</button>
+          </div>
+          <div class="form-grid">
+            <div class="field full"><label>价值聚焦</label><input type="text" placeholder="例如：便携、轻盈、专业级" class="focus-ring" /></div>
+            <div class="field"><label>视觉强化</label><select class="focus-ring"><option>质感放大</option><option>色彩对比</option><option>细节纹理</option></select></div>
+            <div class="field"><label>产品呈现</label><select class="focus-ring"><option>整体形态</option><option>局部特写</option><option>使用场景</option></select></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: output model + reference -->
+      <div>
+        <div class="block">
+          <div class="block-head"><div class="bt">🖼️ 出图设置</div></div>
+          <div class="field"><label>生成模型</label>
+            <div style="display:flex;gap:6px;margin-top:2px">
+              <span style="flex:1;text-align:center;padding:8px;border:1px solid var(--line-strong);border-radius:8px;font-size:13px;background:var(--ink);color:#fff">通用</span>
+              <span style="flex:1;text-align:center;padding:8px;border:1px solid var(--line-strong);border-radius:8px;font-size:13px;color:var(--ink-soft)">Banana-pro</span>
+              <span style="flex:1;text-align:center;padding:8px;border:1px solid var(--line-strong);border-radius:8px;font-size:13px;color:var(--ink-soft)">Gpt-image-2</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-head"><div class="bt">📎 参考图片</div></div>
+          <div style="border:1.5px dashed var(--line-strong);border-radius:var(--r-md);padding:var(--s5);text-align:center;color:var(--ink-faint);font-size:13px;background:var(--surface-2)">
+            <div style="font-size:26px;margin-bottom:6px">＋</div>
+            本地上传 或 从图片库选择<br/>（参考图将内联传给模型）
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-foot">
+      <button class="btn btn-lime" onclick="verifyConfig()">验证配置</button>
+      <button class="btn btn-ghost" onclick="saveTemplate()">另存为模板</button>
+      <span class="spacer"></span>
+      <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" onclick="confirmClose()">设置完成并关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"><span class="dot"></span><span id="toastMsg">已保存</span></div>
+
+<script>
+  // ===== Option label maps =====
+  const OPT = {
+    platform: { amazon:'亚马逊', douyin:'抖音电商', taobao:'淘宝天猫', pdd:'拼多多', jd:'京东', tiktok:'TikTok Shop', kuaishou:'快手', shein:'Shein' },
+    market:   { na:'北美', eu:'欧洲', 'middle-east':'中东', sea:'东南亚', jp:'日本', sa:'南美', africa:'非洲' },
+    lang:     { en:'英语', zh:'中文', ja:'日语', de:'德语', fr:'法语', ar:'阿拉伯语', es:'西班牙语' }
+  };
+
+  // ===== Market config = source of truth (defaults per requirement) =====
+  const marketConfig = { platform: 'douyin', market: 'middle-east', lang: 'zh' };
+
+  // ===== Planning types (18) =====
+  const TYPES = [
+    ['bg','产品白底图','纯白背景标准主图'], ['amz','亚马逊主图','符合亚马逊规范'],
+    ['detail','细节特写','放大工艺与材质'], ['angle','产品多角度','360°展示'],
+    ['hero','首屏视觉图','高转化首屏大图'], ['usp','核心卖点图','突出核心卖点'],
+    ['pain','客户痛点展示','对比呈现痛点'], ['scene','场景图','非服饰静物布景'],
+    ['detail2','细节展示图','微距工艺呈现'], ['tryon','试穿试戴场景','真人模特上身'],
+    ['model','产品代言互动','代言人互动场景'], ['design','产品设计图','设计理念拆解'],
+    ['cmp','使用对比图','使用前/后对比'], ['ship','运输安装','物流与安装示意'],
+    ['spec','规格参数图','参数专区呈现'], ['pkg','包装展示图','礼盒包装外观'],
+    ['buyer','通用买家秀','真实使用晒单'], ['promo','活动海报','营销活动主视觉']
+  ];
+  const TYPE_LABEL = Object.fromEntries(TYPES);
+
+  // selected items: id -> {mode, count, ratio, res}
+  const items = new Map();
+
+  // ===== Build grid =====
+  const grid = document.getElementById('grid');
+  TYPES.forEach(([id, ttl, desc]) => {
+    const b = document.createElement('button');
+    b.className = 'pcard focus-ring';
+    b.setAttribute('aria-pressed', 'false');
+    b.dataset.id = id;
+    b.innerHTML = `<div><div class="ttl">${ttl}</div><div class="desc">${desc}</div></div><div class="check">✓</div>`;
+    b.onclick = () => toggleType(id, b);
+    grid.appendChild(b);
+  });
+
+  function toggleType(id, cardEl) {
+    if (items.has(id)) {
+      items.delete(id);
+      cardEl.setAttribute('aria-pressed', 'false');
+      showToast(`已移除「${TYPE_LABEL[id]}」`);
+    } else {
+      // default add-config (matches 用户示例: 自定义 · 数量1 · 比例3:4 · 分辨率1K)
+      items.set(id, { mode:'自定义', count:'1', ratio:'3:4', res:'1K' });
+      cardEl.setAttribute('aria-pressed', 'true');
+      showToast(`已添加「${TYPE_LABEL[id]}」到清单`);
+      updateStep(2, 'active');
+    }
+    renderList();
+  }
+
+  function renderList() {
+    const list = document.getElementById('selList');
+    if (items.size === 0) {
+      list.innerHTML = '<div class="sel-empty">还没有添加策划类型 — 点上方卡片即可加入清单</div>';
+      return;
+    }
+    list.innerHTML = '';
+    let i = 0;
+    for (const [id, cfg] of items) {
+      i++;
+      const row = document.createElement('div');
+      row.className = 'sel-row';
+      row.innerHTML = `
+        <div class="sel-idx">${i}</div>
+        <div class="sel-main">
+          <div class="sel-ttl">${TYPE_LABEL[id]}</div>
+          <div class="sel-cfg">
+            <span class="tag">${cfg.mode}</span>
+            <span class="tag">数量 <b>${cfg.count}</b></span>
+            <span class="tag">比例 <b>${cfg.ratio}</b></span>
+            <span class="tag">分辨率 <b>${cfg.res}</b></span>
+          </div>
+        </div>
+        <div class="sel-acts">
+          <button class="set-link focus-ring" data-set="${id}">设置 ›</button>
+          <button class="sel-x focus-ring" data-del="${id}" aria-label="移除">✕</button>
+        </div>`;
+      list.appendChild(row);
+    }
+    list.querySelectorAll('[data-set]').forEach(btn => btn.onclick = () => openSettings(btn.dataset.set));
+    list.querySelectorAll('[data-del]').forEach(btn => btn.onclick = () => {
+      const id = btn.dataset.del;
+      items.delete(id);
+      const c = grid.querySelector(`.pcard[data-id="${id}"]`);
+      if (c) c.setAttribute('aria-pressed', 'false');
+      renderList();
+      showToast(`已移除「${TYPE_LABEL[id]}」`);
+    });
+  }
+
+  // ===== Save market config =====
+  function saveMarket() {
+    marketConfig.platform = document.getElementById('cfg-platform').value;
+    marketConfig.market = document.getElementById('cfg-market').value;
+    marketConfig.lang = document.getElementById('cfg-lang').value;
+    const chip = document.getElementById('savedChip');
+    chip.classList.add('show');
+    updateStep(1, 'done');
+    showToast('市场配置已保存，将自动带入通用设置');
+    setTimeout(() => chip.classList.remove('show'), 2600);
+  }
+
+  // ===== Open settings (设置页) — auto-bring config =====
+  let currentId = null;
+  function openSettings(id) {
+    currentId = id;
+    const cfg = items.get(id);
+    document.getElementById('modalTitle').textContent = `${TYPE_LABEL[id]} · 设置`;
+    document.getElementById('modalSub').textContent = `本类型：${cfg.mode} · 数量 ${cfg.count} · 比例 ${cfg.ratio} · 分辨率 ${cfg.res}`;
+
+    // Market-driven auto-bring
+    fillSelect(document.getElementById('m-platform'), OPT.platform, marketConfig.platform);
+    fillSelect(document.getElementById('m-market'), OPT.market, marketConfig.market);
+    fillSelect(document.getElementById('m-lang'), OPT.lang, marketConfig.lang);
+    // Type-driven auto-bring
+    document.getElementById('m-count').value = cfg.count;
+    document.getElementById('m-ratio').value = cfg.ratio;
+    document.getElementById('m-res').value = cfg.res;
+
+    // reset modified tags + verify
+    ['platform','market','lang','count','ratio','res'].forEach(k => document.getElementById('tag-'+k).classList.remove('show'));
+    document.getElementById('broughtBadge').style.display = '';
+    document.getElementById('verifyBox').classList.remove('open');
+    document.getElementById('vpass').classList.remove('show');
+
+    // mark modified on change
+    ['platform','market','lang','count','ratio','res'].forEach(k => {
+      const sel = document.getElementById('m-'+k);
+      sel.oninput = () => {
+        const original = (k === 'count'||k === 'ratio'||k === 'res') ? items.get(currentId)[k] : marketConfig[k];
+        const changed = sel.value !== original;
+        document.getElementById('tag-'+k).classList.toggle('show', changed);
+      };
+    });
+
+    updateStep(3, 'active');
+    document.getElementById('overlay').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function fillSelect(sel, map, current) {
+    sel.innerHTML = '';
+    for (const [val, label] of Object.entries(map)) {
+      const o = document.createElement('option');
+      o.value = val; o.textContent = label;
+      if (val === current) o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+
+  function closeModal() {
+    document.getElementById('overlay').classList.remove('open');
+    document.body.style.overflow = '';
+    if (currentId) {
+      updateStep(3, 'done');
+      showToast('已保存「'+TYPE_LABEL[currentId]+'」设置');
+    }
+    currentId = null;
+  }
+  function confirmClose() { closeModal(); }
+  function saveTemplate() { showToast('已存入「我的模板」'); }
+  function finishAll() {
+    if (items.size === 0) { showToast('请先添加至少一个策划类型'); return; }
+    showToast(`开始生成 ${items.size} 个出图类型`);
+  }
+
+  // ===== Verify: report each field, mark 带入/已修改/通过 =====
+  function verifyConfig() {
+    const cfg = items.get(currentId);
+    const rows = document.getElementById('verifyRows');
+    rows.innerHTML = '';
+    const f = [
+      ['m-platform','电商平台','platform', OPT.platform, marketConfig.platform],
+      ['m-market','目标市场','market', OPT.market, marketConfig.market],
+      ['m-lang','文案语种','lang', OPT.lang, marketConfig.lang],
+      ['m-count','出图数量','count', null, cfg.count],
+      ['m-ratio','图片比例','ratio', null, cfg.ratio],
+      ['m-res','分辨率','res', null, cfg.res]
+    ];
+    let allPass = true;
+    f.forEach(([sid, label, key, map, src]) => {
+      const sel = document.getElementById(sid);
+      const val = sel.value;
+      const fromDefault = (val === src);
+      const valid = !!val;
+      if (!valid) allPass = false;
+      const shown = map ? map[val] : val;
+      const st = valid ? (fromDefault ? '<span class="st from">自动带入</span>' : '<span class="st edit">已手动修改</span>') : '<span class="st pass">无效</span>';
+      rows.insertAdjacentHTML('beforeend', `<div class="vrow"><span class="k">${label}</span><span class="v">${shown} ${st}</span></div>`);
+    });
+    [['视觉风格','高级质感风'],['文案需求','核心卖点文案'],['色调倾向','高饱和色调']].forEach(([k,v]) => {
+      rows.insertAdjacentHTML('beforeend', `<div class="vrow"><span class="k">${k}</span><span class="v">${v} <span class="st pass">✓ 有效</span></span></div>`);
+    });
+
+    document.getElementById('verifyBox').classList.add('open');
+    document.getElementById('vpass').classList.toggle('show', allPass);
+    updateStep(3, 'done');
+    if (allPass) showToast('配置验证通过');
+  }
+
+  // ===== Steps =====
+  function updateStep(n, state) {
+    const el = document.getElementById('step'+n);
+    el.classList.remove('done','active');
+    if (state) el.classList.add(state);
+  }
+
+  // ===== Toast =====
+  let toastTimer;
+  function showToast(msg) {
+    document.getElementById('toastMsg').textContent = msg;
+    const t = document.getElementById('toast');
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // ===== ESC / overlay click =====
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+  document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeModal(); });
+</script>
+</body>
+</html>

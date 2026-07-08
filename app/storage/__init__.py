@@ -375,23 +375,64 @@ def get_storage_backend_for_bucket(bucket: str | None = None) -> StorageBackend:
     return _bucket_backends[bucket]
 
 
+def _downscale_image_bytes(raw: bytes, max_side: int = 1280, quality: int = 85) -> bytes:
+    """Shrink an image so its longest side is at most ``max_side`` and re-encode
+    as JPEG for a compact payload.
+
+    Why: reference images uploaded from phones are often 3000x4000+; inlined as
+    base64 they blow up the provider request body and the upstream image model
+    hangs / fails (``do_request_failed`` / read timeout). Downscaling before
+    inlining keeps the payload small and the upstream happy.
+
+    Fail-safe: returns ``raw`` unchanged if Pillow is missing or the bytes are
+    not a decodable image, so inlining never breaks on a bad/unsupported file.
+    """
+    try:
+        from PIL import Image
+        import io as _io
+        img = Image.open(_io.BytesIO(raw))
+        needs_shrink = max(img.size) > max_side
+        # A small, already-JPEG reference is left untouched to preserve quality.
+        if not needs_shrink and img.format == "JPEG":
+            return raw
+        if needs_shrink:
+            img.thumbnail((max_side, max_side))
+        img = img.convert("RGB")  # drop alpha channel (JPEG has none)
+        out = _io.BytesIO()
+        img.save(out, "JPEG", quality=quality)
+        return out.getvalue()
+    except Exception:
+        return raw
+
+
 def inline_reference_image(ref: str) -> str | None:
     """Turn a reference-image reference into an inline base64 ``data:`` URL.
 
     Returns the original string when it cannot / should not be inlined:
 
-    - ``data:`` URL            -> returned as-is (already inline).
+    - ``data:`` URL            -> downscaled + re-encoded if large, else as-is.
     - Internal by-key proxy URL (``/api/media/assets/by-key/<key>?bucket=``)
-      -> downloaded from object storage and inlined as base64, because the
-      downstream model cannot reach our private proxy / local MinIO.
+      -> downloaded from object storage, downscaled, and inlined as base64,
+      because the downstream model cannot reach our private proxy / local MinIO.
     - Other ``http(s)`` URL    -> returned as-is (provider fetches directly).
 
     This is the single source of truth for "local address -> base64" so both
     the chat path and the image/video generation path behave identically.
+    Reference images are downscaled here so an oversized upload never produces
+    an upstream failure.
     """
     if not ref or not isinstance(ref, str):
         return None
     if ref.startswith("data:"):
+        # Frontend may hand us an already-inlined (and possibly large) data URL.
+        try:
+            _, b64 = ref.split(",", 1)
+            raw = base64.b64decode(b64)
+            shrunk = _downscale_image_bytes(raw)
+            if shrunk is not raw:
+                return f"data:image/jpeg;base64,{base64.b64encode(shrunk).decode()}"
+        except Exception:
+            pass
         return ref
     if "/api/media/assets/by-key/" in ref:
         try:
@@ -401,8 +442,9 @@ def inline_reference_image(ref: str) -> str | None:
             backend = get_storage_backend_for_bucket(bucket)
             raw = backend.get(key)
             if raw:
-                mt = mimetypes.guess_type(key)[0] or "image/png"
-                return f"data:{mt};base64,{base64.b64encode(raw).decode()}"
+                shrunk = _downscale_image_bytes(raw)
+                mime = "image/jpeg" if shrunk is not raw else (mimetypes.guess_type(key)[0] or "image/png")
+                return f"data:{mime};base64,{base64.b64encode(shrunk).decode()}"
         except Exception as exc:  # pragma: no cover - network/storage edge cases
             logger.warning("Failed to inline by-key reference %s: %s", ref, exc)
     return None

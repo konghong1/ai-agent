@@ -35,6 +35,7 @@
 - `docker-compose.yml` 的 minio-init 已加建 `chat-uploads` 桶并设为 public（首次上传 `_ensure_bucket` 也会自动建）。
 
 ## 外部网络 / 代理（重要运维坑）
-- 外网 AI 服务（`apihub.agnes-ai.com` 等）**必须走代理出网**：主机已设 `HTTPS_PROXY`/`HTTP_PROXY` 且 curl 可连（HTTP 301、证书 OK），但**运行后端的 Docker 容器未注入这些 env** → Python `requests` 直连被对端 EOF，报 `SSLError(UNEXPECTED_EOF_WHILE_READING)`。
-- 现象：视频状态轮询（`app/media.py:get_video_status` → `app/api.py:watch_video_status`）每 3s 失败、刷屏，任务卡 processing 直到 MAX_POLLS=200（约 10 分钟）超时。
-- 修复方向：①`docker-compose.yml` 的 api/web 服务 `environment` 注入 `HTTPS_PROXY`/`HTTP_PROXY`（从宿主透传，勿硬编码）；`requests` 默认读这些 env。②代码健壮性：网络错误连续 N 次应标记任务 failed（前端显示"无法连接视频服务"），并关掉无意义重试、降日志噪音。
+- 外网 AI 服务（`apihub.agnes-ai.com` 等）建议走代理出网。**已修复注入**：`docker-compose.yml` 的 `api` 与 `worker` 服务现在注入 `HTTPS_PROXY`/`HTTP_PROXY`，且因容器内 `127.0.0.1` 指容器自身，必须改用 `host.docker.internal:33210` 并加 `extra_hosts: - "host.docker.internal:host-gateway"`。`NO_PROXY` 含 `localhost,127.0.0.1,::1,minio,mysql,ai-agent-minio,ai-agent-mysql`（MinIO raw socket + minio client 忽略代理，但显式排除以防万一；已验证注入代理后 MinIO 仍可达）。
+- 代理端口 `33210` 取自主机 `HTTPS_PROXY`（WorkBuddy 沙箱代理），随会话/环境变化；若代理失效，设了 `HTTPS_PROXY` 的请求会直连失败（不会自动回退直连），属已知脆弱点。当前会话内代理稳定。
+- **图片生成超时坑（已修）**：`MediaService.generate_image`（`app/media.py:109` 与 `app/media_new.py:102`）原 `timeout=120`。带参考图（img2img）的生成本身就慢（实测小图 30–48s，真实大图更久），偶发超过 120s → `Read timed out. (read timeout=120)`。已把图片生成超时提到 **300s**，视频提交 30→120、视频轮询 15→60、下载 60→120。
+- 验证：完整链路（上传参考图 → `POST /api/chat` provider_id=2 `agnes-image-2.0-flash`）返回 200，约 52s（走代理）；裸 `MediaService.generate_image` 约 28–31s。图片模型归属 `provider_id=2`（user_id=2），admin(user_id=1) 走该路由会因 `provider.user_id==current_user.id` 不成立而落到聊天路径——这是正常的模型归属设计，不是 bug。

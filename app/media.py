@@ -19,6 +19,7 @@ from typing import Any
 
 import requests
 
+from app.media_retry import post_with_retry, clean_provider_error
 from app.models import Provider
 
 logger = logging.getLogger(__name__)
@@ -101,24 +102,22 @@ class MediaService:
 
         logger.info("Image generate: provider=%s model=%s url=%s refs=%d", provider.name, model_name, url, len(refs))
 
-        try:
-            resp = requests.post(
-                url,
-                json=payload,
-                headers={"Authorization": f"Bearer {provider.api_key}"},
-                timeout=120,
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as exc:
-            logger.error("Image generation failed: %s", exc)
-            error_detail = str(exc)
-            if hasattr(exc, "response") and exc.response is not None:
-                try:
-                    error_detail = exc.response.text[:500]
-                except Exception:
-                    pass
-            return {"error": error_detail, "data": []}
+        outcome = post_with_retry(
+            url,
+            payload,
+            headers={"Authorization": f"Bearer {provider.api_key}"},
+            timeout=300,
+            what="Image",
+            logger=logger,
+        )
+        if outcome["ok"]:
+            return outcome["json"]
+        error_detail = clean_provider_error(outcome["text"], outcome["exception"])
+        logger.error(
+            "Image generation failed after %d attempt(s): %s",
+            outcome["attempts"], error_detail,
+        )
+        return {"error": error_detail, "data": [], "attempts": outcome["attempts"]}
 
     # ── Video Generation (async) ───────────────────────────────────
 
@@ -184,24 +183,22 @@ class MediaService:
 
         logger.info("Video generate: provider=%s model=%s url=%s refs=%d", provider.name, model_name, url, len(refs))
 
-        try:
-            resp = requests.post(
-                url,
-                json=payload,
-                headers={"Authorization": f"Bearer {provider.api_key}"},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as exc:
-            logger.error("Video generation failed: %s", exc)
-            error_detail = str(exc)
-            if hasattr(exc, "response") and exc.response is not None:
-                try:
-                    error_detail = exc.response.text[:500]
-                except Exception:
-                    pass
-            return {"error": error_detail}
+        outcome = post_with_retry(
+            url,
+            payload,
+            headers={"Authorization": f"Bearer {provider.api_key}"},
+            timeout=120,
+            what="Video",
+            logger=logger,
+        )
+        if outcome["ok"]:
+            return outcome["json"]
+        error_detail = clean_provider_error(outcome["text"], outcome["exception"])
+        logger.error(
+            "Video generation failed after %d attempt(s): %s",
+            outcome["attempts"], error_detail,
+        )
+        return {"error": error_detail, "attempts": outcome["attempts"]}
 
     # ── Video Status Polling ───────────────────────────────────────
 
@@ -230,7 +227,7 @@ class MediaService:
             resp = requests.get(
                 url,
                 headers={"Authorization": f"Bearer {provider.api_key}"},
-                timeout=15,
+                timeout=60,
             )
             resp.raise_for_status()
             data: dict[str, Any] = resp.json()
@@ -315,14 +312,14 @@ class MediaService:
         try:
             import httpx
 
-            resp = httpx.get(url, timeout=60, follow_redirects=True)
+            resp = httpx.get(url, timeout=120, follow_redirects=True)
             resp.raise_for_status()
             file_bytes = resp.content
             detected_ct = resp.headers.get("content-type")
         except Exception as exc:  # pragma: no cover - network best-effort
             logger.warning("Failed to download %s: %s", url[:80], exc)
             try:
-                resp = requests.get(url, timeout=60)
+                resp = requests.get(url, timeout=120)
                 resp.raise_for_status()
                 file_bytes = resp.content
                 detected_ct = resp.headers.get("content-type")

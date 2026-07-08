@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>工作台 · 设计原型（v4 导航对齐项目目录）</title>
+<style>
+  /* ============ 项目真实配色 ============
+     表面/文字/边框：Ice 主题浅色（web/src/styles/variables.css .theme-tech-blue）
+     品牌强调（电商套图模块）：珊瑚红/AI紫/荧光绿（web/src/pages/EcommerceGallery/gallery.css）
+     字体：Space Grotesk（标题） + Inter（正文） */
+  :root{
+    --ice-bg-primary:#F8FAFC;
+    --ice-bg-secondary:#F1F5F9;
+    --ice-bg-card:#FFFFFF;
+    --ice-bg-hover:rgba(37,99,235,.06);
+    --ice-text-primary:#0F172A;
+    --ice-text-secondary:#64748B;
+    --ice-text-muted:#94A3B8;
+    --ice-border:#E2E8F0;
+    --ice-border-hover:#CBD5E1;
+    --ice-primary:#2563EB;        /* 通用 app 主色（科技蓝） */
+    --ice-primary-10:rgba(37,99,235,.10);
+
+    --g-brand:#FF4D2E;            /* 珊瑚红 品牌 */
+    --g-brand-strong:#E83C20;
+    --g-ai-purple:#7C3AED;        /* AI 紫 */
+    --g-ai-purple-2:#6D28D9;
+    --g-ai-purple-light:#F3EFFE;
+    --g-confirm:#C8E000;          /* 荧光绿 确认 */
+    --g-confirm-hover:#B5CA00;
+
+    --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-xl:16px;
+    --g-ease:cubic-bezier(.22,.61,.36,1);
+    --shadow-sm:0 2px 8px rgba(15,23,42,.06);
+    --shadow-md:0 4px 24px rgba(37,99,235,.06);
+    --shadow-lg:0 8px 40px rgba(15,23,42,.10);
+    --sider-w:256px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:'Inter','PingFang SC',system-ui,sans-serif;
+    background:var(--ice-bg-primary);color:var(--ice-text-primary);
+    -webkit-font-smoothing:antialized;
+  }
+  .h-display{font-family:'Space Grotesk','PingFang SC',sans-serif;font-weight:700;letter-spacing:-.01em}
+
+  /* ============ 布局 ============ */
+  .app{display:flex;min-height:100vh}
+
+  /* ---- 侧边导航（对齐 BasicLayout.tsx menuItems） ---- */
+  .sider{
+    width:var(--sider-w);flex:0 0 var(--sider-w);
+    background:var(--ice-bg-secondary);
+    border-right:1px solid var(--ice-border);
+    display:flex;flex-direction:column;
+    position:sticky;top:0;height:100vh;
+    transition:width .2s var(--g-ease);
+  }
+  .sider.collapsed{width:72px;flex-basis:72px}
+  .brand{
+    display:flex;align-items:center;gap:10px;
+    padding:18px 18px;border-bottom:1px solid var(--ice-border);
+    height:64px;
+  }
+  .brand .logo{
+    width:30px;height:30px;border-radius:9px;flex:0 0 30px;
+    background:linear-gradient(135deg,var(--g-brand),var(--g-ai-purple));
+    display:grid;place-items:center;color:#fff;font-weight:700;font-size:15px;
+    font-family:'Space Grotesk',sans-serif;
+  }
+  .brand .name{font-weight:700;font-size:16px;color:var(--ice-text-primary);white-space:nowrap}
+  .brand .sub{font-size:11px;color:var(--ice-text-muted)}
+  .sider.collapsed .brand .name,.sider.collapsed .brand .sub{display:none}
+
+  .nav{flex:1;overflow-y:auto;padding:10px 12px}
+  .nav-group{margin-bottom:4px}
+  .nav-item{
+    display:flex;align-items:center;gap:11px;
+    padding:10px 12px;border-radius:var(--radius-md);
+    color:var(--ice-text-secondary);cursor:pointer;
+    font-size:14px;font-weight:500;user-select:none;
+    transition:background .15s var(--g-ease),color .15s var(--g-ease);
+    position:relative;
+  }
+  .nav-item:hover{background:var(--ice-bg-hover);color:var(--ice-text-primary)}
+  .nav-item .ico{width:20px;height:20px;flex:0 0 20px;display:grid;place-items:center}
+  .nav-item .ico svg{width:18px;height:18px}
+  .sider.collapsed .nav-item .label,.sider.collapsed .nav-item .caret{display:none}
+  .nav-item.parent{font-weight:600}
+  .nav-item .caret{margin-left:auto;transition:transform .2s var(--g-ease);font-size:10px;opacity:.6}
+  .nav-group.open .nav-item.parent .caret{transform:rotate(90deg)}
+  .nav-children{display:none;margin:2px 0 2px 0;padding-left:14px;border-left:1px solid var(--ice-border);margin-left:18px}
+  .nav-group.open .nav-children{display:block}
+  .nav-children .nav-item{font-size:13.5px;padding:8px 12px}
+  .nav-children .nav-item .dot{width:6px;height:6px;border-radius:50%;background:var(--ice-text-muted);flex:0 0 6px;margin-left:2px}
+  .nav-item.active{
+    background:var(--g-ai-purple-light);color:var(--g-ai-purple-2);font-weight:600;
+  }
+  .nav-item.active::before{
+    content:"";position:absolute;left:-12px;top:8px;bottom:8px;width:3px;border-radius:3px;
+    background:var(--g-brand);
+  }
+  .nav-item.active .ico svg{stroke:var(--g-brand)}
+  /* 工作台分组徽标 */
+  .nav-badge{margin-left:auto;font-size:10px;background:var(--g-brand);color:#fff;
+    padding:1px 7px;border-radius:20px;font-weight:600}
+  .sider.collapsed .nav-badge{display:none}
+
+  .sider-foot{padding:12px;border-top:1px solid var(--ice-border);display:flex;align-items:center;gap:10px}
+  .sider-foot .ava{width:32px;height:32px;border-radius:50%;background:var(--ice-primary);color:#fff;display:grid;place-items:center;font-weight:600;font-size:13px}
+  .sider-foot .meta{font-size:13px;font-weight:600}
+  .sider-foot .role{font-size:11px;color:var(--ice-text-muted)}
+  .sider.collapsed .sider-foot .meta,.sider.collapsed .sider-foot .role{display:none}
+  .collapse-btn{
+    margin-left:auto;background:transparent;border:1px solid var(--ice-border);
+    color:var(--ice-text-secondary);border-radius:6px;width:28px;height:28px;cursor:pointer;
+    display:grid;place-items:center;
+  }
+
+  /* ---- 主区域 ---- */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{
+    height:64px;background:var(--ice-bg-card);border-bottom:1px solid var(--ice-border);
+    display:flex;align-items:center;justify-content:space-between;padding:0 24px;
+    position:sticky;top:0;z-index:50;
+  }
+  .crumb{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--ice-text-secondary)}
+  .crumb b{color:var(--ice-text-primary);font-weight:600}
+  .topbar .right{display:flex;align-items:center;gap:12px}
+  .icon-btn{width:36px;height:36px;border-radius:9px;border:1px solid var(--ice-border);background:#fff;
+    color:var(--ice-text-primary);cursor:pointer;display:grid;place-items:center}
+  .icon-btn:hover{border-color:var(--ice-border-hover);background:var(--ice-bg-hover)}
+  .content{padding:24px 28px 48px;overflow-y:auto;flex:1}
+  .view{display:none;animation:fadeUp .35s var(--g-ease) both}
+  .view.active{display:block}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  .page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap}
+  .page-title{font-size:26px}
+  .page-sub{color:var(--ice-text-secondary);font-size:14px;margin-top:6px}
+  .head-actions{display:flex;gap:10px}
+
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;font-family:inherit;font-weight:600;
+    border:1px solid var(--ice-border);background:#fff;color:var(--ice-text-primary);
+    padding:10px 16px;border-radius:10px;cursor:pointer;font-size:14px;transition:.15s var(--g-ease);
+  }
+  .btn:hover{border-color:var(--ice-border-hover);background:var(--ice-bg-hover)}
+  .btn.brand{background:var(--g-brand);border-color:var(--g-brand);color:#fff}
+  .btn.brand:hover{background:var(--g-brand-strong);box-shadow:var(--shadow-sm)}
+  .btn.purple{background:var(--g-ai-purple);border-color:var(--g-ai-purple);color:#fff}
+  .btn.purple:hover{background:var(--g-ai-purple-2)}
+  .btn.ghost{background:transparent;border-color:transparent;color:var(--ice-text-secondary)}
+  .btn:focus-visible{outline:2px solid var(--g-ai-purple);outline-offset:2px}
+
+  /* ============ 占位页（其余现有模块） ============ */
+  .placeholder{
+    border:1.5px dashed var(--ice-border);border-radius:var(--radius-xl);
+    padding:64px 24px;text-align:center;color:var(--ice-text-secondary);background:var(--ice-bg-card);
+  }
+  .placeholder .ph-ico{width:56px;height:56px;border-radius:14px;background:var(--ice-bg-hover);
+    display:grid;place-items:center;margin:0 auto 16px;color:var(--ice-primary)}
+  .placeholder h3{color:var(--ice-text-primary);font-family:'Space Grotesk',sans-serif;margin-bottom:6px}
+  .placeholder .tag{display:inline-block;margin-top:14px;font-size:12px;background:var(--ice-bg-hover);
+    color:var(--ice-text-secondary);padding:4px 10px;border-radius:20px}
+
+  /* ============ 电商套图 ============ */
+  .hero{
+    border-radius:var(--radius-xl);padding:30px 32px;color:#fff;margin-bottom:24px;position:relative;overflow:hidden;
+    background:linear-gradient(120deg,var(--g-brand),var(--g-ai-purple));
+  }
+  .hero h2{font-family:'Space Grotesk',sans-serif;font-size:24px;margin-bottom:8px}
+  .hero p{opacity:.92;font-size:14px;max-width:560px;line-height:1.6}
+  .hero .hero-actions{margin-top:18px;display:flex;gap:10px}
+  .hero .hero-actions .btn{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.3);color:#fff}
+  .hero .hero-actions .btn:hover{background:rgba(255,255,255,.28)}
+  .hero .hero-actions .btn.solid{background:#fff;color:var(--g-ai-purple-2);border-color:#fff}
+
+  .planner-grid{display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start}
+  @media(max-width:980px){.planner-grid{grid-template-columns:1fr}}
+  .panel{background:var(--ice-bg-card);border:1px solid var(--ice-border);border-radius:var(--radius-lg);padding:20px;box-shadow:var(--shadow-sm)}
+  .panel-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:14px}
+  .panel-title .step{width:22px;height:22px;border-radius:7px;background:var(--g-ai-purple);color:#fff;
+    display:grid;place-items:center;font-size:12px;font-weight:700}
+  .field{margin-bottom:14px}
+  .field>label{display:block;font-size:13px;font-weight:600;color:var(--ice-text-primary);margin-bottom:6px}
+  .field .req{color:var(--g-brand)}
+  .sel,input.inp{
+    width:100%;padding:9px 11px;border:1px solid var(--ice-border);border-radius:var(--radius-md);
+    font-family:inherit;font-size:13.5px;background:#fff;color:var(--ice-text-primary);transition:.15s var(--g-ease);
+  }
+  .sel:focus,input.inp:focus{outline:none;border-color:var(--g-ai-purple);box-shadow:0 0 0 3px rgba(124,58,237,.12)}
+  .cfg-hint{font-size:11.5px;color:var(--ice-text-muted);margin-top:4px}
+  .preset-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:var(--g-ai-purple-2);
+    background:var(--g-ai-purple-light);padding:2px 9px;border-radius:20px;margin-bottom:12px}
+  .preset-badge .pulse{width:6px;height:6px;border-radius:50%;background:var(--g-ai-purple);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  .save-bar{display:flex;gap:8px;margin-top:6px}
+  /* 全局输出配置 分区 */
+  .cfg-section{border:1px solid var(--ice-border);border-radius:var(--radius-md);
+    padding:14px 14px 4px;margin-bottom:14px;background:linear-gradient(180deg,#fff,#FBFCFE)}
+  .cfg-section__title{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;
+    color:var(--g-ai-purple-2);margin-bottom:12px}
+  .cfg-section__title::before{content:"";width:3px;height:13px;border-radius:2px;background:var(--g-ai-purple)}
+  .cfg-section__title .tag{margin-left:auto;font-size:10.5px;font-weight:600;color:var(--ice-text-muted);
+    background:var(--ice-bg-secondary);padding:1px 7px;border-radius:10px}
+
+  .type-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media(max-width:1280px){.type-grid{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:560px){.type-grid{grid-template-columns:1fr}}
+  .type-card{
+    border:1px solid var(--ice-border);border-radius:var(--radius-md);padding:14px;cursor:pointer;
+    background:#fff;transition:.15s var(--g-ease);display:flex;flex-direction:column;gap:6px;
+  }
+  .type-card:hover{border-color:var(--g-brand);box-shadow:var(--shadow-sm);transform:translateY(-2px)}
+  .type-card .tc-top{display:flex;align-items:center;gap:8px}
+  .type-card .tc-ico{width:30px;height:30px;border-radius:8px;background:var(--g-ai-purple-light);color:var(--g-ai-purple);
+    display:grid;place-items:center;font-size:14px;flex:0 0 30px}
+  .type-card .tc-name{font-weight:600;font-size:13.5px}
+  .type-card .tc-tag{font-size:10.5px;color:var(--ice-text-muted);margin-left:auto;
+    border:1px solid var(--ice-border);padding:1px 7px;border-radius:20px}
+  .type-card .tc-desc{font-size:11.5px;color:var(--ice-text-secondary);line-height:1.5}
+  .type-card.added{border-color:var(--g-brand);background:linear-gradient(0deg,rgba(255,77,46,.04),rgba(255,77,46,.04))}
+  .type-card.added .tc-ico{background:var(--g-brand);color:#fff}
+
+  .selected-wrap{margin-top:20px}
+  .selected-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .selected-head h3{font-size:15px;font-weight:700}
+  .chip-count{font-size:12px;background:var(--ice-bg-hover);color:var(--ice-text-secondary);padding:2px 9px;border-radius:20px}
+  .plan-row{display:flex;align-items:center;gap:12px;border:1px solid var(--ice-border);border-radius:var(--radius-md);
+    padding:12px 14px;background:#fff;margin-bottom:8px}
+  .plan-row .pr-num{width:22px;height:22px;border-radius:6px;background:var(--g-ai-purple-light);color:var(--g-ai-purple-2);
+    display:grid;place-items:center;font-weight:700;font-size:12px;flex:0 0 22px}
+  .plan-row .pr-title{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px}
+  .pr-tag{font-size:10.5px;padding:1px 8px;border-radius:20px;font-weight:600}
+  .pr-tag.fast{background:rgba(200,224,0,.18);color:#6b7a00}
+  .pr-tag.custom{background:var(--g-ai-purple-light);color:var(--g-ai-purple-2)}
+  .pr-meta{font-size:12px;color:var(--ice-text-secondary);margin-top:3px;display:flex;gap:7px;flex-wrap:wrap}
+  .pr-meta span.sep{color:var(--ice-border-hover)}
+  .pr-actions{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .pr-set{color:var(--g-ai-purple-2);font-weight:600;font-size:13px;cursor:pointer}
+  .pr-set:hover{text-decoration:underline}
+  .pr-rm{width:28px;height:28px;border-radius:7px;border:1px solid var(--ice-border);background:#fff;color:var(--ice-text-secondary);cursor:pointer;display:grid;place-items:center}
+  .pr-rm:hover{border-color:var(--g-brand);color:var(--g-brand)}
+  .empty-hint{font-size:13px;color:var(--ice-text-muted);padding:18px;text-align:center;border:1.5px dashed var(--ice-border);border-radius:var(--radius-md)}
+
+  .gen-card{margin-top:16px;display:flex;align-items:center;justify-content:space-between;gap:14px;
+    border:1px solid var(--ice-border);border-radius:var(--radius-lg);padding:16px 18px;background:linear-gradient(0deg,var(--g-ai-purple-light),transparent)}
+  .gen-card h4{font-size:15px}
+  .gen-card p{font-size:12.5px;color:var(--ice-text-secondary);margin-top:3px}
+
+  /* 热门套图 */
+  .section-title{font-size:17px;font-weight:700;margin:28px 0 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap}
+  .tab{font-size:13px;padding:6px 13px;border-radius:20px;border:1px solid var(--ice-border);background:#fff;
+    color:var(--ice-text-secondary);cursor:pointer;transition:.15s var(--g-ease)}
+  .tab.on{background:var(--g-brand);border-color:var(--g-brand);color:#fff}
+  .case-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  @media(max-width:1200px){.case-grid{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:860px){.case-grid{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:520px){.case-grid{grid-template-columns:1fr}}
+  .case{border:1px solid var(--ice-border);border-radius:var(--radius-lg);overflow:hidden;background:#fff;transition:.18s var(--g-ease)}
+  .case:hover{box-shadow:var(--shadow-md);transform:translateY(-3px)}
+  .case-strip{display:grid;grid-template-columns:repeat(4,1fr);gap:3px;padding:3px;background:var(--ice-bg-secondary)}
+  .case-strip .cell{aspect-ratio:1/1;border-radius:6px;overflow:hidden;position:relative;background:#fff}
+  .case-strip .cell.orig{grid-row:span 1}
+  .case-strip .cell img{width:100%;height:100%;object-fit:cover}
+  .case-strip .badge-orig{position:absolute;left:4px;top:4px;font-size:9px;background:var(--g-brand);color:#fff;padding:1px 5px;border-radius:4px}
+  .case-strip .more{display:grid;place-items:center;font-weight:700;color:#fff;background:var(--g-ai-purple)}
+  .case-body{padding:12px 14px}
+  .case-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ice-text-secondary);margin-bottom:5px}
+  .case-meta .cat-dot{width:7px;height:7px;border-radius:50%;background:var(--g-confirm)}
+  .case-name{font-size:14px;font-weight:600;margin-bottom:10px}
+  .case-actions{display:flex;gap:8px}
+  .case-actions .btn{flex:1;padding:8px;font-size:12.5px;justify-content:center}
+
+  /* ============ 我的创作（双Tab：AI创作结果 / 创作案例） ============ */
+  /* ---- Tab 栏 ---- */
+  .creation-tabs{
+    display:flex;align-items:center;gap:0;
+    background:var(--ice-bg-secondary);border-radius:11px;padding:3px;width:fit-content;margin-bottom:22px;
+    border:1px solid var(--ice-border);
+  }
+  .creation-tabs .ctab{
+    border:none;background:transparent;font-family:inherit;font-size:14px;font-weight:600;
+    color:var(--ice-text-muted);padding:9px 22px;border-radius:8px;cursor:pointer;
+    transition:all .18s var(--g-ease);display:flex;align-items:center;gap:7px;
+  }
+  .creation-tabs .ctab.on{background:#fff;color:var(--g-brand);box-shadow:var(--shadow-sm)}
+  .creation-tabs .ctab .c-count{font-size:11px;background:var(--ice-bg-hover);padding:1px 7px;border-radius:20px;font-weight:700}
+  .creation-tabs .ctab.on .c-count{background:rgba(255,77,46,.1);color:var(--g-brand)}
+
+  /* ---- AI创作结果（原合集网格） ---- */
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+  @media(max-width:700px){.stats{grid-template-columns:1fr}}
+  .stat{background:var(--ice-bg-card);border:1px solid var(--ice-border);border-radius:var(--radius-lg);padding:16px 18px}
+  .stat .s-val{font-family:'Space Grotesk',sans-serif;font-size:26px;font-weight:700;color:var(--g-ai-purple-2)}
+  .stat .s-label{font-size:12.5px;color:var(--ice-text-secondary);margin-top:2px}
+  .filter-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .filter-bar .fgroup{display:flex;align-items:center;gap:6px}
+  .filter-bar .flabel{font-size:12.5px;color:var(--ice-text-secondary)}
+  .filter-bar .seg{display:flex;gap:4px;background:var(--ice-bg-secondary);padding:3px;border-radius:9px}
+  .filter-bar .seg button{border:none;background:transparent;font-family:inherit;font-size:12.5px;color:var(--ice-text-secondary);
+    padding:5px 11px;border-radius:7px;cursor:pointer}
+  .filter-bar .seg button.on{background:#fff;color:var(--ice-text-primary);font-weight:600;box-shadow:var(--shadow-sm)}
+  .creation-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  @media(max-width:1100px){.creation-grid{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:640px){.creation-grid{grid-template-columns:1fr}}
+  .col-card{border:1px solid var(--ice-border);border-radius:var(--radius-lg);overflow:hidden;background:#fff;transition:.18s var(--g-ease)}
+  .col-card:hover{box-shadow:var(--shadow-md);transform:translateY(-3px)}
+  .col-cover{display:grid;grid-template-columns:1.4fr 1fr 1fr;grid-template-rows:1fr 1fr;gap:3px;padding:3px;background:var(--ice-bg-secondary);aspect-ratio:16/10}
+  .col-cover .c{overflow:hidden;border-radius:6px;background:#fff}
+  .col-cover .c img{width:100%;height:100%;object-fit:cover}
+  .col-cover .c.big{grid-row:span 2}
+  .col-body{padding:13px 15px}
+  .col-title{font-size:14.5px;font-weight:700;margin-bottom:8px}
+  .col-tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .col-tags .t{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:600}
+  .col-tags .t.platform{background:rgba(255,77,46,.1);color:var(--g-brand-strong)}
+  .col-tags .t.market{background:var(--g-ai-purple-light);color:var(--g-ai-purple-2)}
+  .col-foot{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--ice-text-muted)}
+  .col-foot .count{font-weight:600;color:var(--ice-text-primary)}
+  .col-actions{display:flex;gap:8px;margin-top:11px}
+  .col-actions .btn{flex:1;padding:8px;font-size:12.5px;justify-content:center}
+
+  /* ---- 创作案例（灵感库卡片流） ---- */
+  .case-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+  .case-search{flex:1;min-width:200px;display:flex;align-items:center;gap:8px;
+    background:#fff;border:1px solid var(--ice-border);border-radius:10px;padding:0 14px;height:40px}
+  .case-search input{flex:1;border:none;background:none;font-family:inherit;font-size:13.5px;color:var(--ice-text-primary);outline:none}
+  .case-search input::placeholder{color:var(--ice-text-muted)}
+  .case-search .cs-ico{color:var(--ice-text-muted);flex:0 0 16px}
+  .case-cats{display:flex;gap:6px;flex-wrap:wrap}
+  .case-cats .ccat{
+    border:1px solid var(--ice-border);background:#fff;font-family:inherit;font-size:12.5px;
+    color:var(--ice-text-secondary);padding:5px 13px;border-radius:20px;cursor:pointer;
+    transition:.15s var(--g-ease);font-weight:500
+  }
+  .case-cats .ccat:hover{border-color:var(--g-brand);color:var(--g-brand)}
+  .case-cats .ccat.on{background:var(--g-brand);color:#fff;border-color:var(--g-brand)}
+
+  /* 富案例卡片 — 仿 seeany/截图风格 */
+  .inspire-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  @media(max-width:1100px){.inspire-grid{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:680px){.inspire-grid{grid-template-columns:1fr}}
+  .icard{
+    background:#fff;border:1px solid var(--ice-border);border-radius:var(--radius-xl);overflow:hidden;
+    transition:.22s var(--g-ease);cursor:pointer
+  }
+  .icard:hover{box-shadow:var(--shadow-lg);transform:translateY(-4px);border-color:transparent}
+  .icard-img{
+    position:relative;aspect-ratio:4/3;overflow:hidden;background:var(--ice-bg-secondary);
+    display:flex;align-items:center;justify-content:center
+  }
+  .icard-img img{width:100%;height:100%;object-fit:cover;transition:transform .4s var(--g-ease)}
+  .icard:hover .icard-img img{transform:scale(1.05)}
+  /* 角标：原图数量 / 案例来源 */
+  .icard-badge{
+    position:absolute;top:10px;left:10px;display:flex;gap:5px;z-index:2
+  }
+  .icard-badge .ib{
+    font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;
+    backdrop-filter:blur(8px)
+  }
+  .icard-badge .ib-src{background:rgba(124,58,237,.85);color:#fff}
+  .icard-badge .ib-num{background:rgba(255,77,46,.88);color:#fff}
+  /* 右下角图数角标 */
+  .icard-count{
+    position:absolute;bottom:10px;right:10px;z-index:2;
+    font-size:11px;font-weight:700;color:#fff;background:rgba(15,23,42,.55);
+    backdrop-filter:blur(6px);padding:3px 9px;border-radius:6px;display:flex;align-items:center;gap:4px
+  }
+  .icard-body{padding:14px 16px}
+  .icard-cat{
+    display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;
+    color:var(--g-ai-purple-2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.03em
+  }
+  .icard-cat .cdot{width:7px;height:7px;border-radius:50%;background:var(--g-confirm)}
+  .icard-title{
+    font-size:15px;font-weight:700;line-height:1.35;margin-bottom:10px;
+    color:var(--ice-text-primary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden
+  }
+  .icard-actions{display:flex;gap:8px}
+  .icard-actions .btn{
+    flex:1;padding:9px 0;font-size:12.5px;justify-content:center;border-radius:9px;font-weight:600
+  }
+  .icard-actions .btn-view{
+    border:1px solid var(--ice-border);background:#fff;color:var(--ice-text-secondary);
+    transition:.15s var(--g-ease)
+  }
+  .icard-actions .btn-view:hover{border-color:var(--g-brand);color:var(--g-brand)}
+  .icard-actions .btn-gen{
+    background:linear-gradient(135deg,var(--g-confirm),#a8c600);border:none;color:#0f172a;
+    box-shadow:0 2px 8px rgba(200,224,0,.25)
+  }
+  .icard-actions .btn-gen:hover{box-shadow:0 4px 16px rgba(200,224,0,.35);transform:translateY(-1px)}
+
+  /* Tab 内容区容器 */
+  .tab-panel{display:none;animation:fadeUp .3s var(--g-ease) both}
+  .tab-panel.active{display:block}
+
+  /* ============ 电商套图 · 左右分栏（v7） ============ */
+  .ecom-split{display:flex;gap:20px;align-items:flex-start}
+  @media(max-width:1024px){.ecom-split{flex-direction:column}}
+
+  /* ---- 左侧配置面板（固定宽） ---- */
+  .ec-left{
+    flex:0 0 340px;width:340px;
+    display:flex;flex-direction:column;gap:14px;position:sticky;top:72px;
+  }
+  @media(max-width:1024px){.ec-left{flex:none;width:100%;position:static}}
+
+  /* 上传区 */
+  .ec-upload{
+    background:#fff;border:1px solid var(--ice-border);border-radius:var(--radius-lg);
+    padding:16px;display:flex;flex-direction:column;align-items:center;gap:8px;
+  }
+  .ec-upload .eu-title{font-size:13px;font-weight:700;color:var(--g-brand);align-self:flex-start}
+  .ec-upload .eu-hint{font-size:11.5px;color:var(--ice-text-muted);align-self:flex-start}
+  .eu-box{
+    width:100%;height:120px;border:2px dashed var(--ice-border-hover);border-radius:10px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+    cursor:pointer;transition:.18s var(--g-ease);background:var(--ice-bg-primary);margin-top:4px
+  }
+  .eu-box:hover{border-color:var(--g-ai-purple);background:var(--g-ai-purple-light)}
+  .eu-box svg{color:var(--ice-text-secondary)}
+  .eu-box .eu-label{font-size:13px;font-weight:600;color:var(--ice-text-primary)}
+  .eu-box .eu-sub{font-size:11px;color:var(--ice-text-muted)}
+
+  /* 核心卖点 */
+  .ec-sellpoint{
+    background:#fff;border:1px solid var(--ice-border);border-radius:var(--radius-lg);
+    padding:16px
+  }
+  .ec-sellpoint .sp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .ec-sellpoint .sp-head span{font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px}
+  .ec-sellpoint textarea{
+    width:100%;height:64px;border:1px solid var(--ice-border);border-radius:8px;
+    padding:10px;font-family:inherit;font-size:13px;color:var(--ice-text-primary);
+    resize:none;outline:none;transition:.15s var(--g-ease);
+    background:var(--ice-bg-primary)
+  }
+  .ec-sellpoint textarea:focus{border-color:var(--g-ai-purple);box-shadow:0 0 0 3px rgba(124,58,237,.08)}
+  .ec-sellpoint .sp-ai{
+    margin-top:8px;display:flex;justify-content:flex-end
+  }
+
+  /* 左侧通用面板 */
+  .ec-panel{
+    background:#fff;border:1px solid var(--ice-border);border-radius:var(--radius-lg);
+    padding:16px
+  }
+  .ec-panel .ep-title{
+    font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:7px;margin-bottom:12px;
+    color:var(--ice-text-primary)
+  }
+  .ec-panel .ep-title .ep-ico{width:22px;height:22px;border-radius:6px;background:var(--g-ai-purple);color:#fff;
+    display:grid;place-items:center;font-size:12px}
+
+  /* AI推荐标签 */
+  .ai-rec{
+    font-size:11px;font-weight:700;padding:2px 9px;border-radius:5px;
+    background:var(--g-ai-purple);color:#fff;cursor:pointer;white-space:nowrap
+  }
+  .ai-rec:hover{background:var(--g-ai-purple-2)}
+
+  /* 收起/展开 */
+  .collapser{cursor:pointer;display:flex;align-items:center;gap:4px;
+    font-size:12px;color:var(--ice-text-muted);user-select:none;margin-bottom:8px
+  }
+  .collapser::after{content:'∧';transition:.2s var(--g-ease);font-size:10px}
+  .collapser.open::after{content:'∨'}
+
+  /* 应用配置按钮 */
+  .apply-all{
+    width:100%;padding:9px;border:1px dashed var(--g-ai-purple);background:var(--g-ai-purple-light);
+    border-radius:9px;font-size:12.5px;font-weight:700;color:var(--g-ai-purple-2);
+    cursor:pointer;text-align:center;transition:.15s var(--g-ease);margin-top:2px
+  }
+  .apply-all:hover{background:rgba(124,58,237,.16);border-color:var(--g-ai-purple)}
+
+  /* 出图规划列表 */
+  .plan-list-mini{margin-top:4px}
+  .plan-list-mini .plm-head{
+    display:flex;align-items:center;justify-content:space-between;font-size:12.5px;
+    font-weight:700;margin-bottom:8px
+  }
+  .plm-empty{font-size:12px;color:var(--ice-text-muted);text-align:center;padding:16px 0}
+
+  /* AI智能策划台 按钮 */
+  .btn-planner{
+    width:100%;padding:13px;border-radius:11px;font-size:15px;font-weight:700;
+    background:linear-gradient(135deg,var(--g-ai-purple),#6D28D9);color:#fff;
+    border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;
+    box-shadow:0 4px 16px rgba(124,58,237,.25);transition:.2s var(--g-ease)
+  }
+  .btn-planner:hover{box-shadow:0 6px 24px rgba(124,58,237,.35);transform:translateY(-1px)}
+
+  /* 立即生成 底部吸底 */
+  .gen-bottom{
+    margin-top:auto;background:#fff;border:1px solid var(--ice-border);border-radius:var(--radius-lg);
+    padding:14px 16px;display:flex;align-items:center;gap:12px
+  }
+  .gen-bottom .gb-info{flex:1}
+  .gen-bottom .gb-info h4{font-size:14px;font-weight:700}
+  .gen-bottom .gb-info p{font-size:12px;color:var(--ice-text-muted);margin-top:2px}
+  .gen-bottom .btn-generate{
+    padding:10px 22px;border-radius:10px;font-size:14px;font-weight:700;
+    background:linear-gradient(135deg,var(--g-confirm),#a8c600);color:#0f172a;
+    border:none;cursor:pointer;box-shadow:0 3px 12px rgba(200,224,0,.28);
+    white-space:nowrap;transition:.15s var(--g-ease)
+  }
+  .gen-bottom .btn-generate:hover{box-shadow:0 5px 20px rgba(200,224,0,.38);transform:translateY(-1px)}
+
+  /* 使用说明 */
+  .usage-note{
+    background:var(--ice-bg-primary);border:1px solid var(--ice-border);border-radius:var(--radius-lg);
+    padding:14px;font-size:12.5px;line-height:1.65;color:var(--ice-text-secondary)
+  }
+  .usage-note h4{font-size:13px;font-weight:700;color:var(--ice-text-primary);margin-bottom:6px;
+    display:flex;align-items:center;gap:6px
+  }
+  .usage-note ol{padding-left:18px;margin:4px 0 0}
+  .usage-note li{margin-bottom:3px}
+  .usage-note a{color:var(--g-ai-purple);font-weight:600;text-decoration:none}
+
+  /* ---- 右侧内容区 ---- */
+  .ec-right{flex:1;min-width:0}
+  .modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:center;justify-content:center;z-index:200;padding:20px}
+  .modal-mask.open{display:flex;animation:fadeUp .2s ease}
+  .modal{background:#fff;border-radius:var(--radius-xl);width:min(560px,100%);max-height:88vh;display:flex;flex-direction:column;
+    box-shadow:0 24px 64px rgba(27,26,33,.28);overflow:hidden}
+  .m-head{padding:18px 22px;border-bottom:1px solid var(--ice-border);display:flex;align-items:center;justify-content:space-between}
+  .m-head h3{font-size:17px;font-weight:700}
+  .m-head .m-sub{font-size:12.5px;color:var(--ice-text-secondary);margin-top:2px}
+  .m-close{border:none;background:var(--ice-bg-hover);width:32px;height:32px;border-radius:8px;cursor:pointer;font-size:16px;color:var(--ice-text-secondary)}
+  .m-body{padding:20px 22px;overflow-y:auto}
+  .brought{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--g-ai-purple-2);
+    background:var(--g-ai-purple-light);padding:8px 12px;border-radius:9px;margin-bottom:16px}
+  .brought .pulse{width:7px;height:7px;border-radius:50%;background:var(--g-ai-purple);animation:pulse 1.6s infinite}
+  .set-group{margin-bottom:18px}
+  .set-group__title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:4px}
+  .set-group__title .g-ico{width:24px;height:24px;border-radius:7px;background:var(--g-brand);color:#fff;display:grid;place-items:center;font-size:13px}
+  .set-group__sub{font-size:12px;color:var(--ice-text-muted);margin-bottom:12px;padding-left:32px}
+  .set-group__sub .pill{display:inline-block;background:var(--g-ai-purple-light);color:var(--g-ai-purple-2);font-weight:600;padding:1px 8px;border-radius:20px;font-size:11px}
+  .sub-fields{margin-left:32px;border-left:2px solid var(--ice-border);padding-left:16px}
+  .field.modified>label::after{content:"已修改";font-size:10px;color:var(--g-confirm);background:rgba(200,224,0,.16);
+    padding:1px 7px;border-radius:20px;margin-left:8px;font-weight:700;vertical-align:middle}
+  .m-foot{padding:16px 22px;border-top:1px solid var(--ice-border);display:flex;gap:10px;justify-content:flex-end;
+    position:sticky;bottom:0;background:#fff}
+  .verify{margin-top:14px;display:none}
+  .verify.open{display:block;animation:fadeUp .3s ease}
+  .verify h4{font-size:13px;font-weight:700;margin-bottom:10px;color:var(--ice-text-primary)}
+  .vrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--ice-border);font-size:13px}
+  .vrow .vk{color:var(--ice-text-secondary);width:88px;flex:0 0 88px}
+  .vrow .vv{font-weight:600}
+  .vtag{font-size:11px;padding:1px 8px;border-radius:20px;font-weight:600;margin-left:auto}
+  .vtag.brought{background:var(--g-ai-purple-light);color:var(--g-ai-purple-2)}
+  .vtag.modified{background:rgba(200,224,0,.16);color:#6b7a00}
+  .vtag.ok{background:rgba(16,185,129,.14);color:#047857}
+  .stamp{margin-top:14px;display:none;align-items:center;gap:10px;justify-content:center;
+    border:2px solid var(--g-confirm);color:#5a6b00;background:rgba(200,224,0,.1);
+    border-radius:12px;padding:12px;font-weight:700}
+  .stamp.open{display:flex;animation:fadeUp .3s ease}
+
+  /* toast */
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ice-text-primary);color:#fff;
+    padding:11px 18px;border-radius:10px;font-size:13.5px;z-index:300;opacity:0;pointer-events:none;transition:.25s var(--g-ease)}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ============ 左侧导航（对齐项目目录 BasicLayout.tsx） ============ -->
+  <aside class="sider" id="sider">
+    <div class="brand">
+      <div class="logo">A</div>
+      <div>
+        <div class="name">AI Agent</div>
+        <div class="sub">管理平台</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav"><!-- JS 渲染 --></nav>
+    <div class="sider-foot">
+      <div class="ava">U</div>
+      <div>
+        <div class="meta">admin</div>
+        <div class="role">管理员</div>
+      </div>
+      <button class="collapse-btn" id="collapseBtn" title="收起/展开">‹</button>
+    </div>
+  </aside>
+
+  <!-- ============ 主区域 ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="crumb"><span id="crumbRoot">工作台</span><span>›</span><b id="crumbLeaf">电商套图</b></div>
+      <div class="right">
+        <button class="icon-btn" title="深色模式" onclick="toast('演示：可切换深浅模式')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/></svg>
+        </button>
+        <button class="icon-btn" title="通知"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/></svg></button>
+      </div>
+    </header>
+    <div class="content">
+
+      <!-- ====== 电商套图（v7 左右分栏） ====== -->
+      <section class="view active" id="view-ecommerce">
+        <div class="ecom-split">
+
+          <!-- ========== 左侧：配置面板（固定）========== -->
+          <aside class="ec-left">
+
+            <!-- 上传产品图 -->
+            <div class="ec-upload">
+              <div class="eu-title">✱ 上传产品图 <span style="font-size:11px;color:var(--ice-text-muted);font-weight:400">(仅支持多视角上传)</span></div>
+              <div class="eu-box" onclick="toast('演示：打开文件选择器')">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <div class="eu-label">本地上传</div>
+                <div class="eu-sub">(支持多张图片拖拽)</div>
+              </div>
+              <button class="btn" style="width:100%;justify-content:center;font-size:13px;margin-top:4px" onclick="toast('演示：打开图片库')">📷 图片库</button>
+            </div>
+
+            <!-- 核心卖点 -->
+            <div class="ec-sellpoint">
+              <div class="sp-head">
+                <span>✏️ 核心卖点</span>
+                <span class="ai-rec" onclick="toast('演示：AI 自动撰写核心卖点')">AI 撰写</span>
+              </div>
+              <textarea placeholder="建议包含以下信息生成更精准：&#10;1. 产品名称&#10;2. 核心卖点&#10;3. 适用人群&#10;4. 明显优势&#10;5. 其他参数"></textarea>
+            </div>
+
+            <!-- 市场配置 -->
+            <div class="ec-panel">
+              <div class="ep-title"><span class="ep-ico">🌐</span> 市场配置
+                <span class="ai-rec" style="margin-left:auto;font-size:10.5px;padding:2px 7px" onclick="toast('演示：AI 推荐最优市场方案')">AI推荐</span>
+              </div>
+              <div class="collapser open" onclick="this.classList.toggle('open');this.nextElementSibling.style.display=this.classList.contains('open')?'block':'none'">收起</div>
+              <div style="">
+                <div class="field"><label>电商平台</label><select class="sel" id="m-platform"></select><div class="cfg-hint">请选择，或直接输入</div></div>
+                <div class="field"><label>目标市场</label><select class="sel" id="m-market"></select><div class="cfg-hint">请选择，或直接输入</div></div>
+                <div class="field"><label>文案语种</label><select class="sel" id="m-lang"></select><div class="cfg-hint">请选择，或直接输入</div></div>
+                <div class="field"><label>视觉风格</label><select class="sel" id="m-style"></select><div class="cfg-hint">请选择，或直接输入</div></div>
+              </div>
+            </div>
+
+            <!-- 全局输出配置 -->
+            <div class="ec-panel">
+              <div class="ep-title"><span class="ep-ico" style="background:var(--g-brand)">⚙️</span> 全局输出配置
+                <span class="collapser" style="margin-left:auto" onclick="this.classList.toggle('open');this.nextElementSibling.style.display=this.classList.contains('open')?'block':'none'">∧ 收起</span>
+              </div>
+              <div>
+                <div class="field"><label>模型</label><select class="sel"><option>Banana-pro</option><option selected>agnes-image-2.0-flash</option></select></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                  <div class="field"><label>分辨率</label><select class="sel"><option>512P</option><option selected>1K</option><option>2K</option><option>4K</option></select></div>
+                  <div class="field"><label>图片比例</label><select class="sel"><option>自适应尺寸</option><option>1:1</option><option selected>3:4</option><option>4:5</option><option>16:9</option></select></div>
+                </div>
+                <div class="field" style="margin-top:6px"><label>每个类型出图数</label>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <button style="width:32px;height:32px;border:1px solid var(--ice-border);border-radius:8px;background:#fff;font-size:18px;cursor:pointer" onclick="let i=document.getElementById('ecQty');if(i.value>1)i.value--">−</button>
+                    <input type="number" id="ecQty" value="1" min="1" max="20" style="flex:1;height:32px;border:1px solid var(--ice-border);border-radius:8px;text-align:center;font-family:inherit;font-size:14px"/>
+                    <button style="width:32px;height:32px;border:1px solid var(--ice-border);border-radius:8px;background:#fff;font-size:18px;cursor:pointer" onclick="document.getElementById('ecQty').value++">＋</button>
+                  </div>
+                </div>
+                <button class="apply-all" onclick="saveMarket();toast('已将全局输出配置应用到所有任务')">应用配置覆盖列表中所有任务</button>
+              </div>
+            </div>
+
+            <!-- 出图规划列表（迷你版） -->
+            <div class="ec-panel plan-list-mini">
+              <div class="plm-head"><span>✱ 出图规划列表 (已选 0/50个)</span><button style="border:none;background:none;color:var(--ice-text-muted);font-size:12px;cursor:pointer" onclick="toast('演示：清空规划列表')">🗑 清空</button></div>
+              <div class="plm-empty" id="miniPlanList">暂未添加出图规划任务</div>
+            </div>
+
+            <!-- AI智能策划台 按钮 -->
+            <button class="btn-planner" onclick="document.getElementById('plannerModal').classList.add('open')">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              AI 智能策划台
+            </button>
+
+            <!-- 使用说明 -->
+            <div class="usage-note">
+              <h4>ℹ️ 使用说明</h4>
+              <ol>
+                <li>支持多角度图上传，AI能更精准还原产品结构。</li>
+                <li>请在全局设置中选择目标市场，AI 将自动调整模特人种与场景风格。</li>
+                <li>智能模式下，AI 会自动规划整套详情页所需的图片组合。</li>
+                <li>新手指引：<a href="#" onclick="event.preventDefault();toast('演示：查看新手指引')">查看新手指引！</a></li>
+              </ol>
+            </div>
+
+            <!-- 立即生成（吸底） -->
+            <div class="gen-bottom">
+              <div class="gb-info">
+                <h4>✨ 立即生成</h4>
+                <p>消耗 0 积分</p>
+              </div>
+              <button class="btn-generate" onclick="toast('演示：提交套图生成任务')">立即生成</button>
+            </div>
+          </aside>
+
+          <!-- ========== 右侧：双Tab 内容区 ========== -->
+          <main class="ec-right">
+
+            <!-- Tab 栏 -->
+            <div class="creation-tabs">
+              <button class="ctab on" data-tab="results" onclick="switchCreationTab('results')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+                AI创作结果 <span class="c-count">386</span>
+              </button>
+              <button class="ctab" data-tab="cases" onclick="switchCreationTab('cases')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                创作案例 <span class="c-count">500+</span>
+              </button>
+            </div>
+
+            <!-- Tab 1: AI创作结果 -->
+            <div class="tab-panel active" id="tab-results">
+              <div class="stats">
+                <div class="stat"><div class="s-val">12</div><div class="s-label">套作品合集</div></div>
+                <div class="stat"><div class="s-val">386</div><div class="s-label">累计生成图片</div></div>
+                <div class="stat"><div class="s-val">＋48</div><div class="s-label">本月新增</div></div>
+              </div>
+              <div class="filter-bar">
+                <div class="fgroup"><span class="flabel">平台</span>
+                  <div class="seg" id="fPlatform">
+                    <button class="on" data-v="全部">全部</button>
+                    <button data-v="抖音电商">抖音电商</button>
+                    <button data-v="淘宝">淘宝</button>
+                    <button data-v="亚马逊">亚马逊</button>
+                  </div>
+                </div>
+                <div class="fgroup"><span class="flabel">市场</span>
+                  <div class="seg" id="fMarket">
+                    <button class="on" data-v="全部">全部</button>
+                    <button data-v="中东">中东</button>
+                    <button data-v="欧美">欧美</button>
+                    <button data-v="东南亚">东南亚</button>
+                  </div>
+                </div>
+              </div>
+              <div class="creation-grid" id="creationGrid"></div>
+            </div>
+
+            <!-- Tab 2: 创作案例（灵感库 + 热门套图示例） -->
+            <div class="tab-panel" id="tab-cases">
+              <div class="case-toolbar">
+                <div class="case-search">
+                  <svg class="cs-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                  <input type="text" id="caseSearchInput" placeholder="搜索案例标题、品类、风格…" oninput="filterCases()"/>
+                </div>
+                <div class="case-cats" id="caseCats"></div>
+              </div>
+              <!-- 分类标签：全部 / 美妆 / 服饰 / 3C数码 / 家居 / 食品 -->
+              <div class="inspire-grid" id="inspireGrid"></div>
+            </div>
+
+          </main>
+        </div>
+
+        <!-- AI 智能策划台弹窗（点击按钮弹出） -->
+        <div class="modal-mask" id="plannerModal">
+          <div class="modal" style="width:min(720px,100%)">
+            <div class="m-head">
+              <div><h3>AI 智能策划台</h3><div class="m-sub">选择出图类型并配置通用参数</div></div>
+              <button class="m-close" onclick="this.closest('.modal-mask').classList.remove('open')" aria-label="关闭">✕</button>
+            </div>
+            <div class="m-body">
+              <div class="type-grid" id="typeGrid"></div>
+              <div class="selected-wrap" style="margin-top:16px">
+                <div class="selected-head"><h3>已选类型</h3><span class="chip-count" id="selCount">0 项</span></div>
+                <div id="planList"><div class="empty-hint">从上方选择出图类型，加入后将在此列出。</div></div>
+                <div class="gen-card" id="genCard" style="display:none">
+                  <div><h4>立即生成完整套图</h4><p id="genInfo">当前规划 0 张</p></div>
+                  <button class="btn brand" onclick="document.getElementById('plannerModal').classList.remove('open');toast('演示：规划已添加到左侧列表')">确认添加到规划列表</button>
+                </div>
+              </div>
+            </div>
+            <div class="m-foot"><button class="btn" onclick="this.closest('.modal-mask').classList.remove('open')">关闭</button></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====== 我的创作（双Tab：AI创作结果 / 创作案例） ====== -->
+      <section class="view" id="view-creations">
+        <!-- Tab 栏 -->
+        <div class="creation-tabs">
+          <button class="ctab on" data-tab="results" onclick="switchCreationTab('results')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+            AI创作结果 <span class="c-count">386</span>
+          </button>
+          <button class="ctab" data-tab="cases" onclick="switchCreationTab('cases')">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            创作案例 <span class="c-count">500+</span>
+          </button>
+        </div>
+
+        <!-- Tab 1: AI创作结果 -->
+        <div class="tab-panel active" id="tab-results">
+          <div class="stats">
+            <div class="stat"><div class="s-val">12</div><div class="s-label">套作品合集</div></div>
+            <div class="stat"><div class="s-val">386</div><div class="s-label">累计生成图片</div></div>
+            <div class="stat"><div class="s-val">＋48</div><div class="s-label">本月新增</div></div>
+          </div>
+
+          <div class="filter-bar">
+            <div class="fgroup"><span class="flabel">平台</span>
+              <div class="seg" id="fPlatform">
+                <button class="on" data-v="全部">全部</button>
+                <button data-v="抖音电商">抖音电商</button>
+                <button data-v="淘宝">淘宝</button>
+                <button data-v="亚马逊">亚马逊</button>
+              </div>
+            </div>
+            <div class="fgroup"><span class="flabel">市场</span>
+              <div class="seg" id="fMarket">
+                <button class="on" data-v="全部">全部</button>
+                <button data-v="中东">中东</button>
+                <button data-v="欧美">欧美</button>
+                <button data-v="东南亚">东南亚</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="creation-grid" id="creationGrid"></div>
+        </div>
+
+        <!-- Tab 2: 创作案例（灵感库） -->
+        <div class="tab-panel" id="tab-cases">
+          <div class="case-toolbar">
+            <div class="case-search">
+              <svg class="cs-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+              <input type="text" id="caseSearchInput" placeholder="搜索案例标题、品类、风格…" oninput="filterCases()"/>
+            </div>
+            <div class="case-cats" id="caseCats"></div>
+          </div>
+
+          <div class="inspire-grid" id="inspireGrid"></div>
+        </div>
+      </section>
+
+      <!-- ====== 其余现有模块占位 ====== -->
+      <section class="view" id="view-placeholder">
+        <div class="placeholder">
+          <div class="ph-ico"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></svg></div>
+          <h3 id="phTitle">模块</h3>
+          <p id="phDesc">该模块为平台现有功能，本原型聚焦「工作台」分组下的电商套图与我的创作。</p>
+          <span class="tag" id="phTag">现有功能 · 未重构</span>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============ 个性化设置弹窗 ============ -->
+<div class="modal-mask" id="modalMask">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <div class="m-head">
+      <div>
+        <h3 id="mTitle">类型 · 个性化设置</h3>
+        <div class="m-sub">通用设置已自动带出市场配置与本类型默认</div>
+      </div>
+      <button class="m-close" onclick="closeModal()" aria-label="关闭">×</button>
+    </div>
+    <div class="m-body">
+      <div class="brought"><span class="pulse"></span>已自动带入配置（来自市场配置 + 本类型默认）</div>
+
+      <div class="set-group">
+        <div class="set-group__title"><span class="g-ico">⚙</span>个性化设置</div>
+        <div class="set-group__sub">该类型专属的个性化配置，<span class="pill">通用设置</span> 子项如下</div>
+        <div class="sub-fields">
+          <div class="field" id="f-platform-wrap">
+            <label>电商平台 <span class="req">*</span></label>
+            <select class="sel" id="s-platform"></select>
+          </div>
+          <div class="field" id="f-market-wrap">
+            <label>目标市场 <span class="req">*</span></label>
+            <select class="sel" id="s-market"></select>
+          </div>
+          <div class="field" id="f-lang-wrap">
+            <label>文案语种 <span class="req">*</span></label>
+            <select class="sel" id="s-lang"></select>
+          </div>
+          <div class="field" id="f-style-wrap">
+            <label>视觉风格 <span class="req">*</span></label>
+            <select class="sel" id="s-style"></select>
+          </div>
+          <div class="field" id="f-qty-wrap">
+            <label>数量</label>
+            <input class="inp" id="s-qty" type="number" min="1" max="20" />
+          </div>
+          <div class="field" id="f-ratio-wrap">
+            <label>比例</label>
+            <select class="sel" id="s-ratio">
+              <option>1:1</option><option selected>3:4</option><option>4:5</option><option>16:9</option>
+            </select>
+          </div>
+          <div class="field" id="f-res-wrap">
+            <label>分辨率</label>
+            <select class="sel" id="s-res">
+              <option>512P</option><option selected>1K</option><option>2K</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="verify" id="verify">
+        <h4>配置验证报告</h4>
+        <div id="verifyRows"></div>
+        <div class="stamp" id="stamp">✅ 配置验证通过</div>
+      </div>
+    </div>
+    <div class="m-foot">
+      <button class="btn ghost" onclick="closeModal()">取消</button>
+      <button class="btn" onclick="toast('演示：已保存设置')">保存</button>
+      <button class="btn purple" onclick="verifyConfig()">验证配置</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===================== 数据 ===================== */
+const PLATFORMS = ['抖音电商','淘宝','天猫','京东','拼多多','亚马逊','Shopee','Lazada'];
+const MARKETS = ['中东','欧美','东南亚','日韩','拉美','国内'];
+const LANGS = ['中文','英文','阿拉伯语','日语','韩语','泰语'];
+const STYLES = ['简约清新风','高级质感风','活泼吸睛风','复古怀旧风','场景写实风','科技未来风','国风古韵风'];
+const RATIOS = ['1:1','3:4','4:5','16:9','9:16'];
+const RESOLS = ['512P','1K','2K','4K'];
+
+// 市场配置（全局默认值源）—— 用户要求默认：抖音电商 / 中东 / 中文 / 高级质感风
+let marketConfig = { platform:'抖音电商', market:'中东', lang:'中文', style:'高级质感风' };
+
+// 出图类型（继承项目 v2 规划）
+const TYPES = [
+  {id:'white', name:'产品白底图', icon:'◻', desc:'纯色背景标准商品图', tag:'自定义'},
+  {id:'main', name:'电商主图', icon:'★', desc:'高点击率首图', tag:'极速'},
+  {id:'detail', name:'详情页图文', icon:'▤', desc:'卖点长图', tag:'自定义'},
+  {id:'scene', name:'使用场景图', icon:'◈', desc:'真人/场景合成', tag:'自定义'},
+  {id:'model', name:'模特上身图', icon:'♀', desc:'虚拟试穿', tag:'极速'},
+  {id:'pack', name:'包装展示图', icon:'▢', desc:'开箱/礼盒', tag:'自定义'},
+  {id:'size', name:'尺码说明图', icon:'≡', desc:'规格参数可视化', tag:'自定义'},
+  {id:'promo', name:'促销海报', icon:'❂', desc:'活动营销图', tag:'自定义'},
+  {id:'banner', name:'店铺 banner', icon:'▭', desc:'首页横幅', tag:'自定义'},
+];
+
+// 热门套图
+const SHOWCASE_CATS = ['全部','美妆','服饰','3C数码','家居','食品'];
+const SHOWCASES = [
+  {cat:'美妆', name:'口红套装 · 中东主播风', n:8},
+  {cat:'服饰', name:'法式连衣裙 · 欧美街拍', n:12},
+  {cat:'3C数码', name:'蓝牙耳机 · 极简白底', n:6},
+  {cat:'家居', name:'香薰蜡烛 · 氛围场景', n:9},
+  {cat:'食品', name:'坚果礼盒 · 年货促销', n:10},
+  {cat:'美妆', name:'精华液 · 成分可视化', n:7},
+  {cat:'服饰', name:'运动套装 · 健身场景', n:11},
+  {cat:'家居', name:'收纳盒 · 日式收纳', n:8},
+];
+
+// 我的创作（合集）
+const CREATIONS = [
+  {title:'春季新品 · 服饰合集', platform:'抖音电商', market:'中东', count:48, date:'2026-07-02'},
+  {title:'美妆礼盒 · 开箱场景', platform:'淘宝', market:'国内', count:32, date:'2026-06-28'},
+  {title:'3C 数码 · 白底主图', platform:'亚马逊', market:'欧美', count:24, date:'2026-06-20'},
+  {title:'家居香薰 · 氛围图', platform:'抖音电商', market:'东南亚', count:36, date:'2026-06-15'},
+  {title:'食品年货 · 促销海报', platform:'淘宝', market:'国内', count:40, date:'2026-06-10'},
+  {title:'运动套装 · 健身场景', platform:'亚马逊', market:'欧美', count:30, date:'2026-06-05'},
+];
+
+// 创作案例（灵感库）—— 分类：美妆/服饰/3C数码/家居/食品
+const INSPIRE_CASES = [
+  {cat:'3C数码', title:'FreeBuds Pro 5 悦享版耳机', src:'AI生成', n:15, seed:'freebuds-headphone', tags:['白底主图','场景图','详情页']},
+  {cat:'家居', title:'金属材质多功能开瓶器', src:'原创案例', n:13, seed:'bottle-opener-home', tags:['产品摄影','创意构图']},
+  {cat:'服饰', title:'国风刺绣毛呢外套印花半身裙套装', src:'电商精选', n:6, seed:'guofeng-dress-set', tags:['国风','刺绣','搭配展示']},
+  {cat:'美妆', title:'精华液成分可视化海报', src:'AI生成', n:18, seed:'serum-poster-beauty', tags:['成分可视化','科学感']},
+  {cat:'食品', title:'坚果礼盒年货促销套装', src:'创作案例', n:12, seed:'nut-gift-food', tags:['礼盒','促销氛围','节日营销']},
+  {cat:'美妆', title:'口红试色多角度展示套图', src:'热门爆款', n:20, seed:'lipstick-makeup', tags:['试色图','细节特写','氛围感']},
+  {cat:'服饰', title:'运动休闲卫衣三件套', src:'AI生成', n:10, seed:'sport-hoodie', tags:['模特上身','场景搭配','细节展示']},
+  {cat:'3C数码', title:'智能运动手表功能展示', src:'Amazon精选', n:14, seed:'smart-watch-3c', tags:['科技风','功能展示','数据可视化']},
+  {cat:'家居', title:'香薰蜡烛氛围场景图', src:'AI生成', n:9, seed:'candle-home', tags:['暖光氛围','生活方式','静物摄影']},
+  {cat:'食品', name:'零食大礼包组合装', src:'创作案例', n:16, seed:'snack-gift-food', tags:['丰富层次','色彩鲜艳','食欲感']},
+];
+
+// 项目真实导航结构（对齐 BasicLayout.tsx menuItems）+ 新增工作台
+const NAV = [
+  {key:'dashboard', label:'仪表盘', icon:'dashboard'},
+  {key:'workbench', label:'工作台', icon:'workbench', group:true, badge:'NEW', children:[
+    {key:'ecommerce', label:'电商套图', icon:'gallery'},
+    {key:'creations', label:'我的创作', icon:'picture'},
+  ]},
+  {key:'agent', label:'Agent', icon:'robot', group:true, children:[
+    {key:'chat', label:'聊天'},
+    {key:'providers', label:'AI 提供商'},
+    {key:'mcp', label:'MCP Server'},
+    {key:'skills', label:'Skills'},
+    {key:'prompts', label:'提示词模板'},
+  ]},
+  {key:'resources', label:'资源中心', icon:'cloud', group:true, children:[
+    {key:'kb', label:'知识库'},
+    {key:'media', label:'媒体库'},
+  ]},
+  {key:'users', label:'用户管理', icon:'team'},
+  {key:'settings', label:'系统设置', icon:'setting'},
+];
+
+const ICONS = {
+  dashboard:'<path d="M3 3h7v7H3zM14 3h7v4h-7zM14 10h7v11h-7zM3 13h7v8H3z"/>',
+  workbench:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  gallery:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/><circle cx="9" cy="9" r="1.6"/>',
+  picture:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/>',
+  robot:'<rect x="4" y="8" width="16" height="11" rx="2"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13" r="1.3"/><circle cx="15" cy="13" r="1.3"/>',
+  cloud:'<path d="M17.5 19a4.5 4.5 0 000-9 6 6 0 00-11.6 1.5A4 4 0 006.5 19z"/>',
+  team:'<circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0112 0M16 6a3 3 0 010 6M21 20a6 6 0 00-5-5.9"/>',
+  setting:'<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 00-1.7-1l-.3-2.6h-4l-.3 2.6a7 7 0 00-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 000 2l-2 1.5 2 3.4 2.3-1a7 7 0 001.7 1l.3 2.6h4l.3-2.6a7 7 0 001.7-1l2.3 1 2-3.4-2-1.5a7 7 0 00.1-1z"/>',
+};
+
+/* ===================== 渲染导航 ===================== */
+function renderNav(){
+  const nav = document.getElementById('nav');
+  nav.innerHTML = '';
+  NAV.forEach(g=>{
+    const wrap = document.createElement('div');
+    wrap.className = 'nav-group' + (g.group ? ' open' : '');
+    const item = document.createElement('div');
+    item.className = 'nav-item' + (g.group ? ' parent' : '');
+    item.dataset.key = g.key;
+    item.innerHTML = `<span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${ICONS[g.icon]||''}</svg></span>`+
+      `<span class="label">${g.label}</span>`+
+      (g.badge ? `<span class="nav-badge">${g.badge}</span>` : '')+
+      (g.group ? '<span class="caret">▶</span>' : '');
+    if(g.group){
+      item.onclick = ()=> wrap.classList.toggle('open');
+    } else {
+      item.onclick = ()=> goPage(g.key);
+    }
+    wrap.appendChild(item);
+    if(g.group){
+      const ch = document.createElement('div');
+      ch.className = 'nav-children';
+      g.children.forEach(c=>{
+        const ci = document.createElement('div');
+        ci.className = 'nav-item';
+        ci.dataset.key = c.key;
+        const icoSvg = c.icon ? `<span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${ICONS[c.icon]||''}</svg></span>` : '<span class="dot"></span>';
+        ci.innerHTML = icoSvg + `<span class="label">${c.label}</span>`;
+        ci.onclick = (e)=>{ e.stopPropagation(); goPage(c.key); };
+        ch.appendChild(ci);
+      });
+      wrap.appendChild(ch);
+    }
+    nav.appendChild(wrap);
+  });
+}
+
+function setActiveNav(key){
+  document.querySelectorAll('.nav-item').forEach(el=>{
+    el.classList.toggle('active', el.dataset.key === key);
+  });
+}
+
+const VIEW_OF = {
+  ecommerce:'view-ecommerce', creations:'view-creations',
+};
+function goPage(key){
+  setActiveNav(key);
+  // 面包屑
+  let root='工作台', leaf='';
+  const g = NAV.find(x=>x.key===key || (x.children&&x.children.some(c=>c.key===key)));
+  if(g){
+    if(g.children){ root=g.label; const c=g.children.find(c=>c.key===key); leaf=c?c.label:''; }
+    else { root=g.label; leaf=''; }
+  }
+  document.getElementById('crumbRoot').textContent = root;
+  document.getElementById('crumbLeaf').textContent = leaf || root;
+
+  if(VIEW_OF[key]){
+    showView(VIEW_OF[key]);
+  } else {
+    // 其余现有模块：占位
+    showView('view-placeholder');
+    const meta = {
+      dashboard:['仪表盘','平台数据总览与快捷入口。','现有功能 · 未重构'],
+      chat:['聊天','与 Agent 对话交互。','现有功能 · 未重构'],
+      providers:['AI 提供商','管理模型供应商与密钥。','现有功能 · 未重构'],
+      mcp:['MCP Server','管理 MCP 工具服务。','现有功能 · 未重构'],
+      skills:['Skills','技能市场与已安装技能。','现有功能 · 未重构'],
+      prompts:['提示词模板','提示词模板管理。','现有功能 · 未重构'],
+      kb:['知识库','知识库与文档管理。','现有功能 · 未重构'],
+      media:['媒体库','图片/视频资源库。','现有功能 · 未重构'],
+      users:['用户管理','平台用户与权限。','现有功能 · 未重构'],
+      settings:['系统设置','平台全局设置。','现有功能 · 未重构'],
+    }[key] || [root, '', '现有功能'];
+    document.getElementById('phTitle').textContent = meta[0];
+    document.getElementById('phDesc').textContent = meta[1];
+    document.getElementById('phTag').textContent = meta[2];
+  }
+}
+function showView(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelector('.content').scrollTop = 0;
+}
+
+/* ===================== 市场配置 ===================== */
+function fillSelect(id, list, val){
+  const s = document.getElementById(id);
+  s.innerHTML = list.map(o=>`<option ${o===val?'selected':''}>${o}</option>`).join('');
+}
+function initMarket(){
+  fillSelect('m-platform', PLATFORMS, marketConfig.platform);
+  fillSelect('m-market', MARKETS, marketConfig.market);
+  fillSelect('m-lang', LANGS, marketConfig.lang);
+  fillSelect('m-style', STYLES, marketConfig.style);
+}
+function saveMarket(){
+  marketConfig = {
+    platform: document.getElementById('m-platform').value,
+    market: document.getElementById('m-market').value,
+    lang: document.getElementById('m-lang').value,
+    style: document.getElementById('m-style').value,
+  };
+  toast('已保存默认市场配置：'+marketConfig.platform+' / '+marketConfig.market+' / '+marketConfig.lang+' / '+marketConfig.style);
+}
+
+/* ===================== 策划台 ===================== */
+let planItems = []; // {id,type,modified:{}}
+function renderTypes(){
+  const grid = document.getElementById('typeGrid');
+  grid.innerHTML = TYPES.map(t=>{
+    const added = planItems.some(p=>p.id===t.id);
+    return `<div class="type-card ${added?'added':''}" data-id="${t.id}" onclick="toggleType('${t.id}')">
+      <div class="tc-top">
+        <span class="tc-ico">${t.icon}</span>
+        <span class="tc-name">${t.name}</span>
+        <span class="tc-tag">${t.tag}</span>
+      </div>
+      <div class="tc-desc">${t.desc}</div>
+    </div>`;
+  }).join('');
+}
+function toggleType(id){
+  const idx = planItems.findIndex(p=>p.id===id);
+  if(idx>=0){ planItems.splice(idx,1); }
+  else {
+    const t = TYPES.find(x=>x.id===id);
+    planItems.push({id, type:t, modified:{}});
+  }
+  renderTypes(); renderPlan();
+}
+function renderPlan(){
+  const list = document.getElementById('planList');
+  document.getElementById('selCount').textContent = planItems.length + ' 项';
+  document.getElementById('genCard').style.display = planItems.length ? 'flex' : 'none';
+  if(planItems.length===0){
+    list.innerHTML = '<div class="empty-hint">从上方选择出图类型，加入后将在此列出，点击「设置 ›」可完善通用设置。</div>';
+    return;
+  }
+  let total = 0;
+  list.innerHTML = planItems.map((p,i)=>{
+    const def = defaultOutput(p.type.id);
+    total += Number(def.qty);
+    const tag = p.type.tag==='极速' ? 'fast' : 'custom';
+    const tagLabel = p.type.tag==='极速' ? '极速出图' : '自定义';
+    const isModified = Object.keys(p.modified).length>0;
+    return `<div class="plan-row">
+      <div class="pr-num">${i+1}</div>
+      <div>
+        <div class="pr-title">${p.type.name}
+          <span class="pr-tag ${tag}">${tagLabel}</span>
+          ${isModified?'<span class="pr-tag custom" style="background:rgba(200,224,0,.16);color:#6b7a00">已修改</span>':''}
+        </div>
+        <div class="pr-meta">
+          <span>自定义</span><span class="sep">|</span>
+          <span>数量 ${def.qty}</span><span class="sep">|</span>
+          <span>比例 ${def.ratio}</span><span class="sep">|</span>
+          <span>分辨率 ${def.res}</span>
+        </div>
+      </div>
+      <div class="pr-actions">
+        <span class="pr-set" onclick="openModal('${p.id}')">设置 ›</span>
+        <button class="pr-rm" title="移除" onclick="toggleType('${p.id}')">×</button>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('genInfo').textContent = '当前规划 ' + total + ' 张 · 预计 ' + (total*2) + ' 分钟';
+}
+function defaultOutput(id){
+  // 本类型默认出图参数（演示）
+  return { qty:1, ratio:'3:4', res:'1K' };
+}
+
+/* ===================== 弹窗：个性化设置 > 通用设置 ===================== */
+let activePlanId = null;
+function openModal(planId){
+  activePlanId = planId;
+  const p = planItems.find(x=>x.id===planId);
+  document.getElementById('mTitle').textContent = (p?p.type.name:'类型') + ' · 个性化设置';
+  // 自动带出：市场配置(来自全局) + 本类型默认出图参数
+  const def = defaultOutput(p.type.id);
+  fillSelect('s-platform', PLATFORMS, marketConfig.platform);
+  fillSelect('s-market', MARKETS, marketConfig.market);
+  fillSelect('s-lang', LANGS, marketConfig.lang);
+  fillSelect('s-style', STYLES, marketConfig.style);
+  document.getElementById('s-qty').value = def.qty;
+  document.getElementById('s-ratio').value = def.ratio;
+  document.getElementById('s-res').value = def.res;
+  // 重置修改态
+  ['f-platform-wrap','f-market-wrap','f-lang-wrap','f-style-wrap','f-qty-wrap','f-ratio-wrap','f-res-wrap']
+    .forEach(id=>document.getElementById(id).classList.remove('modified'));
+  document.getElementById('verify').classList.remove('open');
+  document.getElementById('stamp').classList.remove('open');
+  // 绑定修改检测
+  ['s-platform','s-market','s-lang','s-style','s-qty','s-ratio','s-res'].forEach(bindModify);
+  document.getElementById('modalMask').classList.add('open');
+}
+function bindModify(id){
+  const el = document.getElementById(id);
+  const wrap = document.getElementById('f-'+id.split('-')[1]+'-wrap');
+  el.oninput = el.onchange = ()=>{
+    if(!activePlanId) return;
+    const p = planItems.find(x=>x.id===activePlanId);
+    if(!p) return;
+    const base = {platform:marketConfig.platform, market:marketConfig.market, lang:marketConfig.lang, style:marketConfig.style, qty:String(defaultOutput(p.type.id).qty), ratio:defaultOutput(p.type.id).ratio, res:defaultOutput(p.type.id).res};
+    const cur = {platform:document.getElementById('s-platform').value, market:document.getElementById('s-market').value, lang:document.getElementById('s-lang').value, style:document.getElementById('s-style').value, qty:document.getElementById('s-qty').value, ratio:document.getElementById('s-ratio').value, res:document.getElementById('s-res').value};
+    p.modified = {};
+    [['platform','f-platform-wrap'],['market','f-market-wrap'],['lang','f-lang-wrap'],['style','f-style-wrap'],['qty','f-qty-wrap'],['ratio','f-ratio-wrap'],['res','f-res-wrap']].forEach(([k,w])=>{
+      const changed = String(cur[k]) !== String(base[k]);
+      document.getElementById(w).classList.toggle('modified', changed);
+      if(changed) p.modified[k]=true;
+    });
+    renderPlan();
+  };
+}
+function closeModal(){ document.getElementById('modalMask').classList.remove('open'); }
+function verifyConfig(){
+  const v = document.getElementById('verify');
+  const rows = document.getElementById('verifyRows');
+  const base = activePlanId ? {platform:marketConfig.platform, market:marketConfig.market, lang:marketConfig.lang, style:marketConfig.style, qty:String(defaultOutput(planItems.find(x=>x.id===activePlanId).type.id).qty), ratio:defaultOutput(planItems.find(x=>x.id===activePlanId).type.id).ratio, res:defaultOutput(planItems.find(x=>x.id===activePlanId).type.id).res} : {};
+  const cur = {platform:document.getElementById('s-platform').value, market:document.getElementById('s-market').value, lang:document.getElementById('s-lang').value, style:document.getElementById('s-style').value, qty:document.getElementById('s-qty').value, ratio:document.getElementById('s-ratio').value, res:document.getElementById('s-res').value};
+  const labels = {platform:'电商平台', market:'目标市场', lang:'文案语种', style:'视觉风格', qty:'数量', ratio:'比例', res:'分辨率'};
+  const srcOf = {};
+  ['platform','market','lang','style'].forEach(k=> srcOf[k]='来自市场配置');
+  ['qty','ratio','res'].forEach(k=> srcOf[k]='来自本类型默认');
+  rows.innerHTML = Object.keys(labels).map(k=>{
+    const changed = String(cur[k])!==String(base[k]);
+    const tag = changed ? '<span class="vtag modified">已手动修改</span>' : '<span class="vtag brought">'+srcOf[k]+'带入</span>';
+    return `<div class="vrow"><span class="vk">${labels[k]}</span><span class="vv">${cur[k]}</span>${tag}<span class="vtag ok">✓ 有效</span></div>`;
+  }).join('');
+  v.classList.add('open');
+  setTimeout(()=>document.getElementById('stamp').classList.add('open'), 120);
+}
+document.getElementById('modalMask').addEventListener('click', e=>{ if(e.target.id==='modalMask') closeModal(); });
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeModal(); });
+
+/* ===================== 热门套图 ===================== */
+function renderCases(cat){
+  const grid = document.getElementById('caseGrid');
+  const data = cat==='全部' ? SHOWCASES : SHOWCASES.filter(s=>s.cat===cat);
+  grid.innerHTML = data.map(s=>{
+    const more = s.n>4 ? `<div class="cell more">+${s.n-4}</div>` : `<div class="cell"><img src="https://picsum.photos/seed/${encodeURIComponent(s.name)}/120/120" alt=""/></div>`;
+    return `<article class="case">
+      <div class="case-strip">
+        <div class="cell orig"><img src="https://picsum.photos/seed/${encodeURIComponent(s.name)}a/120/120" alt=""/><span class="badge-orig">原图</span></div>
+        <div class="cell"><img src="https://picsum.photos/seed/${encodeURIComponent(s.name)}b/120/120" alt=""/></div>
+        <div class="cell"><img src="https://picsum.photos/seed/${encodeURIComponent(s.name)}c/120/120" alt=""/></div>
+        ${more}
+      </div>
+      <div class="case-body">
+        <div class="case-meta"><span class="cat-dot"></span><span>${s.cat}</span></div>
+        <p class="case-name">${s.name}</p>
+        <div class="case-actions">
+          <button class="btn" onclick="toast('演示：查看详情')">查看详情</button>
+          <button class="btn brand" onclick="toast('演示：生成同款')">生成同款</button>
+        </div>
+      </div>
+    </article>`;
+  }).join('');
+}
+function renderCaseTabs(){
+  const t = document.getElementById('caseTabs');
+  t.innerHTML = SHOWCASE_CATS.map((c,i)=>`<button class="tab ${i===0?'on':''}" onclick="switchCase('${c}',this)">${c}</button>`).join('');
+}
+function switchCase(cat, el){
+  document.querySelectorAll('#caseTabs .tab').forEach(b=>b.classList.remove('on'));
+  el.classList.add('on');
+  renderCases(cat);
+}
+
+/* ===================== 我的创作 ===================== */
+let fP='全部', fM='全部';
+function renderCreations(){
+  const grid = document.getElementById('creationGrid');
+  const data = CREATIONS.filter(c=> (fP==='全部'||c.platform===fP) && (fM==='全部'||c.market===fM));
+  if(data.length===0){
+    grid.innerHTML = '<div class="empty-hint" style="grid-column:1/-1">没有符合条件的作品合集。</div>';
+    return;
+  }
+  grid.innerHTML = data.map((c,i)=>{
+    const seed = encodeURIComponent(c.title);
+    return `<div class="col-card">
+      <div class="col-cover">
+        <div class="c big"><img src="https://picsum.photos/seed/${seed}1/300/200" alt=""/></div>
+        <div class="c"><img src="https://picsum.photos/seed/${seed}2/150/100" alt=""/></div>
+        <div class="c"><img src="https://picsum.photos/seed/${seed}3/150/100" alt=""/></div>
+        <div class="c"><img src="https://picsum.photos/seed/${seed}4/150/100" alt=""/></div>
+        <div class="c"><img src="https://picsum.photos/seed/${seed}5/150/100" alt=""/></div>
+      </div>
+      <div class="col-body">
+        <div class="col-title">${c.title}</div>
+        <div class="col-tags">
+          <span class="t platform">${c.platform}</span>
+          <span class="t market">${c.market}</span>
+        </div>
+        <div class="col-foot"><span>${c.date}</span><span class="count">${c.count} 张</span></div>
+        <div class="col-actions">
+          <button class="btn" style="flex:1;justify-content:center" onclick="toast('演示：查看合集')">查看</button>
+          <button class="btn purple" style="flex:1;justify-content:center" onclick="toast('演示：基于该合集继续创作')">继续创作</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function bindFilters(){
+  document.querySelectorAll('#fPlatform button').forEach(b=> b.onclick=()=>{
+    document.querySelectorAll('#fPlatform button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); fP=b.dataset.v; renderCreations();
+  });
+  document.querySelectorAll('#fMarket button').forEach(b=> b.onclick=()=>{
+    document.querySelectorAll('#fMarket button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); fM=b.dataset.v; renderCreations();
+  });
+}
+
+/* ===================== 创作案例 Tab ===================== */
+let activeCaseCat = '全部';
+function switchCreationTab(tab){
+  // 切 tab 按钮
+  document.querySelectorAll('.creation-tabs .ctab').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
+  // 切面板
+  document.getElementById('tab-results').classList.toggle('active', tab==='results');
+  document.getElementById('tab-cases').classList.toggle('active', tab==='cases');
+  if(tab==='cases' && !document.getElementById('inspireGrid').innerHTML){
+    renderCaseCats();
+    renderInspire();
+  }
+}
+
+// 分类标签（用户指定）：全部 / 美妆 / 服饰 / 3C数码 / 家居 / 食品
+const CASE_CATS = ['全部','美妆','服饰','3C数码','家居','食品'];
+function renderCaseCats(){
+  const el = document.getElementById('caseCats');
+  el.innerHTML = CASE_CATS.map(c=>
+    `<button class="ccat${c==='全部'?' on':''}" data-cat="${c}" onclick="selectCaseCat(this)">${c}</button>`
+  ).join('');
+}
+function selectCaseCat(el){
+  activeCaseCat = el.dataset.cat;
+  document.querySelectorAll('#caseCats .ccat').forEach(b=>b.classList.toggle('on',b===el));
+  filterCases();
+}
+
+// 渲染灵感卡片
+function filterCases(){
+  const q = (document.getElementById('caseSearchInput').value||'').trim().toLowerCase();
+  const data = INSPIRE_CASES.filter(c=>{
+    const matchCat = activeCaseCat==='全部'||c.cat===activeCaseCat;
+    const matchQ = !q || c.title.toLowerCase().includes(q) || c.cat.includes(q) || c.tags.some(t=>t.includes(q));
+    return matchCat && matchQ;
+  });
+  renderInspireCards(data);
+}
+function renderInspire(){
+  filterCases(); // 首次渲染走统一筛选
+}
+function renderInspireCards(data){
+  const grid = document.getElementById('inspireGrid');
+  if(!data.length){
+    grid.innerHTML = '<div class="empty-hint" style="grid-column:1/-1;padding:48px 0">没有匹配的案例，换个关键词试试？</div>';
+    return;
+  }
+  grid.innerHTML = data.map((c,i)=>{
+    const s = encodeURIComponent(c.seed+i);
+    // 根据品类选不同尺寸的占位图
+    const aspect = i%3===0 ? '600/450' : '500/375';
+    return `<div class="icard" onclick="toast('演示：查看案例详情 — ${c.title}')">
+      <div class="icard-img">
+        <img src="https://picsum.photos/seed/${s}/${aspect}" alt="${c.title}" loading="lazy"/>
+        <div class="icard-badge">
+          <span class="ib ib-src">${c.src}</span>
+          <span class="ib ib-num">${c.n} 张套图</span>
+        </div>
+        <div class="icard-count"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg> ${c.n} 张</div>
+      </div>
+      <div class="icard-body">
+        <div class="icard-cat"><span class="cdot"></span>${c.cat}</div>
+        <div class="icard-title">${c.title}</div>
+        <div class="icard-actions">
+          <button class="btn btn-view" onclick="event.stopPropagation();toast('演示：查看案例详情')">查看详情 ›</button>
+          <button class="btn btn-gen" onclick="event.stopPropagation();toast('演示：立即生成同款 — ${c.title}')">立即生成同款</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ===================== 工具 ===================== */
+let toastTimer;
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+/* ===================== 初始化 ===================== */
+document.getElementById('collapseBtn').onclick = ()=>{
+  const s = document.getElementById('sider');
+  s.classList.toggle('collapsed');
+  document.getElementById('collapseBtn').textContent = s.classList.contains('collapsed') ? '›' : '‹';
+};
+renderNav();
+initMarket();
+renderTypes();
+renderPlan();
+renderCaseTabs();
+renderCases('全部');
+renderCreations();
+bindFilters();
+// 创作案例 Tab（懒渲染：切换到该 tab 时才渲染）
+goPage('ecommerce'); // 默认进入工作台 > 电商套图
+setActiveNav('ecommerce');
+</script>
+</body>
+</html>

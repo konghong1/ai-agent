@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Select } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import { authHeaders } from '@/services/auth'
+import type { ModelType } from '@/stores/useChatSelectors'
 
 // ─── Custom SVG Icons ───────────────────────────────────────────────
 
@@ -105,9 +106,10 @@ interface ChatSelectorProps {
   providerId: number | null
   providerType: string | null
   modelName: string | null
+  modelType: ModelType
   templateId: number | null
   templates: { id: number; name: string; variables: string[] }[]
-  onProviderChange: (providerId: number, modelName: string | null, providerType: string | null) => void
+  onProviderChange: (providerId: number, modelName: string | null, providerType: string | null, modelType: ModelType) => void
   onTemplateChange: (templateId: number) => void
 }
 
@@ -133,6 +135,7 @@ export default function ChatSelector({
   providerId,
   providerType,
   modelName,
+  modelType,
   templateId,
   templates,
   onProviderChange,
@@ -156,7 +159,7 @@ export default function ChatSelector({
           for (const prov of list) {
             const chatGroup = prov.models_by_type?.chat
             if (chatGroup?.default) {
-              onProviderChange(prov.id, chatGroup.default.name, prov.provider_type)
+              onProviderChange(prov.id, chatGroup.default.name, prov.provider_type, 'chat')
               break
             }
           }
@@ -250,7 +253,8 @@ export default function ChatSelector({
     const provId = Number(parts[0])
     const mName = parts[1]
     const pType = parts[2]
-    onProviderChange(provId, mName, pType)
+    const mType = (parts[3] as ModelType) || null
+    onProviderChange(provId, mName, pType, mType)
   }
 
   const handleTemplateSelect = (tmplId: number) => {
@@ -260,7 +264,9 @@ export default function ChatSelector({
   // ── Derived state ──
   const currentProviderType = providerType || providers.find((p) => p.id === providerId)?.provider_type
   const modelValue =
-    providerId && modelName ? `${providerId}::${modelName}::${currentProviderType || 'openai-compatible'}` : undefined
+    providerId && modelName
+      ? `${providerId}::${modelName}::${currentProviderType || 'openai-compatible'}::${modelType || ''}`
+      : undefined
   const hasModel = !!modelValue
   const hasTemplate = !!templateId
 

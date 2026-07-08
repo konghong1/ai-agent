@@ -197,6 +197,44 @@ def create_tables() -> None:
     logger.info("Ensured database schema exists")
 
 
+def ensure_indexes() -> None:
+    """Idempotently create indexes that accelerate common queries but may be
+    absent on databases bootstrapped *before* the index was added to the ORM.
+
+    ``Base.metadata.create_all`` only creates *missing tables* — it never adds an
+    index to an already-existing table. So a DB created before
+    ``ix_messages_thread_created`` existed would keep doing a filesort on
+    ``WHERE thread_id = ? ORDER BY created_at`` and, on MySQL with a small
+    ``sort_buffer_size``, raise ``OperationalError (1038, 'Out of sort memory')``
+    once a thread accumulates enough messages. This closes that gap without
+    touching tables that already have the index.
+    """
+    from app.core.database import engine
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+
+    desired = [
+        (
+            "messages",
+            "ix_messages_thread_created",
+            "CREATE INDEX ix_messages_thread_created ON messages (thread_id, created_at)",
+        ),
+    ]
+    inspector = sa_inspect(engine)
+    for table, name, ddl in desired:
+        try:
+            existing = {idx["name"] for idx in inspector.get_indexes(table, bind=engine)}
+        except Exception:
+            existing = set()
+        if name in existing:
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.execute(sa_text(ddl))
+            logger.info("ensure_indexes: created %s on %s", name, table)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("ensure_indexes: could not create %s on %s: %s", name, table, exc)
+
+
 def main():
     """Run database initialization."""
     logging.basicConfig(level=logging.INFO)
@@ -212,6 +250,10 @@ def main():
 
     # Step 2: Ensure schema exists (idempotent; matches ORM models exactly)
     create_tables()
+
+    # Step 2b: Ensure performance indexes exist even on legacy databases
+    # (see ensure_indexes for why this matters).
+    ensure_indexes()
 
     # Step 3: Seed default data
     seed_database()

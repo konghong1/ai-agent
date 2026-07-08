@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useRef } from "react"
-import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown, Select, Tooltip } from "antd"
+import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown, Select, Tooltip, Popconfirm } from "antd"
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
   RobotOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
@@ -17,6 +17,10 @@ import MediaLightbox, { type LightboxImage } from "@/components/MediaLightbox"
 
 const { Text, Title } = Typography
 const { TextArea } = Input
+
+// Persist the currently-open chat thread so a browser refresh or navigating to
+// another module and back doesn't lose the conversation.
+const ACTIVE_THREAD_KEY = "active-chat-thread"
 
 interface PromptTemplate {
   id: number; name: string; system_prompt: string; variables: string[]; category: string; description: string; enabled: boolean; created_at: string
@@ -95,19 +99,65 @@ export default function ChatInterface() {
   const [genSize, setGenSize] = useState<string>("1024x1024")
   const [genDuration, setGenDuration] = useState<number>(5)
   const refInputRef = useRef<HTMLInputElement>(null)
+  // Tracks whether the user manually picked an output size, so we don't
+  // override their explicit choice when reference images change.
+  const userPickedSizeRef = useRef(false)
+
+  // Auto-match the generated image's aspect ratio to the first reference
+  // image. Without this, a portrait/landscape photo uploaded as a reference
+  // would still produce a square 1024x1024 output, which feels "比例失调"
+  // compared to the original. The user's manual size choice always wins.
+  useEffect(() => {
+    if (referenceImages.length === 0) {
+      userPickedSizeRef.current = false
+      return
+    }
+    if (userPickedSizeRef.current) return
+    const src = proxyMediaUrl(referenceImages[0])
+    const img = new Image()
+    img.onload = () => {
+      const { naturalWidth: w, naturalHeight: h } = img
+      if (!w || !h) return
+      const ratio = w / h
+      let size = "1024x1024"
+      if (ratio < 0.85) size = "768x1024"      // portrait reference -> portrait output
+      else if (ratio > 1.15) size = "1024x768"  // landscape reference -> landscape output
+      setGenSize(size)
+    }
+    img.onerror = () => { /* keep current size if dimensions can't be read */ }
+    img.src = src
+  }, [referenceImages])
   
-  const { providerId, providerType, modelName, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
+  const { providerId, providerType, modelName, modelType, templateId, setProviderAndModel, setTemplateId } = useChatSelectors()
   // 当前选中的提示词模板（用于聊天输入框上方的可见指示）
   const activeTemplate = templates.find((t) => t.id === templateId) || null
+
+  // 选择提示词模板时，把模板的提示词内容带入输入框，方便用户查看/修改后再发送
+  // （修复：之前仅显示已选模板标签，模板内容没有进入输入框）
+  const handleTemplateChange = (tid: number) => {
+    setTemplateId(tid)
+    const tpl = templates.find((t) => t.id === tid)
+    if (tpl) {
+      setInputValue(tpl.system_prompt || '')
+      requestAnimationFrame(() => inputRef.current?.focus())
+    }
+  }
   
   const colors = themeColors[theme] || themeColors.naturalGreen
   const primaryColor = colors.primary
   const accentColor = colors.accent
   
-  // Wrapper for setActiveThreadId that also syncs the ref synchronously
+  // Wrapper for setActiveThreadId that also syncs the ref synchronously and
+  // persists the selection so it survives a refresh / module switch.
   const switchThread = useCallback((threadId: string | null) => {
     activeThreadIdRef.current = threadId
     setActiveThreadId(threadId)
+    try {
+      if (threadId) localStorage.setItem(ACTIVE_THREAD_KEY, threadId)
+      else localStorage.removeItem(ACTIVE_THREAD_KEY)
+    } catch {
+      /* storage may be unavailable (private mode) — non-fatal */
+    }
   }, [])
   
   const fetchThreads = useCallback(async () => {
@@ -116,10 +166,19 @@ export default function ChatInterface() {
       if (res.ok) {
         const data = await res.json()
         setThreads(data)
-        // Use ref instead of state to avoid re-creating fetchThreads
-        if (data.length > 0 && !activeThreadIdRef.current) {
-          switchThread(data[0].id)
+        // Restore the previously-viewed thread (persisted in localStorage) so a
+        // refresh or navigating away and back keeps the same conversation open.
+        // Fall back to the first thread only if nothing was persisted or the
+        // saved thread no longer exists.
+        let target: string | null = null
+        try {
+          const saved = localStorage.getItem(ACTIVE_THREAD_KEY)
+          if (saved && data.some((t: any) => t.id === saved)) target = saved
+        } catch {
+          /* storage unavailable — fall through to default */
         }
+        if (!target && data.length > 0) target = data[0].id
+        if (target) switchThread(target)
       } else {
         const err = await res.json().catch(() => ({}))
         message.error(err?.detail || `加载会话列表失败 (HTTP ${res.status})`, 4)
@@ -127,7 +186,7 @@ export default function ChatInterface() {
     } catch {
       message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
     }
-  }, [])
+  }, [switchThread])
 
   const fetchMessages = useCallback(async (threadId: string) => {
     const reqId = ++fetchMsgIdRef.current
@@ -336,6 +395,17 @@ export default function ChatInterface() {
       .catch(() => [])
   }, [])
 
+  // 模板列表加载完成后，如果已选中某个模板，则把其提示词内容预填进输入框
+  const prefillDoneRef = useRef(false)
+  useEffect(() => {
+    if (prefillDoneRef.current || templateId == null) return
+    const tpl = templates.find((t) => t.id === templateId)
+    if (tpl) {
+      setInputValue(tpl.system_prompt || '')
+      prefillDoneRef.current = true
+    }
+  }, [templateId, templates])
+
   useEffect(() => { fetchThreads().finally(() => setLoading(false)) }, [])  // Run once on mount
 
   useEffect(() => {
@@ -375,25 +445,36 @@ export default function ChatInterface() {
         headers: authHeaders(),
       })
       if (res.ok || res.status === 204) {
+        // Update UI state FIRST so the row disappears immediately and every
+        // subsequent delete always operates on a consistent, fresh list.
+        // (Previously the active-thread cleanup ran before this filter, so any
+        // throw in cleanup could abort the whole delete and leave the row stuck —
+        // the classic "first delete works, second one won't" symptom.)
         setThreads(prev => prev.filter(t => t.id !== threadId))
-        if (activeThreadId === threadId) {
-          // Abort SSE and clean up video connections for the deleted thread
-          if (chatAbortRef.current) {
-            chatAbortRef.current.abort()
+        message.success("会话已删除")
+        // Only the active thread needs SSE / timer cleanup. Use the ref (not the
+        // closure `activeThreadId`) so the check is always current, and isolate
+        // cleanup in its own try/catch so it can never block the delete.
+        if (activeThreadIdRef.current === threadId) {
+          try {
+            chatAbortRef.current?.abort()
             chatAbortRef.current = null
+            esRef.current.forEach(es => es.close())
+            esRef.current.clear()
+            reconnectTimerRef.current.forEach(t => clearTimeout(t))
+            reconnectTimerRef.current.clear()
+            retryRef.current.clear()
+          } catch {
+            /* cleanup is best-effort */
           }
-          esRef.current.forEach(es => es.close())
-          esRef.current.clear()
-          reconnectTimerRef.current.forEach(t => clearTimeout(t))
-          reconnectTimerRef.current.clear()
-          retryRef.current.clear()
-
           setMessages([])
           // Advance fetchMsgId so any in-flight fetchMessages discards its result
           fetchMsgIdRef.current++
           switchThread(null)
         }
-        message.success("会话已删除")
+      } else {
+        const err = await res.json().catch(() => ({}))
+        message.error(err?.detail || `删除失败 (HTTP ${res.status})`)
       }
     } catch (e: any) {
       message.error(e.message || "删除失败")
@@ -514,9 +595,9 @@ export default function ChatInterface() {
           provider_type: providerType || 'openai-compatible',
           model_name: modelName,
           reference_images: referenceImages,
-          size: genSize,
-          num_frames: toValidNumFrames(genDuration),
-          frame_rate: 24,
+          // 仅按模型类型下发对应参数：图片模型给 size，视频模型给 num_frames / frame_rate
+          ...(modelType === 'image' ? { size: genSize } : {}),
+          ...(modelType === 'video' ? { num_frames: toValidNumFrames(genDuration), frame_rate: 24 } : {}),
         }),
         signal: abortCtrl.signal,
       })
@@ -714,9 +795,17 @@ export default function ChatInterface() {
       try {
         const fd = new FormData()
         fd.append("file", file)
+        // IMPORTANT: do NOT pass authHeaders() here. authHeaders() sets
+        // `Content-Type: application/json`, and if we send that with a FormData
+        // body the browser won't add the multipart boundary — Starlette then
+        // can't find the `file` part and returns HTTP 422. We only attach the
+        // Authorization header and let the browser set the multipart Content-Type.
+        const uploadHeaders: Record<string, string> = {}
+        const upToken = getToken()
+        if (upToken) uploadHeaders["Authorization"] = `Bearer ${upToken}`
         const res = await fetch("/api/chat/upload", {
           method: "POST",
-          headers: authHeaders(),
+          headers: uploadHeaders,
           body: fd,
         })
         if (res.ok) {
@@ -826,7 +915,9 @@ export default function ChatInterface() {
       reader.readAsDataURL(file)
     })
 
-  // Small thumbnail row for reference images (removable when onRemove given)
+  // Small thumbnail row for reference images (removable when onRemove given).
+  // Clicking a thumbnail opens the lightbox so the reference image can be viewed
+  // full-size (the same viewer used for generated media).
   const renderRefThumbs = (urls: string[], onRemove?: (i: number) => void) =>
     urls.length === 0 ? null : (
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
@@ -834,11 +925,25 @@ export default function ChatInterface() {
           <div key={i} style={{
             position: "relative", width: 56, height: 56, borderRadius: 8,
             overflow: "hidden", border: "1px solid var(--ice-border)", flexShrink: 0,
-          }}>
+            cursor: "pointer", transition: "transform .2s ease",
+          }}
+            onClick={(e) => {
+              // CRITICAL: stop bubbling — the parent container opens the
+              // GENERATED image lightbox on click; without this the reference
+              // thumbnail would wrongly show the generated image.
+              e.stopPropagation()
+              setLightboxState({
+                images: urls.map((x) => ({ url: proxyMediaUrl(x), alt: "参考图" })),
+                index: i,
+              })
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.08)")}
+            onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+          >
             <img src={u} alt="参考图" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             {onRemove && (
               <span
-                onClick={() => onRemove(i)}
+                onClick={(e) => { e.stopPropagation(); onRemove(i) }}
                 style={{
                   position: "absolute", top: 2, right: 2, width: 18, height: 18,
                   borderRadius: "50%", background: "rgba(0,0,0,0.6)", color: "#fff",
@@ -918,6 +1023,7 @@ export default function ChatInterface() {
               <Dropdown
                 key={t.id}
                 trigger={["contextMenu"]}
+                destroyPopupOnHide
                 menu={{
                   items: [
                     { key: "rename", label: "重命名", icon: <EditOutlined />, onClick: () => startRename(t) },
@@ -984,19 +1090,25 @@ export default function ChatInterface() {
                       onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
                       onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
                     />
-                    <Button
-                      type="text"
-                      danger
-                      size="small"
-                      icon={<DeleteOutlined />}
-                      onClick={e => {
-                        e.stopPropagation()
-                        deleteThread(t.id)
-                      }}
-                      style={{ opacity: 0.5, flexShrink: 0 }}
-                      onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
-                      onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
-                    />
+                    <Popconfirm
+                      title="删除会话"
+                      description="该会话及其消息将被永久删除，且无法恢复。"
+                      okText="删除"
+                      cancelText="取消"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => deleteThread(t.id)}
+                    >
+                      <Button
+                        type="text"
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        onClick={e => e.stopPropagation()}
+                        style={{ opacity: 0.5, flexShrink: 0 }}
+                        onMouseEnter={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "1")}
+                        onMouseLeave={e => ((e.currentTarget as HTMLButtonElement).style.opacity = "0.5")}
+                      />
+                    </Popconfirm>
                   </Space>
                 </div>
               </Dropdown>
@@ -1213,6 +1325,11 @@ export default function ChatInterface() {
                                 primaryColor={primaryColor}
                                 accentColor={accentColor}
                                 isUserMessage={false}
+                                onUseAsReference={
+                                  msg.blocks?.type === "image" && msg.blocks?.image_url
+                                    ? () => useAsReference(msg.blocks!.image_url!)
+                                    : undefined
+                                }
                                 onContentLoaded={() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })}
                                 onThumbnailClick={(index) => {
                                   if (msg.blocks?.type === "image" && msg.blocks.image_url) {
@@ -1240,24 +1357,21 @@ export default function ChatInterface() {
                                     参考图
                                   </div>
                                   {renderRefThumbs(msg.blocks.reference_images)}
-                                  <div style={{ marginTop: 8 }}>
-                                    <Button
-                                      size="small"
-                                      icon={<PictureOutlined />}
-                                      disabled={!(
-                                        msg.blocks?.type === "video"
-                                          ? msg.blocks?.video_url
-                                          : msg.blocks?.image_url
-                                      )}
-                                      onClick={() => useAsReference(
-                                        msg.blocks?.type === "video"
-                                          ? (msg.blocks?.video_url || "")
-                                          : (msg.blocks?.image_url || "")
-                                      )}
-                                    >
-                                      用作参考图
-                                    </Button>
-                                  </div>
+                                  {/* Video messages have no in-card action bar, so keep
+                                      the "用作参考图" button here for them. Image messages
+                                      get it in the MediaCard action bar (after 复制链接). */}
+                                  {msg.blocks.type === "video" && (
+                                    <div style={{ marginTop: 8 }}>
+                                      <Button
+                                        size="small"
+                                        icon={<PictureOutlined />}
+                                        disabled={!msg.blocks?.video_url}
+                                        onClick={() => useAsReference(msg.blocks?.video_url || "")}
+                                      >
+                                        用作参考图
+                                      </Button>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -1524,22 +1638,25 @@ export default function ChatInterface() {
                   style={{ borderRadius: 8 }}
                 />
               </Tooltip>
-              <Tooltip title="高级参数（图片尺寸 / 视频时长）">
-                <Button
-                  icon={<ControlOutlined />}
-                  type={advancedOpen ? "primary" : "default"}
-                  onClick={() => setAdvancedOpen(o => !o)}
-                  style={{ borderRadius: 8 }}
-                />
-              </Tooltip>
+              {(modelType === 'image' || modelType === 'video') && (
+                <Tooltip title="高级参数（图片尺寸 / 视频时长）">
+                  <Button
+                    icon={<ControlOutlined />}
+                    type={advancedOpen ? "primary" : "default"}
+                    onClick={() => setAdvancedOpen(o => !o)}
+                    style={{ borderRadius: 8 }}
+                  />
+                </Tooltip>
+              )}
               <ChatSelector
                 providerId={providerId}
                 providerType={providerType}
                 modelName={modelName}
+                modelType={modelType}
                 templateId={templateId}
                 templates={templates}
-                onProviderChange={(pid, mname, ptype) => setProviderAndModel(pid, mname, ptype)}
-                onTemplateChange={(tid) => setTemplateId(tid)}
+                onProviderChange={(pid, mname, ptype, mtype) => setProviderAndModel(pid, mname, ptype, mtype)}
+                onTemplateChange={handleTemplateChange}
               />
               <span style={{ flex: 1 }} />
               <Button
@@ -1559,31 +1676,37 @@ export default function ChatInterface() {
               />
             </div>
 
-            {advancedOpen && (
+            {advancedOpen && (modelType === 'image' || modelType === 'video') && (
               <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
-                <Select
-                  value={genSize}
-                  onChange={(v) => setGenSize(v)}
-                  style={{ width: 160 }}
-                  size="small"
-                  options={[
-                    { value: "1024x1024", label: "方图 1024×1024" },
-                    { value: "1024x768", label: "横图 1024×768" },
-                    { value: "768x1024", label: "竖图 768×1024" },
-                    { value: "512x512", label: "小图 512×512" },
-                  ]}
-                />
-                <Select
-                  value={genDuration}
-                  onChange={(v) => setGenDuration(Number(v))}
-                  style={{ width: 130 }}
-                  size="small"
-                  options={[
-                    { value: 3, label: "视频 3 秒" },
-                    { value: 5, label: "视频 5 秒" },
-                    { value: 10, label: "视频 10 秒" },
-                  ]}
-                />
+                {/* 图片模型：仅显示尺寸参数，不显示视频时长 */}
+                {modelType === 'image' && (
+                  <Select
+                    value={genSize}
+                    onChange={(v) => { setGenSize(v); userPickedSizeRef.current = true }}
+                    style={{ width: 160 }}
+                    size="small"
+                    options={[
+                      { value: "1024x1024", label: "方图 1024×1024" },
+                      { value: "1024x768", label: "横图 1024×768" },
+                      { value: "768x1024", label: "竖图 768×1024" },
+                      { value: "512x512", label: "小图 512×512" },
+                    ]}
+                  />
+                )}
+                {/* 视频模型：仅显示时长参数，不显示图片尺寸 */}
+                {modelType === 'video' && (
+                  <Select
+                    value={genDuration}
+                    onChange={(v) => setGenDuration(Number(v))}
+                    style={{ width: 130 }}
+                    size="small"
+                    options={[
+                      { value: 3, label: "视频 3 秒" },
+                      { value: 5, label: "视频 5 秒" },
+                      { value: 10, label: "视频 10 秒" },
+                    ]}
+                  />
+                )}
               </div>
             )}
 

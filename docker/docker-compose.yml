@@ -28,6 +28,7 @@ services:
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
       --innodb-buffer-pool-size=256M
+      --sort-buffer-size=4M
       --max-connections=200
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-root_secure_2026}"]
@@ -121,6 +122,8 @@ services:
       dockerfile: docker/Dockerfile.api
     container_name: ai-agent-api
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${API_PORT:-8010}:8010"
     environment:
@@ -140,6 +143,16 @@ services:
       # ── Agnes AI API ──
       AGNES_API_KEY: ${AGNES_API_KEY:-sk-0T1BpcsI51cKxXgWZejpvONrcUs8vDc1Tqzz7NkObIWAyezd}
       AGNES_BASE_URL: ${AGNES_BASE_URL:-https://apihub.agnes-ai.com/v1}
+
+      # ── Egress proxy (host WorkBuddy sandbox proxy) ──
+      # The container reaches the host proxy via host.docker.internal — do NOT use
+      # 127.0.0.1 here (that would mean the container itself). Port mirrors the
+      # host's HTTPS_PROXY. NO_PROXY keeps internal mysql/minio traffic direct
+      # (raw sockets + minio client both ignore these, but set for safety).
+      HTTPS_PROXY: http://host.docker.internal:33210
+      HTTP_PROXY: http://host.docker.internal:33210
+      NO_PROXY: localhost,127.0.0.1,::1,minio,mysql,ai-agent-minio,ai-agent-mysql
+      no_proxy: localhost,127.0.0.1,::1,minio,mysql,ai-agent-minio,ai-agent-mysql
 
       # ── App ──
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
@@ -165,7 +178,7 @@ services:
       - |
         python -m app.db.init_db
         python -m app.storage.ilm || true
-        exec uvicorn app.server:app --host 0.0.0.0 --port 8010 --reload
+        exec uvicorn app.server:app --host 0.0.0.0 --port 8010
 
   # ──────────────────────────────────────────────────────────────
   # BACKGROUND WORKER: Async media downloader
@@ -176,6 +189,8 @@ services:
       dockerfile: docker/Dockerfile.api
     container_name: ai-agent-worker
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: ${DATABASE_URL}
       DATABASE_TYPE: ${DATABASE_TYPE:-mysql}
@@ -188,6 +203,13 @@ services:
       MINIO_USE_SSL: "false"
       AGNES_API_KEY: ${AGNES_API_KEY:-sk-0T1BpcsI51cKxXgWZejpvONrcUs8vDc1Tqzz7NkObIWAyezd}
       AGNES_BASE_URL: ${AGNES_BASE_URL:-https://apihub.agnes-ai.com/v1}
+
+      # ── Egress proxy (host WorkBuddy sandbox proxy) ──
+      HTTPS_PROXY: http://host.docker.internal:33210
+      HTTP_PROXY: http://host.docker.internal:33210
+      NO_PROXY: localhost,127.0.0.1,::1,minio,mysql,ai-agent-minio,ai-agent-mysql
+      no_proxy: localhost,127.0.0.1,::1,minio,mysql,ai-agent-minio,ai-agent-mysql
+
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
     depends_on:
       mysql:

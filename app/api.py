@@ -311,7 +311,19 @@ def delete_thread(thread_id: str, current_user: User = Depends(get_current_user)
     thread = db.scalar(select(Thread).where(Thread.id == thread_id, Thread.user_id == current_user.id))
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found.")
-    db.delete(thread)
+
+    # Bulk-delete child rows by thread_id. Query.delete() issues a direct
+    # `DELETE ... WHERE thread_id = ?` with NO ORDER BY / filesort, which avoids
+    # "Out of sort memory" (MySQL 1038) when a thread has many messages.
+    # We deliberately do NOT call db.delete(thread): that triggers the ORM
+    # cascade, which lazy-loads thread.messages with `ORDER BY created_at` and
+    # blows the MySQL sort buffer, rolling back the whole delete.
+    db.query(Message).filter(Message.thread_id == thread_id).delete(synchronize_session=False)
+    # RAG feedback / retrieval logs reference thread_id but have no FK cascade.
+    db.query(KBFeedback).filter(KBFeedback.thread_id == thread_id).delete(synchronize_session=False)
+    db.query(RetrievalLog).filter(RetrievalLog.thread_id == thread_id).delete(synchronize_session=False)
+    # Finally remove the thread row itself (bulk delete bypasses ORM cascade load).
+    db.query(Thread).filter(Thread.id == thread_id, Thread.user_id == current_user.id).delete(synchronize_session=False)
     db.commit()
 
 
@@ -646,6 +658,67 @@ def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), d
 # ============================================================
 
 
+def _run_text_chat(user_id, agent_id, message, thread_id, system_prompt, model_name,
+                   provider_base_url, provider_type, provider_id, reference_images):
+    """Run ask_agent in a worker thread with its OWN database session.
+
+    The session is created and closed entirely inside the worker thread, so a
+    client disconnect (which cancels the SSE generator) can never close the
+    session mid-commit. This guarantees the user + assistant messages are
+    always persisted — even if the user switches tabs or conversations while
+    the model is still generating a reply.
+    """
+    from app.agent import ask_agent
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        return ask_agent(
+            db=db,
+            user_id=user_id,
+            agent_id=agent_id,
+            message=message,
+            thread_id=thread_id,
+            system_prompt=system_prompt,
+            model_name=model_name,
+            provider_base_url=provider_base_url,
+            provider_type=provider_type,
+            provider_id=provider_id,
+            reference_images=reference_images,
+        )
+    finally:
+        db.close()
+
+
+def _run_media_chat(media_kind: str, provider_id, model_name, payload, user_id):
+    """Run image/video generation in a worker thread with its OWN DB session.
+
+    Same rationale as ``_run_text_chat``: the session is owned by the thread so
+    a client disconnect can't abort the commit that persists the chat messages
+    (user prompt + the generated image/video assistant message).
+    """
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        provider = db.get(Provider, provider_id)
+        if not (provider and provider.user_id == user_id and provider.enabled):
+            return None
+        provider_model = _resolve_provider_model(db, provider_id, model_name)
+        if not provider_model:
+            return None
+        user = db.get(User, user_id)
+        if media_kind == "video":
+            return _handle_video_generation(
+                db=db, provider=provider, model=provider_model,
+                payload=payload, current_user=user,
+            )
+        return _handle_image_generation(
+            db=db, provider=provider, model=provider_model,
+            payload=payload, current_user=user,
+        )
+    finally:
+        db.close()
+
+
 @router.post("/chat-stream")
 def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> StreamingResponse:
     """Stream chat response using Server-Sent Events."""
@@ -664,11 +737,17 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
                     provider_model = _resolve_provider_model(db, payload.provider_id, payload.model_name)
                     if provider_model:
                         if provider_model.model_type == "video":
-                            result = await asyncio.to_thread(_handle_video_generation, db, provider, provider_model, payload, current_user)
+                            result = await asyncio.to_thread(_run_media_chat, "video", payload.provider_id, payload.model_name, payload, current_user.id)
+                            if result is None:
+                                yield f"data: {json.dumps({'error': 'provider or model not available'})}\n\n"
+                                return
                             yield f"data: {json.dumps({'answer': result.answer, 'thread_id': result.thread_id, 'blocks': result.blocks})}\n\n"
                             return
                         elif provider_model.model_type == "image":
-                            result = await asyncio.to_thread(_handle_image_generation, db, provider, provider_model, payload, current_user)
+                            result = await asyncio.to_thread(_run_media_chat, "image", payload.provider_id, payload.model_name, payload, current_user.id)
+                            if result is None:
+                                yield f"data: {json.dumps({'error': 'provider or model not available'})}\n\n"
+                                return
                             yield f"data: {json.dumps({'answer': result.answer, 'thread_id': result.thread_id, 'blocks': result.blocks})}\n\n"
                             return
 
@@ -717,34 +796,32 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
             
             # For now, we use ask_agent which returns a single response
             # In the future, we can integrate async streaming adapters here
-            from app.agent import ask_agent
-            from app.core.database import SessionLocal as GetSession
             
-            temp_db = GetSession()
-            try:
-                # ── Run ask_agent in a thread to avoid blocking the event
-                #    loop.  ask_agent calls llm.invoke() (a blocking network
-                #    request) which would freeze the entire server if called
-                #    directly in this async generator. ──
-                answer, thread_id, blocks = await asyncio.to_thread(
-                    ask_agent,
-                    db=temp_db,
-                    user_id=current_user.id,
-                    agent_id=payload.agent_id,
-                    message=payload.message,
-                    thread_id=request_data.get("thread_id"),
-                    system_prompt=system_prompt,
-                    model_name=model_name,
-                    provider_base_url=provider_base_url,
-                    provider_type=payload.provider_type,
-                    provider_id=payload.provider_id,
-                    reference_images=payload.reference_images,
-                )
-                
-                # Send final answer
-                yield f"data: {json.dumps({'answer': answer, 'thread_id': thread_id, 'blocks': blocks})}\n\n"
-            finally:
-                temp_db.close()
+            # ── Run ask_agent in a worker thread that owns its OWN DB session. ──
+            # ask_agent calls llm.invoke() (a blocking network request) which
+            # would freeze the event loop if called directly here, so it must
+            # run in a thread. Crucially, the session is created/closed INSIDE
+            # that thread (see _run_text_chat) rather than in this generator, so
+            # a client disconnect — which cancels this generator — can NEVER
+            # close the session while the worker is committing the messages.
+            # This is what prevents chat messages from being lost when the user
+            # switches tabs or conversations mid-generation.
+            answer, thread_id, blocks = await asyncio.to_thread(
+                _run_text_chat,
+                current_user.id,
+                payload.agent_id,
+                payload.message,
+                request_data.get("thread_id"),
+                system_prompt,
+                model_name,
+                provider_base_url,
+                payload.provider_type,
+                payload.provider_id,
+                payload.reference_images,
+            )
+
+            # Send final answer
+            yield f"data: {json.dumps({'answer': answer, 'thread_id': thread_id, 'blocks': blocks})}\n\n"
                 
         except Exception as exc:
             import traceback

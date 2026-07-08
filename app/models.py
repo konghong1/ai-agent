@@ -90,6 +90,13 @@ class Message(TimestampMixin, Base):
 
     thread: Mapped[Thread] = relationship(back_populates="messages")
 
+    # Composite index so `WHERE thread_id = ? ORDER BY created_at` (loading a
+    # thread's messages) is satisfied by the index instead of a filesort. On
+    # MySQL a large messages table without this can hit "Out of sort memory".
+    __table_args__ = (
+        Index("ix_messages_thread_created", "thread_id", "created_at"),
+    )
+
 
 # ============================================================
 # McpServer & Skill (unchanged)
