@@ -495,6 +495,10 @@ class GalleryRecord(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     # 实际发送给模型的提示词（便于排查）
     prompt: Mapped[str] = mapped_column(Text, default="")
+    # 生成该图所用的 AI 提供商图片模型（确保所有配置都有记录）
+    provider_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    provider_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     project: Mapped["GalleryProject"] = relationship(back_populates="records")
 

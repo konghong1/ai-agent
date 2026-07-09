@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI 电商套图 — 工作台</title>
+<style>
+/* ═══════════════ Design Tokens ═══════════════ */
+:root {
+  --brand: #FF4D2E;
+  --brand-soft: #FFF0ED;
+  --ai-purple: #7C3AED;
+  --ai-purple-soft: #F5F3FF;
+  --success: #059669;
+  --success-soft: #ECFDF5;
+  --ink: #0F172A; --ink-soft: #334155; --ink-faint: #64748B;
+  --line: #E2E8F0; --line-strong: #CBD5E1;
+  --surface: #FFFFFF; --surface-2: #F8FAFC;
+  --font-display: "Space Grotesk","PingFang SC",sans-serif;
+  --font-body: -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  --ease: cubic-bezier(.4,0,.2,1);
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px;
+  --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px; --s6: 24px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-body);
+  background: #F1F5F9; color: var(--ink);
+  line-height: 1.6; font-size: 14px;
+  min-height: 100vh;
+}
+
+/* ═══════════ Page Shell ═════════════ */
+.app-shell { max-width: 960px; margin: 0 auto; padding: var(--s5) var(s4); }
+
+/* ── 面包屑导航（工作台 > 电商套图）── */
+.breadcrumb {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--ink-faint);
+  margin-bottom: var(--s4);
+}
+.breadcrumb a { color: var(--ink-faint); text-decoration: none; transition: color .15s; }
+.breadcrumb a:hover { color: var(--ai-purple); }
+.breadcrumb .bc-sep { font-size: 11px; opacity: .5; }
+.breadcrumb .bc-current { color: var(--ink); font-weight: 600; }
+
+/* ── 页头 ── */
+.page-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--s4); margin-bottom: var(--s5); flex-wrap: wrap;
+}
+.page-title { font-family: var(--font-display); font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
+.page-sub { color: var(--ink-faint); font-size: 14px; margin-top: 4px; }
+.head-actions { display: flex; gap: 10px; }
+
+.btn-secondary {
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink-soft); font-size: 13px; font-weight: 500;
+  padding: 9px 18px; border-radius: var(--r-md); cursor: pointer;
+  transition: all .15s var(--ease); white-space: nowrap;
+}
+.btn-secondary:hover { border-color: var(--ink-faint); color: var(--ink); }
+
+.btn-primary {
+  border: none; background: var(--brand); color: #fff;
+  font-size: 13px; font-weight: 600; padding: 10px 20px;
+  border-radius: var(--r-md); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: all .15s var(--ease); white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(255,77,46,.25);
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(255,77,46,.35); }
+
+/* ── 策划台触发栏 ── */
+.planner-bar { display: flex; align-items: center; gap: 10px; margin-bottom: var(--s4); }
+.btn-planner {
+  border: none; background: linear-gradient(135deg,#7C3AED,#A855F7);
+  color: #fff; font-size: 14px; font-weight: 700;
+  padding: 12px 24px; border-radius: var(--r-lg); cursor: pointer;
+  box-shadow: 0 4px 14px rgba(124,58,237,.3);
+  transition: all .15s var(--ease); display: inline-flex; align-items: center; gap: 8px;
+}
+.btn-planner:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124,58,237,.4); }
+.btn-add {
+  width: 40px; height: 40px; border: 1px solid var(--line);
+  background: var(--surface); border-radius: var(--r-md);
+  font-size: 20px; color: var(--ink-faint); cursor: pointer;
+  transition: all .15s var(--ease); display: grid; place-items: center;
+}
+.btn-add:hover { border-color: var(--ai-purple); color: var(--ai-purple); }
+
+/* ── 列表分区头 ── */
+.plan-list-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding-bottom: 10px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.plh-left { display: flex; align-items: baseline; gap: 10px; }
+.plh-title { font-size: 15px; font-weight: 700; }
+.plh-count { font-size: 12.5px; color: var(--ink-faint); }
+.plh-count b { color: var(--brand); font-weight: 700; }
+.btn-clear {
+  font-size: 12.5px; color: var(--ink-faint); background: none; border: none;
+  cursor: pointer; transition: color .15s;
+  display: inline-flex; align-items: center; gap: 4px;
+}
+.btn-clear:hover { color: #EF4444; }
+
+/* ═══════════ Plan Rows — 核心列表行 ═══════════════ */
+.plan-list { display: flex; flex-direction: column; gap: 10px; }
+
+.plan-row {
+  display: flex; align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  transition: border-color .2s var(--ease), box-shadow .2s var(--ease), transform .15s var(--ease);
+}
+.plan-row:hover {
+  border-color: var(--line-strong);
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  transform: translateY(-1px);
+}
+
+/* 左侧：身份 + 参数，占满剩余空间 */
+.pr-body { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+
+/* 第1行：序号·名称 标签 */
+.pr-top {
+  display: flex; align-items: center; gap: 8px;
+  line-height: 1.35;
+}
+.pr-num {
+  font-size: 14px; font-weight: 700; color: var(--ink-faint);
+  min-width: 18px; text-align: center; flex-shrink: 0;
+}
+.pr-name {
+  font-size: 14.5px; font-weight: 650; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  letter-spacing: -.01em;
+}
+.pr-badge {
+  font-size: 11px; font-weight: 600; color: var(--ai-purple);
+  background: var(--ai-purple-soft); border: 1px solid #DDD6FE;
+  padding: 2px 10px; border-radius: 999px; white-space: nowrap;
+  flex-shrink: 0; margin-left: auto;
+}
+
+/* 第2行：参数（完整显示，不截断） */
+.pr-meta {
+  font-size: 12.5px; color: var(--ink-faint);
+  display: flex; align-items: center; gap: 16px;
+  margin-left: 26px; /* 与名称左边缘对齐 */
+  flex-wrap: wrap; line-height: 1.8;
+}
+.pr-meta b { color: var(--ink-soft); font-weight: 600; }
+.pr-meta .sep { color: var(--line-strong); font-size: 8px; opacity: .6; }
+
+/* 右侧：操作按钮组（固定宽度，永不压缩） */
+.pr-actions {
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
+.pra-btn {
+  width: 32px; height: 32px; border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent; color: var(--ink-faint);
+  display: grid; place-items: center; cursor: pointer;
+  transition: all .15s var(--ease);
+}
+.pra-btn svg { width: 16px; height: 16px; }
+.pra-btn:hover { background: var(--surface-2); color: var(--ink-soft); border-color: var(--line); }
+.pra-btn.copy:hover { color: #2563EB; border-color: #BFDBFE; background: #EFF6FF; }
+.pra-btn.del:hover { color: #DC2626; border-color: #FCA5A5; background: #FEF2F2; }
+.pra-set {
+  font-size: 13px; font-weight: 600; color: var(--ink-faint);
+  background: transparent; border: 1px solid transparent;
+  border-radius: 8px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px;
+  white-space: nowrap; padding: 7px 12px;
+  transition: all .15s var(--ease);
+}
+.pra-set svg { width: 14px; height: 14px; }
+.pra-set:hover { color: var(--brand); border-color: #FECACA; background: var(--brand-soft); }
+
+/* ── 底部操作栏 ── */
+.plan-foot {
+  display: flex; justify-content: space-between;
+  margin-top: var(--s4); gap: 12px;
+}
+.btn-foot {
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink-soft); padding: 9px 18px; border-radius: var(--r-md);
+  cursor: pointer; font-size: 13px; font-weight: 500;
+  transition: all .15s var(--ease);
+}
+.btn-foot:hover { border-color: var(--ink-faint); color: var(--ink); }
+.btn-foot.primary { background: var(--brand); color: #fff; border-color: var(--brand); font-weight: 700; }
+.btn-foot.primary:hover { box-shadow: 0 4px 14px rgba(255,77,46,.32); }
+
+/* ── 响应式 ── */
+@media (max-width: 640px) {
+  .plan-row { flex-wrap: wrap; }
+  .pr-actions { margin-left: auto; }
+  .page-head { flex-direction: column; align-items: flex-start; }
+  .head-actions { width: 100%; justify-content: flex-end; }
+}
+</style>
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ══ 面包屑导航：工作台 > 电商套图 ══ -->
+  <nav class="breadcrumb" aria-label="面包屑导航">
+    <a href="#">工作台</a>
+    <span class="bc-sep">/</span>
+    <span class="bc-current">电商套图</span>
+  </nav>
+
+  <!-- ══ 页头 ══ -->
+  <header class="page-head">
+    <div>
+      <h1 class="page-title">AI 电商套图生成</h1>
+      <p class="page-sub">上传产品多视角图，一键生成主图、详情页、场景图等完整套图</p>
+    </div>
+    <div class="head-actions">
+      <button class="btn-secondary">使用说明</button>
+      <button class="btn-primary">＋ 新建任务</button>
+    </div>
+  </header>
+
+  <!-- ══ 步骤3：策划台 ══ -->
+  <section style="margin-top:8px;">
+    <div class="planner-bar">
+      <button class="btn-planner">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        AI 智能策划台
+      </button>
+      <button class="btn-add" title="添加类型">+</button>
+    </div>
+
+    <!-- 列表分区头 -->
+    <div class="plan-list-head">
+      <div class="plh-left">
+        <span class="plh-title">* 出图规划列表</span>
+        <span class="plh-count">(已选 <b>3</b>/50个)</span>
+      </div>
+      <button class="btn-clear">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6M8,6V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"/></svg>
+        清空
+      </button>
+    </div>
+
+    <!-- 列表行 -->
+    <div class="plan-list" id="planList"></div>
+
+    <!-- 底部按钮 -->
+    <div class="plan-foot" id="planFoot" style="display:none;">
+      <button class="btn-foot">另存为模板</button>
+      <button class="btn-foot primary" style="padding:12px 36px;font-size:15px;">开始生成</button>
+    </div>
+  </section>
+</div>
+
+<script>
+// ── 数据 ──
+const PLAN_TYPES = [
+  { id:'white-bg', title:'产品白底图', fast:true },
+  { id:'multi-angle', title:'产品多角度图', fast:true },
+  { id:'detail-page', title:'电商详情页', fast:false },
+  { id:'scene', title:'场景合成图', fast:false },
+  { id:'model', title:'模特上身图', fast:false },
+];
+
+let planRows = [
+  { typeId:'white-bg', settings:{ count:1, ratio:'自动', resolution:'1K' } },
+  { typeId:'multi-angle', settings:{ count:4, ratio:'1:1', resolution:'2K' } },
+  { typeId:'detail-page', settings:{ count:1, ratio:'3:4', resolution:'1K', style:'简约商务' } },
+];
+let itemIdCounter = 1;
+
+function renderPlanList() {
+  const el = document.getElementById('planList');
+  const foot = document.getElementById('planFoot');
+  if (!planRows.length) { el.innerHTML = ''; foot.style.display='none'; return; }
+  foot.style.display='';
+  el.innerHTML = planRows.map((row,idx)=>{
+    const p = PLAN_TYPES.find(t=>t.id===row.typeId)||PLAN_TYPES[0];
+    const s = row.settings||{};
+    const c = s.count||1, r=s.ratio||(p.fast?'自动':'3:4'), res=s.resolution||'1K';
+    const badge = p.fast ? '<span class="pr-badge">极速出图</span>' : '<span class="pr-badge" style="color:#64748B;background:#F1F5F9;border:#E2E8F0">自定义</span>';
+    const meta = `<div class="pr-meta"><span>数量 <b>${c}</b></span><span class="sep">|</span><span>比例 <b>${r}</b></span><span class="sep">|</span><span>分辨率 <b>${res}</b></span></div>`;
+    return '<div class="plan-row">'+
+      '<div class="pr-body">'+
+        '<div class="pr-top">'+
+          '<span class="pr-num">'+(idx+1)+'.</span>'+
+          '<span class="pr-name">'+p.title+'</span>'+badge+
+        '</div>'+meta+
+      '</div>'+
+      '<div class="pr-actions">'+
+        '<button class="pra-btn copy" title="复制" onclick="copyRow('+idx+')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>'+
+        '<button class="pra-btn del" title="删除" onclick="delRow('+idx+')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3,6 5,6 21,6"/><path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6M8,6V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2V6"/></svg></button>'+
+        '<button class="pra-set" onclick="alert(\'打开「'+p.title+'」的设置面板\')">设置<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9,18 15,12 9,6"/></svg></button>'+
+      '</div></div>';
+  }).join('');
+  // update count
+  document.querySelector('.plh-count b').textContent=planRows.length;
+}
+function copyRow(i){
+  planRows.splice(i+1,0,JSON.parse(JSON.stringify(planRows[i])));
+  renderPlanList();
+}
+function delRow(i){ planRows.splice(i,1); renderPlanList(); }
+renderPlanList();
+</script>
+</body>
+</html>

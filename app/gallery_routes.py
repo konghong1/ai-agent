@@ -28,6 +28,7 @@ from app.gallery_service import (
     generate,
     get_or_create_draft,
     get_owned_project,
+    list_image_models,
     list_projects,
     list_records,
     list_showcases,
@@ -67,6 +68,15 @@ router = APIRouter(prefix="/api/gallery", tags=["gallery"])
 @router.get("/types", response_model=GalleryTypesResponse)
 def get_types(current_user: models.User = Depends(get_current_user)) -> GalleryTypesResponse:
     return GalleryTypesResponse(types=serialize_types(), options=serialize_options())
+
+
+@router.get("/image-models")
+def get_image_models(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> dict:
+    """返回当前用户可用的图片生成模型（来自 AI 提供商配置）。"""
+    return list_image_models(db, current_user)
 
 
 @router.get("/showcases", response_model=list[dict])
@@ -318,6 +328,9 @@ def _rec_to_dict(r: models.GalleryRecord) -> dict:
         "result_url": r.result_url,
         "status": r.status,
         "prompt": r.prompt,
+        "provider_id": r.provider_id,
+        "provider_name": r.provider_name,
+        "model_name": r.model_name,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
 

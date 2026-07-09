@@ -83,7 +83,9 @@ def download_to_storage(internal_url: str) -> dict | None:
     """
     try:
         async def _download():
-            async with httpx.AsyncClient(timeout=60) as client:
+            # proxy=None: bypass the (optional, sometimes unreachable) egress
+            # proxy and use direct egress, which works in this deployment.
+            async with httpx.AsyncClient(timeout=60, proxy=None) as client:
                 resp = await client.get(internal_url)
                 resp.raise_for_status()
                 return resp.content, resp.headers.get("content-type", "application/octet-stream")

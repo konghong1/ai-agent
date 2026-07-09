@@ -439,7 +439,7 @@ def ai_fill_suggestion(project: models.GalleryProject, type_id: str, current: di
 # 生成（可插拔）
 # ─────────────────────────────────────────────────────────────
 
-def _build_prompt(project: models.GalleryProject, item: models.GalleryPlanItem) -> str:
+def _build_prompt(project: models.GalleryProject, item: models.GalleryPlanItem, model_name: str | None = None) -> str:
     t = get_plan_type(item.type_id)
     title = t["title"] if t else item.type_id
     parts = [f"为电商商品生成【{title}】。"]
@@ -459,31 +459,121 @@ def _build_prompt(project: models.GalleryProject, item: models.GalleryPlanItem) 
         parts.append(f"色调：{cs['tone_tendency']}。")
     if item.note:
         parts.append(f"补充说明：{item.note}。")
+    # 记录所选模型，确保「所有配置都有记录」
+    if model_name:
+        parts.append(f"使用模型：{model_name}。")
     parts.append("输出高质量电商主图，白底或场景化，符合平台规范。")
     return " ".join(parts)
 
 
-def _real_generate(db: Session, user: models.User, prompt: str, reference_filenames: list[str]) -> str | None:
-    """尝试用默认 image provider 真实出图；失败/未配置返回 None。"""
+def list_image_models(db: Session, user: models.User) -> dict:
+    """返回当前用户「已启用」的图片生成模型，按提供商分组。
+
+    供前端「模型」下拉框动态渲染 —— 取代原先硬编码的模型名列表，
+    确保用户在「AI 提供商」中配置的图片模型才是可选范围。
+    """
+    rows = db.execute(
+        select(models.Provider, models.ProviderModel)
+        .join(models.ProviderModel, models.ProviderModel.provider_id == models.Provider.id)
+        .where(
+            models.Provider.user_id == user.id,
+            models.Provider.enabled == True,  # noqa: E712
+            models.ProviderModel.model_type == "image",
+            models.ProviderModel.enabled == True,  # noqa: E712
+        )
+        .order_by(models.Provider.is_default.desc(), models.Provider.id, models.ProviderModel.id)
+    ).all()
+
+    providers: dict[int, dict] = {}
+    default = None
+    for prov, mdl in rows:
+        entry = providers.setdefault(
+            prov.id,
+            {
+                "provider_id": prov.id,
+                "provider_name": prov.name,
+                "is_default_provider": bool(prov.is_default),
+                "models": [],
+            },
+        )
+        entry["models"].append(
+            {"model_id": mdl.id, "model_name": mdl.model_name, "is_default": bool(mdl.is_default_image)}
+        )
+        # 记录默认图片模型（取第一个 is_default_image）
+        if mdl.is_default_image and default is None:
+            default = {
+                "provider_id": prov.id,
+                "provider_name": prov.name,
+                "model_name": mdl.model_name,
+            }
+
+    return {"providers": list(providers.values()), "default_image_model": default}
+
+
+def _resolve_image_model(
+    db: Session, user: models.User, provider_id: int | None, model_name: str | None
+) -> tuple[models.Provider | None, models.ProviderModel | None]:
+    """解析出图所用的 (Provider, ProviderModel)。
+
+    优先级：
+    1. 显式指定的 provider_id + model_name（用户在前端选择的 AI 提供商图片模型）
+    2. 用户的默认图片模型（ProviderModel.is_default_image）
+    3. 均未找到 → 返回 (None, None)，由调用方降级到离线 SVG 占位图
+    """
+    if provider_id and model_name:
+        prov = db.get(models.Provider, provider_id)
+        if prov and prov.user_id == user.id and prov.enabled:
+            mdl = db.scalar(
+                select(models.ProviderModel).where(
+                    models.ProviderModel.provider_id == provider_id,
+                    models.ProviderModel.model_name == model_name,
+                    models.ProviderModel.model_type == "image",
+                    models.ProviderModel.enabled == True,  # noqa: E712
+                )
+            )
+            if mdl:
+                return prov, mdl
+    # 降级：用户的默认图片模型
+    hit = db.execute(
+        select(models.Provider, models.ProviderModel)
+        .join(models.ProviderModel, models.ProviderModel.provider_id == models.Provider.id)
+        .where(
+            models.Provider.user_id == user.id,
+            models.Provider.enabled == True,  # noqa: E712
+            models.ProviderModel.model_type == "image",
+            models.ProviderModel.enabled == True,  # noqa: E712
+            models.ProviderModel.is_default_image == True,  # noqa: E712
+        )
+        .limit(1)
+    ).first()
+    if hit:
+        return hit[0], hit[1]
+    return None, None
+
+
+def _real_generate(
+    db: Session,
+    user: models.User,
+    prompt: str,
+    reference_filenames: list[str],
+    provider_id: int | None = None,
+    model_name: str | None = None,
+) -> dict | None:
+    """尝试用所选（或默认）AI 提供商的图片模型真实出图。
+
+    返回 {"url", "provider_id", "provider_name", "model_name"} 或 None（降级到离线 SVG）。
+    """
     try:
         from app.media import MediaService
-        from app.models import Provider, ProviderModel
 
-        provider = db.scalar(
-            select(Provider).where(Provider.user_id == user.id, Provider.enabled == True)  # noqa: E712
-            .join(ProviderModel).where(
-                ProviderModel.model_type == "image",
-                ProviderModel.is_default_image == True,  # noqa: E712
-                ProviderModel.enabled == True,  # noqa: E712
-            ).limit(1)
-        )
-        if not provider:
+        provider, model = _resolve_image_model(db, user, provider_id, model_name)
+        if not provider or not model:
             return None
         # 参考图转为可访问 url
         ref_urls = [f"/api/gallery/files/{f}" for f in reference_filenames if f]
         result = MediaService.generate_image(
             provider=provider,
-            model_name=provider.models[0].model_name if provider.models else "",
+            model_name=model.model_name,
             prompt=prompt,
             size="1024x1024",
             n=1,
@@ -493,7 +583,12 @@ def _real_generate(db: Session, user: models.User, prompt: str, reference_filena
         images = result.get("data", [])
         url = images[0].get("url") if images else None
         if url:
-            return url
+            return {
+                "url": url,
+                "provider_id": provider.id,
+                "provider_name": provider.name,
+                "model_name": model.model_name,
+            }
     except Exception as exc:  # 任意异常都降级到离线模拟
         logger.warning("Real image generation failed, fallback to simulation: %s", exc)
     return None
@@ -514,23 +609,38 @@ def generate(db: Session, user: models.User, project_id: int):
     proj.status = "generating"
     db.commit()
 
+    oc = proj.output_config or {}
+    global_provider_id = oc.get("provider_id")
+    global_model = oc.get("model_name")
+
     records: list[models.GalleryRecord] = []
     total_images = 0
     for item in proj.plan_items:
         t = get_plan_type(item.type_id)
         title = t["title"] if t else item.type_id
-        count = max(1, int((item.output_settings or {}).get("count", 1) or 1))
-        prompt = _build_prompt(proj, item)
+        ios = item.output_settings or {}
+        count = max(1, int(ios.get("count", 1) or 1))
+        # 模型选择优先级：条目级 > 全局级
+        item_provider_id = ios.get("provider_id") or global_provider_id
+        item_model = ios.get("model_name") or global_model
+        prompt = _build_prompt(proj, item, model_name=item_model)
         ref_files = item.reference_images or []
         for i in range(1, count + 1):
             total_images += 1
-            real_url = _real_generate(db, user, prompt, ref_files)
-            if real_url:
+            real = _real_generate(db, user, prompt, ref_files, item_provider_id, item_model)
+            if real:
                 result_filename = None
-                result_url = real_url
+                result_url = real["url"]
+                rec_provider_id = real["provider_id"]
+                rec_provider_name = real["provider_name"]
+                rec_model_name = real["model_name"]
             else:
                 result_filename = write_result_svg(item.id, i, title, f"{item.type_id}-{i}")
                 result_url = f"/api/gallery/files/{result_filename}"
+                # 离线降级时仍记录用户所选配置，保证「所有配置都有记录」
+                rec_provider_id = item_provider_id
+                rec_provider_name = None
+                rec_model_name = item_model
             rec = models.GalleryRecord(
                 project_id=project_id,
                 plan_item_id=item.id,
@@ -541,6 +651,9 @@ def generate(db: Session, user: models.User, project_id: int):
                 result_url=result_url,
                 status="completed",
                 prompt=prompt,
+                provider_id=rec_provider_id,
+                provider_name=rec_provider_name,
+                model_name=rec_model_name,
             )
             db.add(rec)
             records.append(rec)

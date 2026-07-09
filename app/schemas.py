@@ -101,6 +101,21 @@ class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MessagesPage(BaseModel):
+    """Paginated message list (newest-last ordering within ``messages``).
+
+    ``has_more`` is True when older messages exist before ``oldest_id``; the
+    client passes ``oldest_id`` back as ``before`` to fetch the next (older)
+    page on scroll-up. This cursor scheme avoids offset drift when new messages
+    arrive during pagination.
+    """
+
+    messages: list[MessageRead]
+    has_more: bool
+    oldest_id: int | None = None
+    limit: int
+
+
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     agent_id: int | None = None
@@ -586,6 +601,9 @@ class GalleryRecordRead(BaseModel):
     result_url: str | None
     status: str
     prompt: str
+    provider_id: int | None = None
+    provider_name: str | None = None
+    model_name: str | None = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

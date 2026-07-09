@@ -82,6 +82,9 @@ export interface GalleryRecord {
   result_url: string | null
   status: string
   prompt: string
+  provider_id: number | null
+  provider_name: string | null
+  model_name: string | null
   created_at: string
 }
 
@@ -122,6 +125,36 @@ export function getTypes(): Promise<{ types: GalleryType[]; options: GalleryOpti
 export function getShowcases(category?: string): Promise<GalleryShowcase[]> {
   const q = category && category !== '全部' ? `?category=${encodeURIComponent(category)}` : ''
   return get(`${BASE}/showcases${q}`)
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI 提供商的图片生成模型（动态模型下拉框数据源）
+// ─────────────────────────────────────────────────────────────
+
+export interface GalleryImageModelEntry {
+  model_id: number
+  model_name: string
+  is_default: boolean
+}
+
+export interface GalleryImageModelProvider {
+  provider_id: number
+  provider_name: string
+  is_default_provider: boolean
+  models: GalleryImageModelEntry[]
+}
+
+export interface GalleryImageModelsResponse {
+  providers: GalleryImageModelProvider[]
+  default_image_model: {
+    provider_id: number
+    provider_name: string
+    model_name: string
+  } | null
+}
+
+export function getImageModels(): Promise<GalleryImageModelsResponse> {
+  return get(`${BASE}/image-models`)
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ from typing import Any
 
 import requests
 
+from app.http_client import download_bytes_with_fallback, request_with_fallback
 from app.media_retry import post_with_retry, clean_provider_error
 from app.models import Provider
 
@@ -224,7 +225,8 @@ class MediaService:
         logger.info("Video status check: provider=%s task_id=%s", provider.name, task_id)
 
         try:
-            resp = requests.get(
+            resp = request_with_fallback(
+                "GET",
                 url,
                 headers={"Authorization": f"Bearer {provider.api_key}"},
                 timeout=60,
@@ -309,23 +311,13 @@ class MediaService:
         setting.
         """
         # Download from the external CDN (backend reaches it, browser may not).
+        # Uses the resilient client: falls back to a direct connection if the
+        # configured egress proxy is unreachable.
         try:
-            import httpx
-
-            resp = httpx.get(url, timeout=120, follow_redirects=True)
-            resp.raise_for_status()
-            file_bytes = resp.content
-            detected_ct = resp.headers.get("content-type")
+            file_bytes, detected_ct = download_bytes_with_fallback(url, timeout=120)
         except Exception as exc:  # pragma: no cover - network best-effort
-            logger.warning("Failed to download %s: %s", url[:80], exc)
-            try:
-                resp = requests.get(url, timeout=120)
-                resp.raise_for_status()
-                file_bytes = resp.content
-                detected_ct = resp.headers.get("content-type")
-            except Exception as exc2:
-                logger.error("Fallback download also failed: %s", exc2)
-                return {"url": url, "object_key": "", "mime_type": "", "file_size": 0}
+            logger.error("Failed to download %s: %s", url[:80], exc)
+            return {"url": url, "object_key": "", "mime_type": "", "file_size": 0}
 
         # Derive a reliable MIME type (ignore non-MIME hints such as b64_json).
         mime_type = (

@@ -34,7 +34,17 @@ class QwenAdapter(LLMAdapter):
     def _build_client(self):
         """懒加载 OpenAI 兼容客户端 (通义千问提供 OpenAI 兼容端点)"""
         from openai import AsyncOpenAI
-        return AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        import httpx
+
+        # Force a direct connection: the injected egress proxy is optional
+        # infrastructure and may be unreachable; direct egress works in this
+        # deployment (see app/http_client). Keeps chat resilient to a dead
+        # proxy. Remove proxy=None only in a proxy-only deployment.
+        return AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            http_client=httpx.AsyncClient(proxy=None),
+        )
 
     async def chat(
         self,

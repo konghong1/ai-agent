@@ -39,7 +39,17 @@ class OpenAICompatibleAdapter(LLMAdapter):
     def _build_client(self):
         """懒加载 OpenAI 客户端"""
         from openai import AsyncOpenAI
-        return AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        import httpx
+
+        # Force a direct connection: the injected egress proxy is optional
+        # infrastructure and may be unreachable; direct egress works in this
+        # deployment (see app/http_client). This keeps chat resilient to a
+        # dead proxy. Remove proxy=None only in a proxy-only deployment.
+        return AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            http_client=httpx.AsyncClient(proxy=None),
+        )
 
     async def chat(
         self,

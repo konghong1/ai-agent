@@ -20,6 +20,7 @@ import MediaLibrary from '@/pages/MediaLibrary'
 import EcommerceGallery from '@/pages/EcommerceGallery'
 import './styles/variables.css'
 import './styles/global-theme.css'
+import './styles/gallery-design-system.css'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()

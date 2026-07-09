@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Modal, Input, Select, message } from 'antd'
-import type { GalleryType, GalleryOptions, GalleryPlanItem, GalleryImage } from '@/services/gallery'
+import type { GalleryType, GalleryOptions, GalleryPlanItem, GalleryImage, GalleryImageModelsResponse } from '@/services/gallery'
 import { aiFill } from '@/services/gallery'
 
 interface Props {
@@ -10,6 +10,8 @@ interface Props {
   type: GalleryType | null
   item: GalleryPlanItem | undefined
   options: GalleryOptions
+  imageModels: GalleryImageModelsResponse
+  inheritedModel: { provider_id: number | null; model_name: string | null; model_label: string | null } | null
   projectImages: GalleryImage[]
   onSave: (payload: {
     type_id: string
@@ -39,12 +41,14 @@ const COMMON_DEFAULTS: Record<string, string> = {
 }
 
 export default function TypeSettingsModal({
-  open, onClose, projectId, type, item, options, projectImages, onSave,
+  open, onClose, projectId, type, item, options, imageModels, inheritedModel, projectImages, onSave,
 }: Props) {
   const [personal, setPersonal] = useState<Record<string, string>>({})
   const [common, setCommon] = useState<Record<string, string>>({ ...COMMON_DEFAULTS })
   const [note, setNote] = useState('')
-  const [model, setModel] = useState('Banana-pro')
+  const [providerId, setProviderId] = useState<number | null>(null)
+  const [modelName, setModelName] = useState<string | null>(null)
+  const [modelLabel, setModelLabel] = useState('默认图片模型')
   const [count, setCount] = useState(1)
   const [ratio, setRatio] = useState('自适应尺寸')
   const [resolution, setResolution] = useState('1K')
@@ -57,12 +61,18 @@ export default function TypeSettingsModal({
     setCommon({ ...COMMON_DEFAULTS, ...(item?.common_settings || {}) })
     setNote(item?.note || '')
     const os = item?.output_settings || {}
-    setModel(os.model || 'Banana-pro')
+    // 优先用条目自身已保存的模型，否则继承全局选择
+    const pid = os.provider_id ?? inheritedModel?.provider_id ?? null
+    const mname = os.model_name ?? inheritedModel?.model_name ?? null
+    const mlbl = os.model_label ?? inheritedModel?.model_label ?? '默认图片模型'
+    setProviderId(pid)
+    setModelName(mname)
+    setModelLabel(mlbl)
     setCount(os.count || 1)
     setRatio(os.ratio || (type.hasResolution ? '自动' : '自适应尺寸'))
     setResolution(os.resolution || '1K')
     setRefs(item?.reference_images || [])
-  }, [open, type, item])
+  }, [open, type, item, inheritedModel])
 
   if (!type) return null
 
@@ -107,10 +117,38 @@ export default function TypeSettingsModal({
       type_id: type.id,
       personal_settings: personal,
       common_settings: common,
-      output_settings: { model, count, ratio, resolution },
+      output_settings: {
+        provider_id: providerId,
+        model_name: modelName,
+        model_label: modelLabel,
+        model: modelLabel,
+        count,
+        ratio,
+        resolution,
+      },
       note,
       reference_images: refs,
     }, asTemplate)
+  }
+
+  // 当前模型下拉值
+  const modelValue =
+    providerId != null && modelName
+      ? `${providerId}::${modelName}`
+      : '__default__'
+
+  const handleModelChange = (val: string) => {
+    if (val === '__default__') {
+      setProviderId(null)
+      setModelName(null)
+      setModelLabel('默认图片模型')
+      return
+    }
+    const [pid, mname] = val.split('::')
+    const p = imageModels.providers.find((pp) => pp.provider_id === Number(pid))
+    setProviderId(Number(pid))
+    setModelName(mname)
+    setModelLabel(p ? `${p.provider_name} · ${mname}` : mname)
   }
 
   return (
@@ -198,12 +236,23 @@ export default function TypeSettingsModal({
               <h4>出图设置</h4>
               <div className="ms-fields">
                 <div className="pf-row">
-                  <label>模型</label>
-                  <div className="g-model-tabs">
-                    {(options.output.model || []).map((m: string) => (
-                      <button key={m} className={model === m ? 'on' : ''} onClick={() => setModel(m)}>{m}</button>
-                    ))}
-                  </div>
+                  <label>模型 <span className="ms-note" style={{ display: 'inline' }}>（来自 AI 提供商图片模型）</span></label>
+                  <Select
+                    value={modelValue}
+                    style={{ width: '100%' }}
+                    placeholder="默认（自动选择）"
+                    options={[
+                      { label: '默认（自动选择 AI 提供商默认图片模型）', value: '__default__' },
+                      ...imageModels.providers.map((p) => ({
+                        label: p.provider_name,
+                        options: p.models.map((m) => ({ label: m.model_name, value: `${p.provider_id}::${m.model_name}` })),
+                      })),
+                    ]}
+                    onChange={handleModelChange}
+                  />
+                  {imageModels.providers.length === 0 && (
+                    <span className="ms-note">尚未配置 AI 提供商的图片生成模型，可在「AI 提供商」中添加。</span>
+                  )}
                 </div>
                 <div className="pf-row">
                   <label>出图数量</label>
@@ -244,7 +293,7 @@ export default function TypeSettingsModal({
                   <div
                     key={img.id}
                     className="ref-thumb"
-                    style={{ cursor: 'pointer', outline: refs.includes(img.filename) ? '2px solid var(--g-brand)' : 'none' }}
+                    style={{ cursor: 'pointer', outline: refs.includes(img.filename) ? '2px solid var(--gb-brand)' : 'none' }}
                     onClick={() => toggleRef(img.filename)}
                     title={refs.includes(img.filename) ? '取消参考' : '设为参考'}
                   >
@@ -252,7 +301,7 @@ export default function TypeSettingsModal({
                   </div>
                 ))}
                 {projectImages.length === 0 && (
-                  <span style={{ fontSize: 12, color: 'var(--ice-text-secondary)' }}>请先在左侧上传产品图</span>
+                  <span style={{ fontSize: 12, color: 'var(--gb-ink-faint)' }}>请先在左侧上传产品图</span>
                 )}
               </div>
             </div>

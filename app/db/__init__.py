@@ -235,6 +235,42 @@ def ensure_indexes() -> None:
             logger.warning("ensure_indexes: could not create %s on %s: %s", name, table, exc)
 
 
+def ensure_gallery_record_columns() -> None:
+    """Add gallery_records columns introduced after the table was first created.
+
+    ``Base.metadata.create_all`` only creates *missing tables* — it never adds a
+    column to an already-existing table. So a DB that was bootstrapped before the
+    ``provider_id`` / ``provider_name`` / ``model_name`` columns existed on
+    ``gallery_records`` would raise ``OperationalError: no such column`` the first
+    time the gallery generation records a model. This closes that gap idempotently
+    (SQLite + MySQL both accept the same ADD COLUMN DDL).
+    """
+    from app.core.database import engine
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+
+    table = "gallery_records"
+    desired = [
+        ("provider_id", "INTEGER"),
+        ("provider_name", "VARCHAR(200)"),
+        ("model_name", "VARCHAR(200)"),
+    ]
+    try:
+        inspector = sa_inspect(engine)
+        existing = {c["name"] for c in inspector.get_columns(table, bind=engine)}
+    except Exception:
+        existing = set()
+
+    for name, ddl_type in desired:
+        if name in existing:
+            continue
+        try:
+            with engine.begin() as conn:
+                conn.execute(sa_text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
+            logger.info("ensure_gallery_record_columns: added %s to %s", name, table)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("ensure_gallery_record_columns: could not add %s to %s: %s", name, table, exc)
+
+
 def main():
     """Run database initialization."""
     logging.basicConfig(level=logging.INFO)
@@ -254,6 +290,10 @@ def main():
     # Step 2b: Ensure performance indexes exist even on legacy databases
     # (see ensure_indexes for why this matters).
     ensure_indexes()
+
+    # Step 2c: Ensure gallery_records has the model-recording columns even on
+    # legacy databases (see ensure_gallery_record_columns for why).
+    ensure_gallery_record_columns()
 
     # Step 3: Seed default data
     seed_database()

@@ -77,7 +77,14 @@ const menuItems = [
 
   { key: "/users", icon: <TeamOutlined />, label: "用户管理" },
 
-  { key: "/ecommerce-gallery", icon: <AppstoreOutlined />, label: "电商套图" },
+  {
+    key: "/workbench",
+    icon: <AppstoreOutlined />,
+    label: "工作台",
+    children: [
+      { key: "/ecommerce-gallery", label: "电商套图" },
+    ],
+  },
 
   { key: "/settings", icon: <SettingOutlined />, label: "系统设置" },
 

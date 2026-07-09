@@ -36,6 +36,15 @@
 
 ## 外部网络 / 代理（重要运维坑）
 - 外网 AI 服务（`apihub.agnes-ai.com` 等）建议走代理出网。**已修复注入**：`docker-compose.yml` 的 `api` 与 `worker` 服务现在注入 `HTTPS_PROXY`/`HTTP_PROXY`，且因容器内 `127.0.0.1` 指容器自身，必须改用 `host.docker.internal:33210` 并加 `extra_hosts: - "host.docker.internal:host-gateway"`。`NO_PROXY` 含 `localhost,127.0.0.1,::1,minio,mysql,ai-agent-minio,ai-agent-mysql`（MinIO raw socket + minio client 忽略代理，但显式排除以防万一；已验证注入代理后 MinIO 仍可达）。
-- 代理端口 `33210` 取自主机 `HTTPS_PROXY`（WorkBuddy 沙箱代理），随会话/环境变化；若代理失效，设了 `HTTPS_PROXY` 的请求会直连失败（不会自动回退直连），属已知脆弱点。当前会话内代理稳定。
+- 代理端口 `33210` 取自主机 `HTTPS_PROXY`（WorkBuddy 沙箱代理），随会话/环境变化，**可能随时拒绝连接（Errno 111）**。原脆弱点（设了 `HTTPS_PROXY` 的请求在代理失效时不自动回退直连）**已修复**：见 `app/http_client.py` 代理韧性层（2026-07-09）。
 - **图片生成超时坑（已修）**：`MediaService.generate_image`（`app/media.py:109` 与 `app/media_new.py:102`）原 `timeout=120`。带参考图（img2img）的生成本身就慢（实测小图 30–48s，真实大图更久），偶发超过 120s → `Read timed out. (read timeout=120)`。已把图片生成超时提到 **300s**，视频提交 30→120、视频轮询 15→60、下载 60→120。
 - 验证：完整链路（上传参考图 → `POST /api/chat` provider_id=2 `agnes-image-2.0-flash`）返回 200，约 52s（走代理）；裸 `MediaService.generate_image` 约 28–31s。图片模型归属 `provider_id=2`（user_id=2），admin(user_id=1) 走该路由会因 `provider.user_id==current_user.id` 不成立而落到聊天路径——这是正常的模型归属设计，不是 bug。
+
+## 出网代理韧性层（app/http_client.py，2026-07-09 新增）
+- **问题**：`docker-compose.yml` 注入 `HTTPS_PROXY=http://host.docker.internal:33210`。该代理是 WorkBuddy 沙箱代理，会随时拒绝连接（Errno 111）。`requests`/`httpx`/`openai` SDK 默认读该 env，代理挂掉 → 所有出网调用（`get_video_status` 轮询、`generate_image/video` 提交、CDN 下载、LLM 聊天）全部 `ProxyError` 硬失败，且视频轮询每 3s 刷屏。
+- **修复**：`app/http_client.py` 两层防护：
+  1. `ensure_proxy_strategy()` 模块导入时探测代理可达性；不可达则**清除本进程 `HTTPS_PROXY/HTTP_PROXY`**，让 requests/httpx/openai 自动走直连。幂等，2s 超时，失败不阻塞启动。
+  2. `request_with_fallback(method,url,...)` / `download_bytes_with_fallback(url,...)` 每次出网调用带**直连兜底**（代理错误→重试直连），并有 30s "代理已宕"缓存，避免轮询反复打死代理。
+- **接入点**：`media_retry.post_with_retry`、`media.py`/`media_new.py` 的 `get_video_status` 与 `_download_and_store`、`llm/openai_compat.py` 与 `llm/qwen.py` 的 `AsyncOpenAI(http_client=httpx.AsyncClient(proxy=None))`、`worker/media_worker.py` 的 `AsyncClient(proxy=None)`。
+- **已验证**：本环境**宿主机可直接出网**（`curl https://apihub.agnes-ai.com` 返回 401，1.3s），代理 `33210` 当前拒绝连接 → 自动清 env 后直连成功。
+- **运维开关**：设 `DISABLE_PROXY_AUTOFALLBACK=1` 可保留强制代理（仅在"只能走代理出网"的环境用）。若部署在仅代理可达的环境，需把 LLM/worker 的 `proxy=None` 去掉、并依赖代理可用。

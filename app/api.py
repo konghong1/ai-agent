@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.agent import ask_agent, _get_or_create_thread
@@ -42,7 +42,7 @@ KnowledgeBaseCreate, KnowledgeBaseRead, KnowledgeBaseUpdate,
 KBFolderCreate, KBFolderRead, KBFolderUpdate,
 KBDocumentRead, KBSearchRequest, KBSearchResult, KBUploadResponse,
 McpServerCreate, McpServerRead, McpServerUpdate,
-MessageRead,
+MessageRead, MessagesPage,
 SkillCreate, SkillRead, SkillUpdate,
 ThreadCreate, ThreadRead, ThreadUpdate,
 TokenResponse, UserCreate, UserLogin, UserRead,
@@ -340,18 +340,109 @@ def rename_thread(thread_id: str, payload: ThreadUpdate, current_user: User = De
     return thread
 
 
-@router.get("/threads/{thread_id}/messages", response_model=list[MessageRead])
-def get_thread_messages(thread_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[Message]:
+@router.get("/threads/{thread_id}/messages", response_model=MessagesPage)
+def get_thread_messages(
+    thread_id: str,
+    limit: int = 20,
+    before: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> MessagesPage:
+    """Return a *page* of messages for a thread, newest-last within the page.
+
+    - No ``before`` -> the most recent ``limit`` messages (initial load). The
+      client shows these and starts scrolled to the bottom.
+    - ``before=<id>`` -> the ``limit`` messages immediately *older* than that
+      cursor (scroll-up history loading). We compare on ``(created_at, id)`` so
+      ties at the same timestamp stay deterministic and offset-free.
+
+    ``has_more`` / ``oldest_id`` let the client page further back with the same
+    ``before`` cursor. The query is bounded by ``LIMIT`` so it never sorts the
+    whole table (which on MySQL can hit "Out of sort memory").
+    """
     thread = db.scalar(select(Thread).where(Thread.id == thread_id, Thread.user_id == current_user.id))
     if not thread:
         raise HTTPException(status_code=404, detail="Thread not found.")
-    messages = list(db.scalars(select(Message).where(Message.thread_id == thread.id).order_by(Message.created_at)))
+
+    limit = max(1, min(int(limit), 50))
+
+    # (created_at, id) < (ref_created_at, ref_id) — the cursor comparison.
+    def cursor_lt(ref_created_at, ref_id):
+        return or_(
+            Message.created_at < ref_created_at,
+            and_(Message.created_at == ref_created_at, Message.id < ref_id),
+        )
+
+    if before is None:
+        # Newest page: take the last `limit` messages in ascending order.
+        rows = list(
+            db.scalars(
+                select(Message)
+                .where(Message.thread_id == thread.id)
+                .order_by(Message.created_at.desc(), Message.id.desc())
+                .limit(limit)
+            )
+        )
+        rows.reverse()  # newest-last
+        total = db.scalar(
+            select(func.count()).select_from(Message).where(Message.thread_id == thread.id)
+        ) or 0
+        has_more = total > len(rows)
+        oldest = rows[0] if rows else None
+    else:
+        ref = db.get(Message, before)
+        # Unknown / foreign cursor -> fall back to the newest page.
+        if ref is None or ref.thread_id != thread.id:
+            rows = list(
+                db.scalars(
+                    select(Message)
+                    .where(Message.thread_id == thread.id)
+                    .order_by(Message.created_at.desc(), Message.id.desc())
+                    .limit(limit)
+                )
+            )
+            rows.reverse()
+            total = db.scalar(
+                select(func.count()).select_from(Message).where(Message.thread_id == thread.id)
+            ) or 0
+            has_more = total > len(rows)
+            oldest = rows[0] if rows else None
+        else:
+            # The `limit` messages strictly older than the cursor, newest-last.
+            rows = list(
+                db.scalars(
+                    select(Message)
+                    .where(Message.thread_id == thread.id)
+                    .where(cursor_lt(ref.created_at, ref.id))
+                    .order_by(Message.created_at.desc(), Message.id.desc())
+                    .limit(limit)
+                )
+            )
+            rows.reverse()
+            oldest = rows[0] if rows else None
+            if oldest is None:
+                has_more = False
+            else:
+                older_count = db.scalar(
+                    select(func.count())
+                    .select_from(Message)
+                    .where(Message.thread_id == thread.id)
+                    .where(cursor_lt(oldest.created_at, oldest.id))
+                ) or 0
+                has_more = older_count > 0
+
     # Defensive: older rows may have extra=NULL in the DB, but MessageRead.extra
     # is a required dict. Coerce None -> {} so response validation never fails.
-    for m in messages:
+    for m in rows:
         if m.extra is None:
             m.extra = {}
-    return messages
+
+    return MessagesPage(
+        messages=rows,
+        has_more=has_more,
+        oldest_id=oldest.id if oldest else None,
+        limit=limit,
+    )
 
 
 # Dedicated bucket for user-uploaded chat images — kept separate from

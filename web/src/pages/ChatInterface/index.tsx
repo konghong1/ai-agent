@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef } from "react"
+import { useCallback, useEffect, useLayoutEffect, useState, useRef } from "react"
 import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown, Select, Tooltip, Popconfirm } from "antd"
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
@@ -92,6 +92,18 @@ export default function ChatInterface() {
   const chatAbortRef = useRef<AbortController | null>(null)  // abort SSE when switching threads
   const fetchMsgIdRef = useRef(0)  // race condition guard: only apply latest fetchMessages result
   const skipNextFetchRef = useRef(false)  // skip fetchMessages when creating a new thread (handleSend)
+
+  // ── Message pagination (latest page + scroll-up history loading) ──
+  const PAGE_SIZE = 20
+  const [hasMoreHistory, setHasMoreHistory] = useState(false)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const scrollRef = useRef<HTMLDivElement>(null)          // messages scroll container
+  const atBottomRef = useRef(true)                        // is the view currently at the bottom?
+  const loadingHistoryRef = useRef(false)                 // guard against duplicate history fetches
+  const hasMoreRef = useRef(false)                        // mirror of hasMoreHistory for handlers/closures
+  const oldestIdRef = useRef<number | null>(null)        // cursor for the oldest loaded message
+  const scrollPreserveRef = useRef<{ prevHeight: number; prevTop: number } | null>(null)  // restore position after prepend
+  const scrollToBottomRef = useRef<"instant" | "smooth" | null>(null)  // controlled auto-scroll request
 
   // ── Reference images (图生图 / 图生视频) ──
   const [referenceImages, setReferenceImages] = useState<string[]>([])
@@ -188,11 +200,21 @@ export default function ChatInterface() {
     }
   }, [switchThread])
 
-  const fetchMessages = useCallback(async (threadId: string) => {
+  // 后端返回 extra.blocks，拍平到顶层 msg.blocks
+  const mapMessages = (raw: any[]): Message[] =>
+    (raw as any[]).map((msg: any) => ({
+      ...msg,
+      blocks: msg.extra?.blocks ?? msg.blocks ?? null,
+    }))
+
+  // Load only the latest page of messages for a thread (initial load / refresh).
+  // This is the fix for "消息从头部重载": we no longer pull the whole history on
+  // every open — just the most recent PAGE_SIZE, and the view stays at the bottom.
+  const fetchLatest = useCallback(async (threadId: string) => {
     const reqId = ++fetchMsgIdRef.current
 
     try {
-      const res = await fetch(`/api/threads/${threadId}/messages`, {
+      const res = await fetch(`/api/threads/${threadId}/messages?limit=${PAGE_SIZE}`, {
         headers: authHeaders(),
       })
       // Guard: if a newer request was fired, discard this stale response
@@ -200,25 +222,70 @@ export default function ChatInterface() {
       if (res.ok) {
         const data = await res.json()
         if (reqId !== fetchMsgIdRef.current) return  // double-check after await
-        // 后端返回 extra.blocks，拍平到顶层 msg.blocks
-        const mapped = (data as any[]).map((msg: any) => ({
-          ...msg,
-          blocks: msg.extra?.blocks ?? msg.blocks ?? null,
-        }))
-        setMessages(mapped)
+        setMessages(mapMessages(data.messages || []))
+        hasMoreRef.current = !!data.has_more
+        setHasMoreHistory(!!data.has_more)
+        oldestIdRef.current = (data.oldest_id as number) ?? null
+        // After this render, jump to the newest message.
+        scrollToBottomRef.current = "instant"
       } else {
-        // Only update state if this is still the latest request
         if (reqId !== fetchMsgIdRef.current) return
         setMessages([])
+        hasMoreRef.current = false
+        setHasMoreHistory(false)
+        oldestIdRef.current = null
         const err = await res.json().catch(() => ({}))
         message.error(err?.detail || `加载消息失败 (HTTP ${res.status})`, 4)
       }
     } catch (e: any) {
       if (reqId !== fetchMsgIdRef.current) return
       setMessages([])
+      hasMoreRef.current = false
+      setHasMoreHistory(false)
+      oldestIdRef.current = null
       message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
     }
   }, [])  // No deps - fetches always use fresh URL
+
+  // Load the previous (older) page when the user scrolls to the top, and
+  // prepend it. The scroll position is preserved by fetchOlder + the
+  // useLayoutEffect below, so the user's view never jumps.
+  const fetchOlder = useCallback(async () => {
+    const threadId = activeThreadIdRef.current
+    if (!threadId || loadingHistoryRef.current || !hasMoreRef.current) return
+    const before = oldestIdRef.current
+    if (before == null) return
+
+    loadingHistoryRef.current = true
+    setLoadingHistory(true)
+    // Capture scroll metrics BEFORE the DOM grows so we can restore the view.
+    const el = scrollRef.current
+    if (el) scrollPreserveRef.current = { prevHeight: el.scrollHeight, prevTop: el.scrollTop }
+    try {
+      const res = await fetch(
+        `/api/threads/${threadId}/messages?limit=${PAGE_SIZE}&before=${before}`,
+        { headers: authHeaders() },
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        message.error(err?.detail || `加载历史消息失败 (HTTP ${res.status})`, 4)
+        scrollPreserveRef.current = null
+        return
+      }
+      const data = await res.json()
+      // Prepend older messages; stable ids keep React from re-rendering existing rows.
+      setMessages(prev => [...mapMessages(data.messages || []), ...prev])
+      hasMoreRef.current = !!data.has_more
+      setHasMoreHistory(!!data.has_more)
+      oldestIdRef.current = (data.oldest_id as number) ?? null
+    } catch {
+      message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
+      scrollPreserveRef.current = null
+    } finally {
+      loadingHistoryRef.current = false
+      setLoadingHistory(false)
+    }
+  }, [])
 
   // ── Lightbox state ──────────────────────────────────────────────
   const [lightboxState, setLightboxState] = useState<{
@@ -416,15 +483,49 @@ export default function ChatInterface() {
         skipNextFetchRef.current = false
         return
       }
-      fetchMessages(activeThreadId)
+      fetchLatest(activeThreadId)
     } else {
       setMessages([])
+      hasMoreRef.current = false
+      setHasMoreHistory(false)
+      oldestIdRef.current = null
     }
-  }, [activeThreadId, fetchMessages])
+  }, [activeThreadId, fetchLatest])
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  // Controlled scrolling. This replaces the old "scrollIntoView on every
+  // messages change" which caused the screen to keep jumping to the head.
+  //  - When prepending history we restore the exact scroll position so the
+  //    user's view is stable.
+  //  - Otherwise we only auto-scroll to bottom when explicitly requested
+  //    (initial load, or a new message arriving while the user is at bottom).
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    if (scrollPreserveRef.current) {
+      const { prevHeight, prevTop } = scrollPreserveRef.current
+      const newHeight = el.scrollHeight
+      el.scrollTop = prevTop + (newHeight - prevHeight)
+      scrollPreserveRef.current = null
+      return
+    }
+    if (scrollToBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+      scrollToBottomRef.current = null
+    }
   }, [messages])
+
+  // Scroll handler: track bottom state and trigger history load near the top.
+  const handleMessagesScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const distanceFromTop = el.scrollTop
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    atBottomRef.current = distanceFromBottom < 48
+    // Load older messages when the user scrolls near the top (and more exist).
+    if (distanceFromTop < 64 && hasMoreRef.current && !loadingHistoryRef.current) {
+      fetchOlder()
+    }
+  }, [fetchOlder])
 
   // Responsive sidebar
   useEffect(() => {
@@ -483,7 +584,7 @@ export default function ChatInterface() {
 
   const refreshMessages = async () => {
     if (!activeThreadId) return
-    await fetchMessages(activeThreadId)
+    await fetchLatest(activeThreadId)
     message.success("已刷新")
   }
 
@@ -577,6 +678,8 @@ export default function ChatInterface() {
     // (threadId could differ if user switched during thread creation)
     if (activeThreadIdRef.current === threadId || !activeThreadIdRef.current) {
       setMessages(prev => [...prev, userMsg])
+      // The user just sent — pin the view to the bottom so they see their msg.
+      scrollToBottomRef.current = "smooth"
     }
 
     // Use SSE streaming
@@ -647,6 +750,9 @@ export default function ChatInterface() {
                   created_at: new Date().toISOString(),
                   blocks: assistantBlocks,
                 }
+                // Only yank to bottom if the user is already there (don't rip
+                // them out of history they're reading while the reply streams in).
+                if (atBottomRef.current) scrollToBottomRef.current = "smooth"
                 setMessages(prev => [...prev, assistantMsg])
 
                 // Update thread list with new thread if created
@@ -1164,13 +1270,16 @@ export default function ChatInterface() {
         </div>
 
         {/* Messages area */}
-        <div style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "20px 24px",
-          background: "var(--ice-bg-primary)",
-          position: "relative",
-        }}>
+        <div
+          ref={scrollRef}
+          onScroll={handleMessagesScroll}
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: "20px 24px",
+            background: "var(--ice-bg-primary)",
+            position: "relative",
+          }}>
           {!activeThreadId ? (
             <div style={{
               display: "flex", flexDirection: "column",
@@ -1217,6 +1326,24 @@ export default function ChatInterface() {
             <div style={{
               position: "relative",
             }}>
+              {/* History loading indicator — appears at the top while the user
+                  scrolls up to load older messages. */}
+              {loadingHistory && (
+                <div style={{
+                  textAlign: "center", padding: "6px 0 12px",
+                  color: "var(--ice-text-muted)", fontSize: 12,
+                }}>
+                  加载历史消息…
+                </div>
+              )}
+              {!hasMoreHistory && !loadingHistory && (
+                <div style={{
+                  textAlign: "center", padding: "6px 0 12px",
+                  color: "var(--ice-text-muted)", fontSize: 12, opacity: 0.7,
+                }}>
+                  没有更早的消息了
+                </div>
+              )}
               {messages.map((msg, idx) => (
                 <div
                   key={msg.id || idx}
@@ -1330,7 +1457,14 @@ export default function ChatInterface() {
                                     ? () => useAsReference(msg.blocks!.image_url!)
                                     : undefined
                                 }
-                                onContentLoaded={() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })}
+                                onContentLoaded={() => {
+                                  // Keep the view pinned to the bottom only if the
+                                  // user is already there (don't yank them out of
+                                  // history they're reading when an image loads).
+                                  if (atBottomRef.current && scrollRef.current) {
+                                    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+                                  }
+                                }}
                                 onThumbnailClick={(index) => {
                                   if (msg.blocks?.type === "image" && msg.blocks.image_url) {
                                     const allImages: LightboxImage[] = [
