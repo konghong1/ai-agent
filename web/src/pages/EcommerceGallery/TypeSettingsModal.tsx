@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Modal, Input, Select, message } from 'antd'
-import type { GalleryType, GalleryOptions, GalleryPlanItem, GalleryImage, GalleryImageModelsResponse } from '@/services/gallery'
+import type { GalleryType, GalleryOptions, GalleryPlanItem, GalleryImageModelsResponse } from '@/services/gallery'
 import { aiFill } from '@/services/gallery'
 
 interface Props {
@@ -12,15 +12,21 @@ interface Props {
   options: GalleryOptions
   imageModels: GalleryImageModelsResponse
   inheritedModel: { provider_id: number | null; model_name: string | null; model_label: string | null } | null
-  projectImages: GalleryImage[]
   onSave: (payload: {
     type_id: string
     personal_settings: Record<string, string>
     common_settings: Record<string, string>
     output_settings: Record<string, any>
     note: string
-    reference_images: string[]
-  }, asTemplate?: boolean) => void
+  }) => void
+  onSaveAsTemplate: (payload: {
+    type_id: string
+    title: string
+    personal_settings: Record<string, string>
+    common_settings: Record<string, string>
+    output_settings: Record<string, any>
+    note: string
+  }) => void
 }
 
 const COMMON_KEYS = [
@@ -41,7 +47,7 @@ const COMMON_DEFAULTS: Record<string, string> = {
 }
 
 export default function TypeSettingsModal({
-  open, onClose, projectId, type, item, options, imageModels, inheritedModel, projectImages, onSave,
+  open, onClose, projectId, type, item, options, imageModels, inheritedModel, onSave, onSaveAsTemplate,
 }: Props) {
   const [personal, setPersonal] = useState<Record<string, string>>({})
   const [common, setCommon] = useState<Record<string, string>>({ ...COMMON_DEFAULTS })
@@ -52,7 +58,6 @@ export default function TypeSettingsModal({
   const [count, setCount] = useState(1)
   const [ratio, setRatio] = useState('自适应尺寸')
   const [resolution, setResolution] = useState('1K')
-  const [refs, setRefs] = useState<string[]>([])
   const [filling, setFilling] = useState(false)
 
   useEffect(() => {
@@ -69,9 +74,8 @@ export default function TypeSettingsModal({
     setModelName(mname)
     setModelLabel(mlbl)
     setCount(os.count || 1)
-    setRatio(os.ratio || (type.hasResolution ? '自动' : '自适应尺寸'))
+    setRatio(os.ratio || '自适应尺寸')
     setResolution(os.resolution || '1K')
-    setRefs(item?.reference_images || [])
   }, [open, type, item, inheritedModel])
 
   if (!type) return null
@@ -108,11 +112,7 @@ export default function TypeSettingsModal({
     }
   }
 
-  const toggleRef = (filename: string) => {
-    setRefs((prev) => (prev.includes(filename) ? prev.filter((f) => f !== filename) : [...prev, filename]))
-  }
-
-  const handleSave = (asTemplate = false) => {
+  const handleSave = () => {
     onSave({
       type_id: type.id,
       personal_settings: personal,
@@ -127,8 +127,26 @@ export default function TypeSettingsModal({
         resolution,
       },
       note,
-      reference_images: refs,
-    }, asTemplate)
+    })
+  }
+
+  const handleSaveAsTemplate = () => {
+    onSaveAsTemplate({
+      type_id: type.id,
+      title: type.title,
+      personal_settings: personal,
+      common_settings: common,
+      output_settings: {
+        provider_id: providerId,
+        model_name: modelName,
+        model_label: modelLabel,
+        model: modelLabel,
+        count,
+        ratio,
+        resolution,
+      },
+      note,
+    })
   }
 
   // 当前模型下拉值
@@ -218,7 +236,7 @@ export default function TypeSettingsModal({
             </div>
           </div>
 
-          {/* 右栏：补充说明 + 出图设置 + 参考图 */}
+          {/* 右栏：补充说明 + 出图设置 */}
           <div className="modal-col">
             <div className="ms-block">
               <h4>补充说明</h4>
@@ -285,32 +303,12 @@ export default function TypeSettingsModal({
               </div>
             </div>
 
-            <div className="ms-block">
-              <h4>参考图片</h4>
-              <p className="ms-note">从已上传的产品图中选择作为参考（可选）</p>
-              <div className="ref-upload">
-                {projectImages.map((img) => (
-                  <div
-                    key={img.id}
-                    className="ref-thumb"
-                    style={{ cursor: 'pointer', outline: refs.includes(img.filename) ? '2px solid var(--gb-brand)' : 'none' }}
-                    onClick={() => toggleRef(img.filename)}
-                    title={refs.includes(img.filename) ? '取消参考' : '设为参考'}
-                  >
-                    <img src={img.url} alt="" />
-                  </div>
-                ))}
-                {projectImages.length === 0 && (
-                  <span style={{ fontSize: 12, color: 'var(--gb-ink-faint)' }}>请先在左侧上传产品图</span>
-                )}
-              </div>
-            </div>
           </div>
         </div>
 
         <div className="modal-footer">
-          <button className="btn-confirm" onClick={() => handleSave(false)}>设置完成并关闭</button>
-          <button className="btn-template" onClick={() => handleSave(true)}>另存为模板</button>
+          <button className="btn-confirm" onClick={handleSave}>设置完成并关闭</button>
+          <button className="btn-template" onClick={handleSaveAsTemplate}>另存为模板</button>
         </div>
       </div>
     </Modal>

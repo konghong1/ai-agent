@@ -1,78 +1,46 @@
-# 后端卡顿 & API 代理错误修复
+# 出图规划列表扁平化重构
 
-## 问题现象
+## 完成内容
 
-1. **ECONNREFUSED 127.0.0.1:8010** — Vite 代理连不上后端
-2. **页面数据加载不出来** — 后端无法响应 API 请求
-3. **聊天时后端非常卡，视频生成后更卡** — 服务器响应越来越慢直至卡死
+1. **扁平化列表项视觉** (`web/src/pages/EcommerceGallery/gallery.css`)
+   - 行高从约 90px 压缩到约 56–60px（padding 12px→9px，结构间距收紧）。
+   - 卡片圆角从 14px 降至 10px，阴影移除，hover 不再抬升，仅通过背景色和边框色变化反馈。
+   - 左侧彩色强调条从 3px 全高改为 2px 内缩短线，降低视觉侵略感。
 
-## 根因分析
+2. **参数摘要扁平化**
+   - 原「数量 / 比例 / 分辨率」胶囊标签改为纯文本内联，用中点 `·` 分隔，去掉 chip 背景与边框。
+   - 隐藏 emoji 图标，减少视觉噪音；保留标签文本，信息仍完整可读。
 
-### 核心问题：asyncio 事件循环被同步调用阻塞
+3. **操作区轻量化**
+   - 复制/删除图标按钮从 28×28 缩到 26×26，默认无边框，hover 时才出现轻边框与背景。
+   - 「设置」按钮从实心/带阴影改为透明文字链接式，字号与内边距同步减小。
 
-`chat_stream` 端点返回 `StreamingResponse`，内部的 `event_generator` 是 `async def`，
-运行在 asyncio 事件循环中。但它**直接调用了三个同步阻塞函数**：
+4. **更新设计参考稿** (`designs/gallery-plan-list-redesign.html`)
+   - 同步改为扁平化风格，移除未实现的三行设置预览 chips，避免设计与代码脱节。
 
-| 调用位置 | 同步函数 | 阻塞原因 | 阻塞时长 |
-|---------|---------|---------|---------|
-| api.py:431 | `_handle_video_generation()` | `requests.post` (timeout=30s) | 最多 30 秒 |
-| api.py:435 | `_handle_image_generation()` | `requests.post` (timeout=120s) | 最多 120 秒 |
-| api.py:489 | `ask_agent()` | `llm.invoke()` 网络 + RAG 检索 | 5~60 秒 |
+5. **构建验证**
+   - `npm run build` 通过，无 TypeScript/CSS 报错。
 
-在 `async def` 中直接调用同步函数 = **冻结整个事件循环**。
-期间服务器无法接受新连接、无法处理其他请求、SSE 心跳停止 → 表现为"卡死"和 ECONNREFUSED。
+## 关键设计决策
 
-### 次要问题
+- **不牺牲信息密度**：行高降低的同时，仍保留序号、名称、类型标签、三项参数、复制/删除/设置三个操作。
+- **统一 hover 语言**：列表项 hover 不再使用阴影和位移，而是「背景微变 + 边框加深」，与当前整体轻量风格一致。
+- **保留可访问性**：所有操作按钮保留 `aria-label` 和 `title`，图标尺寸虽小但点击区域仍 ≥ 26×26，满足触控下限。
 
-| 问题 | 影响 |
-|------|------|
-| 日志级别 = DEBUG（api.py + agent.py 的 openai/httpx） | 每次请求产生海量日志，I/O 开销巨大 |
-| .env PORT=8000，实际运行 8010 | 配置不一致，容易混淆 |
-| LANGSMITH_TRACING=true 但 API key 是占位符 | 每次 LLM 调用尝试上传 trace 失败，增加延迟 |
+## 代码质量 / 团队协作建议
 
-## 修复内容
+1. **设计系统与页面样式边界**
+   - 当前 `.gallery-page .plan-row` 覆盖了 `gallery-design-system.css` 的同名类。如果该列表需要在其他页面复用，应把扁平化样式下沉到设计系统，避免重复覆盖。
 
-### 1. 用 `asyncio.to_thread()` 包装同步调用（核心修复）
+2. **CSS 命名与组件一致性**
+   - `PlanRow.tsx` 结构使用 `.pr-body` / `.pr-top` / `.pr-meta`，而 `designs/gallery-plan-list-redesign.html` 使用 `.pr-left` / `.pr-title`。建议设计稿与组件类名对齐，减少落地时的映射成本。
 
-```python
-# 修复前 — 直接在 async 函数中调用同步函数，阻塞事件循环
-answer, thread_id, blocks = ask_agent(db=temp_db, ...)
+3. **图标 emoji 的维护性**
+   - 本次通过 `.pr-ci { display: none; }` 隐藏 emoji，属于非破坏式降级。后续建议替换为 `lucide-react` 或 SVG 图标，避免跨平台 emoji 渲染差异。
 
-# 修复后 — 在线程池中执行，不阻塞事件循环
-answer, thread_id, blocks = await asyncio.to_thread(ask_agent, db=temp_db, ...)
-```
+4. **响应式兜底**
+   - 小屏下操作区仍折到下方，但已调整为更紧凑的间距。可进一步考虑：当操作区折行时，是否保留「设置」按钮或将其收进更多菜单（⋮），以节省横向空间。
 
-三处调用全部修复：`_handle_video_generation`、`_handle_image_generation`、`ask_agent`
-
-### 2. 降低日志级别
-
-- `api.py`: `logging.DEBUG` → `logging.INFO`
-- `agent.py`: openai/httpx `logging.DEBUG` → `logging.WARNING`
-
-### 3. 统一端口配置
-
-- `.env` / `.env.example`: `PORT=8000` → `PORT=8010`
-
-### 4. 禁用无效的 LangSmith tracing
-
-- `.env`: `LANGSMITH_TRACING=true` → `false`（API key 是占位符）
-
-## 修改文件清单
-
-| 文件 | 修改 |
-|------|------|
-| `app/api.py` | 3 处 asyncio.to_thread 包装 + 日志级别 INFO |
-| `app/agent.py` | openai/httpx 日志级别 WARNING |
-| `.env` | PORT=8010 + LANGSMITH_TRACING=false |
-| `.env.example` | PORT=8010 |
-
-## 部署步骤
-
-**必须重启后端**让所有修改生效（`.env` 变更需要重启进程）：
-
-```bash
-# 停止当前后端，然后重新启动
-uvicorn app.server:app --reload --host 127.0.0.1 --port 8010
-```
-
-前端无需改动，Vite 会自动检测到后端恢复。
+5. **后续可优化的点**
+   - 若列表项超过 10 条，当前滚动区域无虚拟化；在 50 条上限场景下可接受，但仍有性能监控空间。
+   - 空态/使用说明区与列表项视觉层级接近，后续可考虑折叠或弱化使用说明。

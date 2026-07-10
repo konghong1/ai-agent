@@ -40,6 +40,7 @@ from app.gallery_service import (
     seed_showcases,
     update_plan_item,
     update_project,
+    update_template,
 )
 from app.schemas import (
     GalleryEstimateResponse,
@@ -53,6 +54,7 @@ from app.schemas import (
     GalleryProjectUpdate,
     GalleryTemplateCreate,
     GalleryTemplateRead,
+    GalleryTemplateUpdate,
     GalleryTypesResponse,
 )
 
@@ -345,7 +347,7 @@ def create_template(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ) -> models.GalleryTemplate:
-    return save_template(db, current_user, payload.name, payload.payload)
+    return save_template(db, current_user, payload.name, payload.payload, payload.cover_url)
 
 
 @router.get("/templates", response_model=list[GalleryTemplateRead])
@@ -354,6 +356,20 @@ def get_templates(
     current_user: models.User = Depends(get_current_user),
 ) -> list[models.GalleryTemplate]:
     return list_templates(db, current_user)
+
+
+@router.patch("/templates/{template_id}", response_model=GalleryTemplateRead)
+def patch_template(
+    template_id: int,
+    payload: GalleryTemplateUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> models.GalleryTemplate:
+    data = payload.model_dump(exclude_unset=True)
+    tpl = update_template(db, current_user, template_id, data.get("name"), data.get("cover_url"))
+    if not tpl:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    return tpl
 
 
 @router.delete("/templates/{template_id}", status_code=204)

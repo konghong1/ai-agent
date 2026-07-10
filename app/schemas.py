@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class UserCreate(BaseModel):
@@ -625,9 +626,27 @@ class GalleryTemplateRead(BaseModel):
     user_id: int
     name: str
     payload: dict = Field(default_factory=dict)
+    cover_url: str | None = Field(default=None)
     created_at: datetime
 
+    @model_validator(mode='after')
+    def _extract_cover(self):
+        if isinstance(self.payload, dict) and self.payload.get('cover_url'):
+            self.cover_url = self.payload['cover_url']
+        return self
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    payload: dict = Field(default_factory=dict)
+    cover_url: str | None = Field(default=None)
+
+
+class GalleryTemplateUpdate(BaseModel):
+    name: str | None = Field(default=None, max_length=200)
+    cover_url: str | None = Field(default=None)
 
 
 class GalleryProjectRead(BaseModel):
@@ -681,11 +700,6 @@ class GalleryPlanItemUpdate(BaseModel):
 
 class GalleryPlanReorder(BaseModel):
     ordered_ids: list[int] = Field(default_factory=list)
-
-
-class GalleryTemplateCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-    payload: dict = Field(default_factory=dict)
 
 
 class GalleryGenerateResponse(BaseModel):

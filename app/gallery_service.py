@@ -200,15 +200,16 @@ def add_image(db: Session, user: models.User, project_id: int, data: bytes, orig
     if not proj:
         return None
     meta = save_uploaded_image(project_id, data, original_name)
-    is_first = db.scalar(
+    # 所有上传的产品图均为用户原图（多视角）；order 用已有图数量，保证按上传顺序升序排列
+    existing_count = db.scalar(
         select(func.count(models.GalleryProjectImage.id)).where(models.GalleryProjectImage.project_id == project_id)
-    ) == 0
+    ) or 0
     img = models.GalleryProjectImage(
         project_id=project_id,
         filename=meta["filename"],
         url=meta["url"],
-        original=is_first,
-        order=int(is_first),
+        original=True,
+        order=existing_count,
     )
     db.add(img)
     db.commit()
@@ -225,17 +226,6 @@ def delete_image(db: Session, user: models.User, project_id: int, image_id: int)
         return False
     db.delete(img)
     db.commit()
-    # 重新标记原图（删除后让第一张成为原图）
-    first = db.scalar(
-        select(models.GalleryProjectImage)
-        .where(models.GalleryProjectImage.project_id == project_id)
-        .order_by(models.GalleryProjectImage.order, models.GalleryProjectImage.id)
-    )
-    if first and not db.scalar(select(func.count(models.GalleryProjectImage.id)).where(
-        models.GalleryProjectImage.project_id == project_id, models.GalleryProjectImage.original == True  # noqa: E712
-    )):
-        first.original = True
-        db.commit()
     return True
 
 
@@ -322,9 +312,28 @@ def reorder_plan_items(db: Session, user: models.User, project_id: int, ordered_
 # 模板
 # ─────────────────────────────────────────────────────────────
 
-def save_template(db: Session, user: models.User, name: str, payload: dict) -> models.GalleryTemplate:
+def save_template(db: Session, user: models.User, name: str, payload: dict, cover_url: str | None = None) -> models.GalleryTemplate:
     tpl = models.GalleryTemplate(user_id=user.id, name=name, payload=payload or {})
+    if cover_url:
+        tpl.payload["cover_url"] = cover_url
     db.add(tpl)
+    db.commit()
+    db.refresh(tpl)
+    return tpl
+
+
+def update_template(db: Session, user: models.User, template_id: int, name: str | None = None, cover_url: str | None = None) -> models.GalleryTemplate | None:
+    tpl = get_owned_template(db, user, template_id)
+    if not tpl:
+        return None
+    if name is not None:
+        tpl.name = name
+    if cover_url is not None:
+        tpl.payload = dict(tpl.payload or {})
+        if cover_url:
+            tpl.payload["cover_url"] = cover_url
+        else:
+            tpl.payload.pop("cover_url", None)
     db.commit()
     db.refresh(tpl)
     return tpl

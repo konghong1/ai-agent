@@ -102,6 +102,7 @@ export interface GalleryTemplate {
   user_id: number
   name: string
   payload: Record<string, any>
+  cover_url: string | null
   created_at: string
 }
 
@@ -264,12 +265,26 @@ export function getMyRecords(): Promise<GalleryRecord[]> {
 // 模板
 // ─────────────────────────────────────────────────────────────
 
-export function createTemplate(name: string, payload: Record<string, any>): Promise<GalleryTemplate> {
-  return post(`${BASE}/templates`, { name, payload })
+export function createTemplate(
+  name: string,
+  payload: Record<string, any>,
+  coverUrl?: string | null,
+): Promise<GalleryTemplate> {
+  return post(`${BASE}/templates`, { name, payload, cover_url: coverUrl || null })
 }
 
 export function getTemplates(): Promise<GalleryTemplate[]> {
   return get(`${BASE}/templates`)
+}
+
+export function updateTemplate(
+  templateId: number,
+  data: { name?: string; coverUrl?: string | null },
+): Promise<GalleryTemplate> {
+  return patch(`${BASE}/templates/${templateId}`, {
+    name: data.name,
+    cover_url: data.coverUrl === undefined ? undefined : data.coverUrl || null,
+  })
 }
 
 export function deleteTemplate(templateId: number): Promise<null> {

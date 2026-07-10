@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Drawer, Empty, Input, Select, message } from 'antd'
-import type { GalleryOptions, GalleryType, GalleryTemplate } from '@/services/gallery'
+import { Drawer, Empty, Input, Select, message, Modal } from 'antd'
+import type { GalleryOptions, GalleryType, GalleryTemplate, GalleryImageModelsResponse } from '@/services/gallery'
 
 interface Props {
   open: boolean
@@ -8,16 +8,20 @@ interface Props {
   types: GalleryType[]
   options: GalleryOptions
   templates: GalleryTemplate[]
+  imageModels: GalleryImageModelsResponse
   initialChecked: string[]
   onConfirm: (checkedIds: string[]) => void
   onQuickAdd: (checkedIds: string[]) => void
   onApplyTemplate: (templateId: number) => void
   onDeleteTemplate: (templateId: number) => void
+  onRenameTemplate: (templateId: number, newName: string) => Promise<void>
   onCreateCustomTask: (payload: {
     name: string
     description: string
     files: File[]
-    model: string
+    provider_id: number | null
+    model_name: string | null
+    model_label: string
     resolution: string
     ratio: string
     count: number
@@ -29,8 +33,8 @@ type Tab = '推荐类型' | '自定义子任务' | '已保存模板'
 const { TextArea } = Input
 
 export default function PlannerDrawer({
-  open, onClose, types, options, templates, initialChecked,
-  onConfirm, onQuickAdd, onApplyTemplate, onDeleteTemplate, onCreateCustomTask,
+  open, onClose, types, options, templates, imageModels, initialChecked,
+  onConfirm, onQuickAdd, onApplyTemplate, onDeleteTemplate, onRenameTemplate, onCreateCustomTask,
 }: Props) {
   const [tab, setTab] = useState<Tab>('推荐类型')
   const [checked, setChecked] = useState<Set<string>>(new Set())
@@ -39,7 +43,9 @@ export default function PlannerDrawer({
   // 自定义子任务表单
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [model, setModel] = useState<string>(options?.output?.model?.[0] || 'Banana-pro')
+  const [providerId, setProviderId] = useState<number | null>(null)
+  const [modelName, setModelName] = useState<string | null>(null)
+  const [modelLabel, setModelLabel] = useState<string>('默认图片模型')
   const [resolution, setResolution] = useState<string>(options?.output?.resolution?.[0] || '1K')
   const [ratio, setRatio] = useState<string>(options?.output?.ratio?.[0] || '自适应尺寸')
   const [count, setCount] = useState<number>(options?.output?.count_default || 1)
@@ -48,10 +54,29 @@ export default function PlannerDrawer({
   const fileRef = useRef<HTMLInputElement>(null)
 
   const outputOptions = options?.output || {}
-  const modelOpts = (outputOptions.model || []).map((o: string) => ({ label: o, value: o }))
   const resolutionOpts = (outputOptions.resolution || []).map((o: string) => ({ label: o, value: o }))
   const ratioOpts = (outputOptions.ratio || []).map((o: string) => ({ label: o, value: o }))
   const showTypes = types.filter((t) => t.id !== 'custom')
+
+  // 当前模型下拉值：与 TypeSettingsModal 保持同一规则
+  const modelValue =
+    providerId != null && modelName
+      ? `${providerId}::${modelName}`
+      : '__default__'
+
+  const handleModelChange = (val: string) => {
+    if (val === '__default__') {
+      setProviderId(null)
+      setModelName(null)
+      setModelLabel('默认图片模型')
+      return
+    }
+    const [pid, mname] = val.split('::')
+    const p = imageModels.providers.find((pp) => pp.provider_id === Number(pid))
+    setProviderId(Number(pid))
+    setModelName(mname)
+    setModelLabel(p ? `${p.provider_name} · ${mname}` : mname)
+  }
 
   useEffect(() => {
     if (open) {
@@ -64,7 +89,9 @@ export default function PlannerDrawer({
   const resetCustomForm = () => {
     setName('')
     setDescription('')
-    setModel(outputOptions.model?.[0] || 'Banana-pro')
+    setProviderId(null)
+    setModelName(null)
+    setModelLabel('默认图片模型')
     setResolution(outputOptions.resolution?.[0] || '1K')
     setRatio(outputOptions.ratio?.[0] || '自适应尺寸')
     setCount(outputOptions.count_default || 1)
@@ -109,7 +136,9 @@ export default function PlannerDrawer({
         name: taskName,
         description: description.trim(),
         files,
-        model,
+        provider_id: providerId,
+        model_name: modelName,
+        model_label: modelLabel,
         resolution,
         ratio,
         count: Math.max(1, Math.min(count, 50)),
@@ -214,31 +243,44 @@ export default function PlannerDrawer({
                     <span>本地上传</span>
                   </button>
                   <button className="ctf-lib-btn" onClick={() => message.info('图片库功能开发中')}>图片库</button>
+                  {previews.map((url, idx) => (
+                    <div key={idx} className="ctf-preview">
+                      <img src={url} alt="" />
+                      <button className="ctf-remove" onClick={() => removeImage(idx)} title="移除">✕</button>
+                    </div>
+                  ))}
                 </div>
-                {previews.length > 0 && (
-                  <div className="ctf-previews">
-                    {previews.map((url, idx) => (
-                      <div key={idx} className="ctf-preview">
-                        <img src={url} alt="" />
-                        <button className="ctf-remove" onClick={() => removeImage(idx)} title="移除">✕</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
 
               <div className="ctf-grid">
                 <div className="ctf-field">
-                  <label><span className="ctf-icon">⚙</span>模型</label>
-                  <Select options={modelOpts} value={model} onChange={setModel} />
+                  <label><span className="ctf-icon">⚙</span>模型 <span style={{ fontSize: 12, color: 'var(--gb-ink-faint)', fontWeight: 400 }}>（AI 提供商图片模型）</span></label>
+                  <Select
+                    value={modelValue}
+                    placeholder="默认（自动选择）"
+                    style={{ width: '100%' }}
+                    options={[
+                      { label: '默认（自动选择 AI 提供商默认图片模型）', value: '__default__' },
+                      ...imageModels.providers.map((p) => ({
+                        label: p.provider_name,
+                        options: p.models.map((m) => ({ label: m.model_name, value: `${p.provider_id}::${m.model_name}` })),
+                      })),
+                    ]}
+                    onChange={handleModelChange}
+                  />
+                  {imageModels.providers.length === 0 && (
+                    <span style={{ fontSize: 12, color: 'var(--g-warn, #E0A106)', marginTop: 4, display: 'block' }}>
+                      尚未配置 AI 提供商的图片生成模型，将使用默认模型。
+                    </span>
+                  )}
                 </div>
                 <div className="ctf-field">
                   <label><span className="ctf-icon">📐</span>分辨率</label>
-                  <Select options={resolutionOpts} value={resolution} onChange={setResolution} />
+                  <Select options={resolutionOpts} value={resolution} onChange={setResolution} style={{ width: '100%' }} />
                 </div>
                 <div className="ctf-field">
                   <label><span className="ctf-icon">⬜</span>图片比例</label>
-                  <Select options={ratioOpts} value={ratio} onChange={setRatio} />
+                  <Select options={ratioOpts} value={ratio} onChange={setRatio} style={{ width: '100%' }} />
                 </div>
                 <div className="ctf-field">
                   <label><span className="ctf-icon">🖼</span>出图数量</label>
@@ -270,7 +312,17 @@ export default function PlannerDrawer({
             ) : (
               <div className="template-list">
                 {templates.map((tpl) => (
-                  <div key={tpl.id} className="template-card">
+                  <div
+                    key={tpl.id}
+                    className="template-card"
+                    onClick={() => { onApplyTemplate(tpl.id); onClose() }}
+                    title="点击添加到出图规划列表"
+                  >
+                    {tpl.cover_url && (
+                      <div className="template-cover">
+                        <img src={tpl.cover_url} alt="" />
+                      </div>
+                    )}
                     <div className="template-info">
                       <h4>{tpl.name}</h4>
                       <p>
@@ -280,14 +332,41 @@ export default function PlannerDrawer({
                     </div>
                     <div className="template-actions">
                       <button
-                        className="template-use"
-                        onClick={() => { onApplyTemplate(tpl.id); onClose() }}
-                      >选用该任务</button>
+                        className="tpl-btn-edit"
+                        title="修改模板名称"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const newName = window.prompt('修改模板名称', tpl.name)
+                          if (newName && newName.trim() && newName.trim() !== tpl.name) {
+                            onRenameTemplate(tpl.id, newName.trim())
+                          }
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                        </svg>
+                      </button>
                       <button
-                        className="template-delete"
+                        className="tpl-btn-delete"
                         title="删除模板"
-                        onClick={() => onDeleteTemplate(tpl.id)}
-                      >🗑</button>
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          Modal.confirm({
+                            title: '确认删除模板？',
+                            content: `将删除模板「${tpl.name}」，此操作不可恢复。`,
+                            okText: '删除',
+                            okType: 'danger',
+                            cancelText: '取消',
+                            onOk: () => onDeleteTemplate(tpl.id),
+                          })
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3,6 5,6 21,6" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m2 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 ))}

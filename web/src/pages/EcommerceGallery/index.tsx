@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { message, Modal, Spin, Input, Select } from 'antd'
+import { message, Modal, Spin, Input, Select, Image } from 'antd'
 import {
   getTypes, getShowcases, getDraft, getMyRecords, getTemplates,
   getImageModels,
   uploadImages, deleteImage, updateProject,
   createPlanItem, updatePlanItem, deletePlanItem,
-  generate, createTemplate, deleteTemplate, applyTemplate,
+  generate, createTemplate, deleteTemplate, applyTemplate, updateTemplate,
 } from '@/services/gallery'
 import type {
   GalleryType, GalleryOptions, GalleryProject, GalleryShowcase,
@@ -13,6 +13,7 @@ import type {
   GalleryImageModelsResponse,
 } from '@/services/gallery'
 import PlannerDrawer from './PlannerDrawer'
+import SaveTemplateModal from './SaveTemplateModal'
 import TypeSettingsModal from './TypeSettingsModal'
 import { PlanRow } from '@/components/gallery'
 import './gallery.css'
@@ -58,6 +59,15 @@ export default function EcommerceGallery() {
   const [modalOpen, setModalOpen] = useState(false)
   const [activeType, setActiveType] = useState<GalleryType | null>(null)
   const [activeItem, setActiveItem] = useState<GalleryPlanItem | undefined>(undefined)
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
+  const [pendingTemplate, setPendingTemplate] = useState<{
+    type_id: string
+    title: string
+    personal_settings: Record<string, string>
+    common_settings: Record<string, string>
+    output_settings: Record<string, any>
+    note: string
+  } | null>(null)
 
   const [generating, setGenerating] = useState(false)
   const [result, setResult] = useState<null | {
@@ -167,7 +177,9 @@ export default function EcommerceGallery() {
     name: string
     description: string
     files: File[]
-    model: string
+    provider_id: number | null
+    model_name: string | null
+    model_label: string
     resolution: string
     ratio: string
     count: number
@@ -185,7 +197,10 @@ export default function EcommerceGallery() {
       note: payload.description,
       personal_settings: { '任务名称': payload.name },
       output_settings: {
-        model: payload.model,
+        provider_id: payload.provider_id,
+        model_name: payload.model_name,
+        model_label: payload.model_label,
+        model: payload.model_label,
         resolution: payload.resolution,
         ratio: payload.ratio,
         count: payload.count,
@@ -204,7 +219,7 @@ export default function EcommerceGallery() {
     setModalOpen(true)
   }
 
-  const handleSaveSettings = async (payload: any, asTemplate = false) => {
+  const handleSaveSettings = async (payload: any) => {
     if (!project) return
     try {
       const existing = project.plan_items.find((i) => i.type_id === payload.type_id)
@@ -213,25 +228,53 @@ export default function EcommerceGallery() {
       } else {
         await createPlanItem(project.id, payload)
       }
-      if (asTemplate) {
-        const p = await refreshProject()
-        await createTemplate(`套图模板-${new Date().toLocaleDateString()}`, {
-          plan_items: (p.plan_items || []).map((i) => ({
-            type_id: i.type_id,
-            personal_settings: i.personal_settings,
-            common_settings: i.common_settings,
-            output_settings: i.output_settings,
-          })),
-          market_config: p.market_config,
-          output_config: p.output_config,
-          selling_points: p.selling_points,
-        })
-        setTemplates(await getTemplates())
-        message.success('已保存到模板')
-      } else {
-        await refreshProject()
-      }
+      await refreshProject()
       setModalOpen(false)
+    } catch (e) { /* 已提示 */ }
+  }
+
+  const handleSaveAsTemplate = (payload: {
+    type_id: string
+    title: string
+    personal_settings: Record<string, string>
+    common_settings: Record<string, string>
+    output_settings: Record<string, any>
+    note: string
+  }) => {
+    setPendingTemplate(payload)
+    setSaveTemplateOpen(true)
+  }
+
+  const handleSaveTemplate = async (data: { name: string; coverUrl: string | null }) => {
+    if (!pendingTemplate || !project) return
+    try {
+      await createTemplate(data.name, {
+        plan_items: [{
+          type_id: pendingTemplate.type_id,
+          title: pendingTemplate.title,
+          personal_settings: pendingTemplate.personal_settings,
+          common_settings: pendingTemplate.common_settings,
+          output_settings: pendingTemplate.output_settings,
+          note: pendingTemplate.note,
+          reference_images: [],
+        }],
+        market_config: project.market_config,
+        output_config: project.output_config,
+        selling_points: project.selling_points,
+      }, data.coverUrl)
+      setTemplates(await getTemplates())
+      message.success('已保存到模板')
+      setPendingTemplate(null)
+      setSaveTemplateOpen(false)
+      setModalOpen(false)
+    } catch (e) { /* 已提示 */ }
+  }
+
+  const handleRenameTemplate = async (templateId: number, newName: string) => {
+    try {
+      await updateTemplate(templateId, { name: newName })
+      setTemplates(await getTemplates())
+      message.success('模板名称已更新')
     } catch (e) { /* 已提示 */ }
   }
 
@@ -285,10 +328,14 @@ export default function EcommerceGallery() {
   const handleApplyTemplate = async (templateId: number) => {
     if (!project) return
     try {
-      await applyTemplate(templateId, project.id)
-      await refreshProject()
-      message.success('模板已应用到当前任务')
-    } catch (e) { /* 已提示 */ }
+      // 直接用 apply 返回的（已写入策划项的）项目更新界面，避免再依赖 getDraft 的时序
+      const updated = await applyTemplate(templateId, project.id)
+      setProject(updated)
+      const added = (updated.plan_items?.length ?? 0) - (project.plan_items?.length ?? 0)
+      message.success(added > 0 ? `模板已应用，新增 ${added} 个出图类型` : '模板已应用到当前任务')
+    } catch (e) {
+      message.error('应用模板失败，请重试')
+    }
   }
   const handleDeleteTemplate = async (templateId: number) => {
     try {
@@ -357,7 +404,7 @@ export default function EcommerceGallery() {
             <div className="thumbs">
               {project?.images.map((img) => (
                 <div key={img.id} className={`thumb ${img.original ? 'orig' : ''}`}>
-                  <img src={img.url} alt="" />
+                  <Image src={img.url} alt="" preview={{ mask: false }} />
                   {img.original && <span className="badge-orig">原图</span>}
                   <button className="rm" onClick={() => handleDeleteImage(img.id)}>×</button>
                 </div>
@@ -750,11 +797,13 @@ export default function EcommerceGallery() {
         types={types}
         options={options}
         templates={templates}
+        imageModels={imageModels}
         initialChecked={project?.plan_items.map((i) => i.type_id) || []}
         onConfirm={confirmDrawer}
         onQuickAdd={quickAddDrawer}
         onApplyTemplate={handleApplyTemplate}
         onDeleteTemplate={handleDeleteTemplate}
+        onRenameTemplate={handleRenameTemplate}
         onCreateCustomTask={createCustomTask}
       />
       <TypeSettingsModal
@@ -774,11 +823,20 @@ export default function EcommerceGallery() {
               }
             : null
         }
-        projectImages={project?.images || []}
         onSave={handleSaveSettings}
+        onSaveAsTemplate={handleSaveAsTemplate}
       />
 
-      {/* 生成结果预览 */}
+      <SaveTemplateModal
+        open={saveTemplateOpen}
+        onClose={() => {
+          setSaveTemplateOpen(false)
+          setPendingTemplate(null)
+        }}
+        defaultName={pendingTemplate?.title || ''}
+        projectImages={project?.images || []}
+        onSave={handleSaveTemplate}
+      />
       <Modal
         open={!!result}
         onCancel={() => setResult(null)}
