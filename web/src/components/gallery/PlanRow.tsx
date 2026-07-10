@@ -45,11 +45,11 @@ export function PlanRow({
             {fast ? '极速出图' : '自定义'}
           </span>
         </div>
-        {/* 第2行：参数摘要（精致胶囊标签） */}
+        {/* 第2行：参数摘要（精致胶囊标签 + 图标） */}
         <div className="pr-meta">
-          <span className="pr-chip">数量 <b>{count ?? 1}</b></span>
-          <span className="pr-chip">比例 <b>{ratio || (fast ? '自动' : '3:4')}</b></span>
-          <span className="pr-chip">分辨率 <b>{resolution || '1K'}</b></span>
+          <span className="pr-chip"><span className="pr-ci">🖼</span>数量 <b>{count ?? 1}</b></span>
+          <span className="pr-chip"><span className="pr-ci">⬜</span>比例 <b>{ratio || (fast ? '自动' : '3:4')}</b></span>
+          <span className="pr-chip"><span className="pr-ci">📐</span>分辨率 <b>{resolution || '1K'}</b></span>
         </div>
       </div>
       {/* 右侧：操作按钮组（固定宽度，永不压缩） */}

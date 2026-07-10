@@ -72,6 +72,8 @@ PLAN_TYPES: list[dict] = [
     {"id": "buyer", "title": "通用买家秀", "desc": "真实买家亲善氛围图", "points": 6, "minutes": 0.6},
     {"id": "promo", "title": "活动海报", "desc": "促销信息海报，用于投放", "fast": True,
      "hasResolution": True, "points": 3, "minutes": 0.3},
+    {"id": "custom", "title": "自定义子任务", "desc": "自由填写需求生成指定画面", "custom": True,
+     "points": 5, "minutes": 0.5},
 ]
 
 # 逐类型「个性化设置」字段。

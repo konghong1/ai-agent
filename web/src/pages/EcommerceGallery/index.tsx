@@ -65,7 +65,7 @@ export default function EcommerceGallery() {
   }>(null)
   const [loading, setLoading] = useState(true)
 
-  const [areaTab, setAreaTab] = useState<'results' | 'cases' | 'records'>('results')
+  const [areaTab, setAreaTab] = useState<'results' | 'cases'>('results')
   const [warnClosed, setWarnClosed] = useState(false)
 
   const fileRef = useRef<HTMLInputElement>(null)
@@ -120,6 +120,26 @@ export default function EcommerceGallery() {
   // ── 策划台 ──
   const openDrawer = () => setDrawerOpen(true)
 
+  // 极速添加：直接加入规划列表，不打开属性设置弹窗
+  const quickAddDrawer = async (checkedIds: string[]) => {
+    if (!project) return
+    const existing = new Set(project.plan_items.map((i) => i.type_id))
+    const toAdd = checkedIds.filter((id) => !existing.has(id))
+    if (toAdd.length === 0) {
+      message.info('所选类型已在规划列表中')
+      setDrawerOpen(false)
+      return
+    }
+    try {
+      for (const id of toAdd) {
+        await createPlanItem(project.id, { type_id: id })
+      }
+      await refreshProject()
+      message.success(`已极速添加 ${toAdd.length} 个类型到规划列表`)
+      setDrawerOpen(false)
+    } catch (e) { /* 已提示 */ }
+  }
+
   const confirmDrawer = async (checkedIds: string[]) => {
     if (!project) return
     const existing = new Set(project.plan_items.map((i) => i.type_id))
@@ -140,6 +160,39 @@ export default function EcommerceGallery() {
         setModalOpen(true)
       }
     } catch (e) { /* 已提示 */ }
+  }
+
+  // 自定义子任务：上传参考图 + 创建 custom 类型策划项
+  const createCustomTask = async (payload: {
+    name: string
+    description: string
+    files: File[]
+    model: string
+    resolution: string
+    ratio: string
+    count: number
+  }) => {
+    if (!project) return
+    let referenceImages: string[] = []
+    if (payload.files.length > 0) {
+      const res = await uploadImages(project.id, payload.files)
+      const latestProject = res[0] || project
+      const images = latestProject.images || []
+      referenceImages = images.slice(-payload.files.length).map((img: any) => img.url)
+    }
+    await createPlanItem(project.id, {
+      type_id: 'custom',
+      note: payload.description,
+      personal_settings: { '任务名称': payload.name },
+      output_settings: {
+        model: payload.model,
+        resolution: payload.resolution,
+        ratio: payload.ratio,
+        count: payload.count,
+      },
+      reference_images: referenceImages,
+    })
+    await refreshProject()
   }
 
   // ── 属性设置弹窗 ──
@@ -378,7 +431,7 @@ export default function EcommerceGallery() {
           </section>
 
           {/* ④ 全局输出配置 */}
-          <section className="config-section">
+          <section className="config-section output-config">
             <div className="config-head" onClick={(e) => {
               const grid = (e.currentTarget.nextElementSibling as HTMLElement)
               const hidden = grid.style.display === 'none'
@@ -502,24 +555,34 @@ export default function EcommerceGallery() {
                     .map((item, idx) => {
                       const t = types.find((x) => x.id === item.type_id)
                       const isFast = !!t?.fast
+                      const isCustom = item.type_id === 'custom'
+                      const customName = item.personal_settings?.['任务名称'] || item.note || '自定义子任务'
                       return (
                         <PlanRow
                           key={item.id}
                           index={idx + 1}
-                          name={typeTitle(types, item.type_id)}
+                          name={isCustom ? customName : typeTitle(types, item.type_id)}
                           fast={isFast}
                           count={Number(item.output_settings?.count) || 1}
                           ratio={item.output_settings?.ratio || (isFast ? '自动' : '3:4')}
                           resolution={item.output_settings?.resolution || '1K'}
                           onCopy={() => handleCopyItem(item)}
                           onDelete={() => handleDeleteItem(item.id)}
-                          onSettings={() => openSettings(item.type_id)}
+                          onSettings={isCustom ? undefined : () => openSettings(item.type_id)}
                         />
                       )
                     })}
                 </div>
               ) : (
-                <div className="plan-empty">暂未添加出图规划任务</div>
+                <div className="plan-empty">
+                  <div className="pe-ico">
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+                      <rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 15l5-5 4 4 3-3 6 6" /><circle cx="9" cy="9" r="1.6" />
+                    </svg>
+                  </div>
+                  <h4>暂无出图规划</h4>
+                  <p>点击上方「✦ AI 智能策划台」选择出图类型，或用「⚡ 极速添加」一键生成</p>
+                </div>
               )}
             </div>
 
@@ -551,8 +614,6 @@ export default function EcommerceGallery() {
           <div className="area-tabs">
             <button className={`area-tab ${areaTab === 'results' ? 'active' : ''}`} onClick={() => setAreaTab('results')}>✦ AI 创作结果</button>
             <button className={`area-tab ${areaTab === 'cases' ? 'active' : ''}`} onClick={() => setAreaTab('cases')}>📋 创作案例</button>
-            <span className="area-tab-spacer" />
-            <button className="area-link" onClick={() => setAreaTab('records')}>🕐 创作记录</button>
           </div>
 
           {areaTab === 'results' && (
@@ -679,36 +740,6 @@ export default function EcommerceGallery() {
               </div>
             </>
           )}
-
-          {areaTab === 'records' && (
-            <>
-              <div className="hero-text">
-                <h1>创作记录</h1>
-                <p>查看你生成的所有电商套图</p>
-              </div>
-              {records.length === 0 ? (
-                <div className="record-empty">
-                  <div className="re-ico">
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 15l5-5 4 4 3-3 6 6" /><circle cx="9" cy="9" r="1.6" />
-                    </svg>
-                  </div>
-                  <h4>尚无作品，快去创作吧</h4>
-                  <p>左侧完成配置后点击「立即生成」即可开始</p>
-                </div>
-              ) : (
-                <div className="rec-grid">
-                  {records.map((r) => (
-                    <div className="rec-card" key={r.id}>
-                      <img src={r.result_url || ''} alt={r.title} />
-                      <div className="rec-cap">{r.title}</div>
-                      {r.model_name && <div className="rec-model">🖼 {r.model_name}</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
         </main>
       </div>
 
@@ -717,11 +748,14 @@ export default function EcommerceGallery() {
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         types={types}
+        options={options}
         templates={templates}
         initialChecked={project?.plan_items.map((i) => i.type_id) || []}
         onConfirm={confirmDrawer}
+        onQuickAdd={quickAddDrawer}
         onApplyTemplate={handleApplyTemplate}
         onDeleteTemplate={handleDeleteTemplate}
+        onCreateCustomTask={createCustomTask}
       />
       <TypeSettingsModal
         open={modalOpen}

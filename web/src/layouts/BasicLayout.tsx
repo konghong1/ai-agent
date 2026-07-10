@@ -99,6 +99,7 @@ export default function BasicLayout() {
   const location = useLocation()
 
   const isChatPage = location.pathname === "/agents/chat"
+  const isGalleryPage = location.pathname === "/ecommerce-gallery"
 
   const { collapsed, toggleCollapsed } = useLayoutStore()
 
@@ -107,6 +108,7 @@ export default function BasicLayout() {
   const { user, logout } = useAuthStore()
 
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [winWidth, setWinWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1280)
 
 
 
@@ -122,6 +124,7 @@ export default function BasicLayout() {
 
     const handleResize = () => {
 
+      setWinWidth(window.innerWidth)
       if (window.innerWidth < 768) {
 
         setMobileOpen(false)
@@ -293,9 +296,9 @@ export default function BasicLayout() {
           // - 内容超出时，自动出现滚动条，顶栏与侧边栏保持固定
           height: `calc(100vh - ${isMobile ? 104 : 64}px)`,
 
-          // 聊天页自行管理内部滚动（其组件内已使用 overflowY: auto 区域），
-          // 故保持 hidden；其余页面（如 AI 提供商）由 Content 统一滚动。
-          overflow: isChatPage ? "hidden" : "auto",
+          // 聊天页与画廊页（宽屏，≥861px）自行管理内部滚动（组件内两栏各自 overflow-y: auto），
+          // 故保持 hidden；窄屏画廊退化为单栏整页滚动，其余页面由 Content 统一滚动。
+          overflow: (isChatPage || (isGalleryPage && winWidth > 860)) ? "hidden" : "auto",
 
           position: "relative", zIndex: 1,
 

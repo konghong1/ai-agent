@@ -1,0 +1,31 @@
+# ── Python (本地 Windows venv 绝不能进 Linux 镜像) ──
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# ── Node / 前端 (API 镜像不构建前端；运行时由 bind-mount 提供) ──
+node_modules/
+web/node_modules/
+web/dist/
+
+# ── 运行时数据 (应是 volume，不是构建输入) ──
+chroma_db/
+vector_db/
+uploads/
+*.db
+*.sqlite3
+
+# ── 杂项 / 文档 (不影响运行) ──
+.git/
+.workbuddy/
+docs/
+designs/
+疑问/
+verify_shots/
+tests/
+
+# 注意：不要忽略 docker/ —— compose 用 dockerfile: docker/Dockerfile.api 从构建上下文读取它

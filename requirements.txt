@@ -24,7 +24,8 @@ setuptools>=68.0.0
 wheel>=0.42.0
 langdetect>=1.0.9
 
-unstructured>=0.14.0
+# NOTE: `unstructured` was removed — it was never imported anywhere in app/.
+# If document parsing is needed, pdfminer.six / python-docx below already cover PDF/DOCX.
 openai>=1.30.0
 
 # Object storage (MinIO / S3) — required so generated media is actually

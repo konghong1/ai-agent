@@ -25,7 +25,16 @@ RUN pip install --no-cache-dir --prefix=/install \
     --timeout 600 --retries 10 \
     "setuptools>=68.0.0" "wheel>=0.42.0"
 
-# Then install project requirements
+# Install CPU-ONLY torch FIRST (version matched to the ML stack) so that
+# sentence-transformers / transformers do NOT pull the multi-GB CUDA 13 build.
+# The container runs on CPU (no `--gpus` / nvidia runtime in compose), so the
+# CUDA libs (nvidia-*-cu13, triton) are pure dead weight. Without this pin, pip
+# resolves `torch` on Linux to the CUDA wheel and the image balloons to ~12.7GB.
+RUN pip install --no-cache-dir --prefix=/install \
+    --timeout 600 --retries 10 \
+    "torch==2.13.0+cpu" --index-url https://download.pytorch.org/whl/cpu
+
+# Then install project requirements (torch already satisfied → no CUDA pull)
 RUN pip install --no-cache-dir --prefix=/install \
     --timeout 600 --retries 10 \
     -r requirements.txt
