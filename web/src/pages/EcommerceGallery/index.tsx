@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import { message, Modal, Spin, Input, Select, Image } from 'antd'
 import {
-  getTypes, getShowcases, getDraft, getMyRecords, getTemplates,
-  getImageModels,
+  getTypes, getDraft, getTemplates,
+  getImageModels, getTasks, getTask, updateTask, getShowcases, publishShowcase,
   uploadImages, deleteImage, updateProject,
   createPlanItem, updatePlanItem, deletePlanItem,
   generate, createTemplate, deleteTemplate, applyTemplate, updateTemplate,
 } from '@/services/gallery'
 import type {
-  GalleryType, GalleryOptions, GalleryProject, GalleryShowcase,
+  GalleryType, GalleryOptions, GalleryProject,
   GalleryRecord, GalleryTemplate, GalleryPlanItem,
-  GalleryImageModelsResponse,
+  GalleryImageModelsResponse, GalleryTask, GalleryShowcase,
 } from '@/services/gallery'
 import PlannerDrawer from './PlannerDrawer'
 import SaveTemplateModal from './SaveTemplateModal'
@@ -25,33 +25,153 @@ function typeTitle(types: GalleryType[], id: string): string {
 function isRealImage(url: string | null | undefined): boolean {
   if (!url) return false
   const u = url.trim()
-  if (!u.startsWith('http') && !u.startsWith('data:')) return false
-  const lower = u.toLowerCase()
-  // 过滤掉常见占位 / 渐变占位图
-  if (lower.includes('placeholder') || lower.includes('gradient') || lower.includes('svg') || lower.includes('svg+xml')) return false
-  return true
+  // 接受外链、base64、以及本系统生成的 /api/gallery/files/ 文件（含离线 SVG 占位图）
+  if (u.startsWith('http') || u.startsWith('data:') || u.startsWith('/api/gallery/files/')) return true
+  return false
 }
 
-function fallbackImg(seed: string, w: number, h: number): string {
-  return `https://picsum.photos/seed/${seed}/${w}/${h}`
+// 离线 SVG 占位图（data URI，无需网络），用于无真实图的兜底
+function placeholderImg(label: string): string {
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400'><rect width='100%' height='100%' fill='#F0EEE9'/><text x='50%' y='50%' font-family='sans-serif' font-size='15' fill='#908E98' text-anchor='middle' dominant-baseline='middle'>${label}</text></svg>`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
-function caseStripImages(sc: GalleryShowcase): string[] {
-  const orig = isRealImage(sc.original_url) ? sc.original_url : fallbackImg(`${sc.id}-orig`, 200, 200)
-  const rest = (sc.image_urls || []).slice(0, 3).map((u, i) =>
-    isRealImage(u) ? u : fallbackImg(`${sc.id}-${i}`, 200, 200)
+// 可点击放大 + 可下载的图片组件。
+// 真实成图用 antd <Image>（点击原生放大预览）；悬停叠加下载按钮，
+// 下载时通过 fetch 取 blob 再触发本地保存，避免跨域导致 a.download 失效。
+function PreviewableImage({ src, alt, className }: { src: string; alt?: string; className?: string }) {
+  const [hover, setHover] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const filename = (() => {
+    try {
+      const u = new URL(src, window.location.origin)
+      const p = u.pathname.split('/').pop() || 'image'
+      return p.includes('.') ? p : `${p}.png`
+    } catch {
+      return 'image.png'
+    }
+  })()
+  const handleDownload = async (e: MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    setBusy(true)
+    try {
+      const resp = await fetch(src, { method: 'GET' })
+      if (!resp.ok) throw new Error('fetch failed')
+      const blob = await resp.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = blobUrl
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 5000)
+    } catch {
+      message.info('下载失败，可右键图片保存')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div
+      className={`pv-img ${hover ? 'on' : ''}`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+    >
+      <Image src={src} alt={alt} preview={{ mask: false }} className={className} />
+      <button className={`pv-dl ${busy ? 'busy' : ''}`} title="下载图片" onClick={handleDownload}>
+        {busy ? (
+          <span className="pv-dl-spinner" />
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 3v12m0 0l-4-4m4 4l4-4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+          </svg>
+        )}
+      </button>
+    </div>
   )
-  while (rest.length < 3) rest.push(fallbackImg(`${sc.id}-${rest.length}`, 200, 200))
-  return [orig, ...rest]
+}
+
+// 查看单张图片的生成提示词。入口仅在后端 features.show_prompt 开启、且该图
+// 确实带有 prompt 时由调用方渲染（见任务卡片与作品详情）。
+function PromptBadge({ prompt }: { prompt: string }) {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(prompt)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1800)
+    } catch {
+      message.info('复制失败，请手动选择文本复制')
+    }
+  }
+  return (
+    <>
+      <button className="prompt-badge" onClick={() => setOpen(true)} title="查看这张图的生成提示词">
+        <svg className="prompt-badge-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2L13.8 9.2L21 11L13.8 12.8L12 20L10.2 12.8L3 11L10.2 9.2L12 2Z" />
+        </svg>
+        提示词
+      </button>
+      <Modal
+        open={open}
+        onCancel={() => setOpen(false)}
+        footer={null}
+        width={720}
+        className="g-modal prompt-modal"
+        title={null}
+      >
+        <div className="prompt-modal-header">
+          <div className="prompt-modal-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2L13.8 9.2L21 11L13.8 12.8L12 20L10.2 12.8L3 11L10.2 9.2L12 2Z" />
+            </svg>
+          </div>
+          <div className="prompt-modal-titles">
+            <h3>图片生成提示词</h3>
+            <p>基于当前配置与核心卖点自动组装</p>
+          </div>
+        </div>
+        <div className="prompt-modal-body">
+          <div className="prompt-text">{prompt}</div>
+        </div>
+        <div className="prompt-modal-footer">
+          <span className="prompt-meta">{prompt.length} 字 · 已随生成记录保存</span>
+          <button className="prompt-copy-btn" onClick={copy}>
+            {copied ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+            )}
+            {copied ? '已复制' : '复制提示词'}
+          </button>
+        </div>
+      </Modal>
+    </>
+  )
+}
+
+// 把一条创作案例（original + image_urls）拼成 4 格 strip，不足用空串占位
+function caseStripImages(sc: GalleryShowcase): string[] {
+  const arr = [sc.original_url, ...(sc.image_urls || [])]
+  while (arr.length < 4) arr.push('')
+  return arr.slice(0, 4)
+}
+
+function formatTaskTime(iso: string | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const pad = (n: number) => `${n}`.padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 export default function EcommerceGallery() {
   const [types, setTypes] = useState<GalleryType[]>([])
   const [options, setOptions] = useState<GalleryOptions>({ common: {}, market: {}, output: {}, showcase_categories: [] })
+  const [features, setFeatures] = useState<{ show_prompt?: boolean }>({})
   const [project, setProject] = useState<GalleryProject | null>(null)
-  const [showcases, setShowcases] = useState<GalleryShowcase[]>([])
-  const [showcaseCat, setShowcaseCat] = useState('全部')
-  const [records, setRecords] = useState<GalleryRecord[]>([])
   const [templates, setTemplates] = useState<GalleryTemplate[]>([])
   const [imageModels, setImageModels] = useState<GalleryImageModelsResponse>({ providers: [], default_image_model: null })
 
@@ -69,16 +189,35 @@ export default function EcommerceGallery() {
     note: string
   } | null>(null)
 
-  const [generating, setGenerating] = useState(false)
-  const [result, setResult] = useState<null | {
-    total_images: number; total_points: number; total_minutes: number; records: GalleryRecord[]
-  }>(null)
+  // 创作结果：每次「立即生成」对应一个后台任务，列表按时间倒序
+  const [tasks, setTasks] = useState<GalleryTask[]>([])
+  const [submitting, setSubmitting] = useState(false)
+  const [detailGroup, setDetailGroup] = useState<GalleryRecord[] | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // 创作案例：从创作结果发布上去、对外展示、可制作同款（真实数据，非假样图）
   const [areaTab, setAreaTab] = useState<'results' | 'cases'>('results')
+  const [showcases, setShowcases] = useState<GalleryShowcase[]>([])
+  const [showcaseCat, setShowcaseCat] = useState<string>('全部')
+  const [showcaseDetail, setShowcaseDetail] = useState<GalleryShowcase | null>(null)
+
+  // 发布到创作案例：弹窗状态
+  const [publishOpen, setPublishOpen] = useState(false)
+  const [publishTask, setPublishTask] = useState<GalleryTask | null>(null)
+  const [publishName, setPublishName] = useState('')
+  const [publishCat, setPublishCat] = useState('')
+  const [publishPicks, setPublishPicks] = useState<number[]>([])
+
+  // 任务重命名
+  const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
+  const [editingName, setEditingName] = useState('')
+
   const [warnClosed, setWarnClosed] = useState(false)
 
   const fileRef = useRef<HTMLInputElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  // 任务轮询用 ref：避免每次轮询都重建定时器
+  const tasksRef = useRef<GalleryTask[]>(tasks)
 
   const refreshProject = useCallback(async () => {
     const p = await getDraft()
@@ -89,16 +228,17 @@ export default function EcommerceGallery() {
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [t, p, sc, rec, tpl, im] = await Promise.all([
-        getTypes(), getDraft(), getShowcases(), getMyRecords(), getTemplates(), getImageModels(),
+      const [t, p, tpl, im, sc] = await Promise.all([
+        getTypes(), getDraft(), getTemplates(), getImageModels(), getShowcases(),
       ])
       setTypes(t.types)
       setOptions(t.options)
+      setFeatures(t.features ?? {})
       setProject(p)
-      setShowcases(sc)
-      setRecords(rec)
       setTemplates(tpl)
       setImageModels(im)
+      setShowcases(sc)
+      setTasks(await getTasks())
     } catch (e) {
       /* request 已统一提示 */
     } finally {
@@ -107,6 +247,22 @@ export default function EcommerceGallery() {
   }, [])
 
   useEffect(() => { loadAll() }, [loadAll])
+
+  // 每次渲染同步最新任务列表到 ref，供轮询定时器读取（定时器只创建一次）
+  tasksRef.current = tasks
+  // 后台任务轮询：每 1.5s 拉取进行中任务的最新进度（done/total/records）
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      const active = tasksRef.current.filter((t) => t.status === 'pending' || t.status === 'running')
+      if (active.length === 0) return
+      const updates = await Promise.all(active.map((t) => getTask(t.id).catch(() => null)))
+      const map = new Map<number, GalleryTask>()
+      updates.forEach((u) => { if (u) map.set(u.id, u) })
+      if (map.size === 0) return
+      setTasks((prev) => prev.map((t) => (map.has(t.id) ? map.get(t.id)! : t)))
+    }, 1500)
+    return () => clearInterval(timer)
+  }, [])
 
   // ── 上传产品图 ──
   const handleFiles = async (fileList: FileList | null) => {
@@ -295,6 +451,7 @@ export default function EcommerceGallery() {
         type_id: item.type_id,
         output_settings: { ...item.output_settings },
         reference_images: item.reference_images ? [...item.reference_images] : undefined,
+        product_image: item.product_image || '',
       })
       await refreshProject()
       message.success('已复制该类型')
@@ -303,25 +460,137 @@ export default function EcommerceGallery() {
     }
   }
 
-  // ── 生成 ──
+  // ── 生成：提交到后台任务，立即返回任务卡片，按钮保持可点 ──
   const handleGenerate = async () => {
     if (!project) return
     if (project.images.length === 0) { message.warning('请先上传至少一张产品原图'); return }
     if (project.plan_items.length === 0) { message.warning('请先在 AI 智能策划台选择要生成的类型'); return }
-    setGenerating(true)
+    setSubmitting(true)
     try {
-      const res = await generate(project.id)
-      setResult({
-        total_images: res.total_images,
-        total_points: res.total_points,
-        total_minutes: res.total_minutes,
-        records: res.records,
-      })
-      setRecords(await getMyRecords())
-      await refreshProject()
-      message.success(`套图生成完成，共 ${res.total_images} 张`)
+      const task = await generate(project.id)
+      setTasks((prev) => [task, ...prev])
+      message.success('已提交生成任务，正在后台创作中')
+      // 跳转到「创作结果」区域顶部，突出最新任务卡片
+      contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (e) {
+      /* 已提示 */
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  // 任务名显示：未命名（空或「未命名套图」）统一回退为「任务 {id}」序号
+  const displayTaskName = (t: GalleryTask): string => {
+    const n = (t.name || "").trim()
+    return n && n !== "未命名套图" ? n : `任务 ${t.id}`
+  }
+
+  // ── 重命名任务 ──
+  const startRename = (task: GalleryTask) => {
+    setEditingTaskId(task.id)
+    setEditingName(displayTaskName(task))
+  }
+  const submitRename = async (taskId: number) => {
+    if (!editingName.trim()) {
+      setEditingTaskId(null)
+      return
+    }
+    try {
+      const updated = await updateTask(taskId, { name: editingName.trim() })
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)))
+      message.success('任务名称已更新')
+    } catch (e) { /* 已提示 */ } finally {
+      setEditingTaskId(null)
+      setEditingName('')
+    }
+  }
+
+  // ── 发布到创作案例：从某次任务里勾选优秀成图发布 ──
+  const handleOpenPublish = (task: GalleryTask) => {
+    setPublishTask(task)
+    setPublishName(`${project?.name || '电商套图'} · 套图`)
+    setPublishCat((options.showcase_categories && options.showcase_categories[0]) || '其他')
+    // 默认勾选所有真实成图（跳过 SVG 占位/失败图）
+    setPublishPicks(
+      task.records
+        .filter((r) => r.result_url && !r.result_url.endsWith('.svg'))
+        .map((r) => r.id),
+    )
+    setPublishOpen(true)
+  }
+
+  const handlePublish = async () => {
+    if (!publishTask) return
+    if (publishPicks.length === 0) { message.warning('请至少勾选一张要发布的成图'); return }
+    try {
+      await publishShowcase({ name: publishName, category: publishCat, record_ids: publishPicks })
+      setShowcases(await getShowcases())
+      setPublishOpen(false)
+      setPublishTask(null)
+      setPublishPicks([])
+      message.success('已发布到创作案例')
+      setAreaTab('cases')
+      contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (e) { /* 已提示 */ }
-    finally { setGenerating(false) }
+  }
+
+  // ── 一键做同款：把当前详情套图的生成配置回填到左侧 ──
+  const handleSameStyle = async () => {
+    if (!project || !detailGroup || detailGroup.length === 0) return
+    setLoading(true)
+    try {
+      // 收集所有有快照的 record，并按 type_id 去重（保留同类型最后一条）
+      const snapshots = detailGroup
+        .map((r) => (r.plan_item_snapshot ? { ...r.plan_item_snapshot } : null))
+        .filter(Boolean) as GalleryRecord['plan_item_snapshot'][]
+
+      if (snapshots.length === 0) {
+        message.warning('该套图没有保存生成配置，无法做同款')
+        setDetailGroup(null)
+        return
+      }
+
+      const byType = new Map<string, NonNullable<GalleryRecord['plan_item_snapshot']>>()
+      snapshots.forEach((s) => {
+        if (s) byType.set(s.type_id || 'unknown', s)
+      })
+
+      // 1. 把全局输出配置带回：取第一张图快照中的 output_settings
+      const first = snapshots[0]
+      if (first?.output_settings) {
+        const oc = { ...project.output_config, ...first.output_settings }
+        await updateProjectSafe(project.id, { output_config: oc })
+        setProject((prev) => (prev ? { ...prev, output_config: oc } : prev))
+      }
+
+      // 2. 逐个类型：已存在则更新，不存在则创建
+      for (const [typeId, snapshot] of byType) {
+        if (typeId === 'unknown') continue
+        const existing = project.plan_items.find((i) => i.type_id === typeId)
+        // 注意：有意不回填 snapshot.product_image —— 它指向「源项目」的落盘文件，
+        // 在当前（同款）项目中无法解析。留空可让生成时正确回退到本项目的产品图[0]。
+        const payload = {
+          personal_settings: snapshot.personal_settings || {},
+          common_settings: snapshot.common_settings || {},
+          output_settings: snapshot.output_settings || {},
+          note: snapshot.note || '',
+          reference_images: snapshot.reference_images || [],
+        }
+        if (existing) {
+          await updatePlanItem(project.id, existing.id, payload)
+        } else {
+          await createPlanItem(project.id, { type_id: typeId, ...payload })
+        }
+      }
+
+      await refreshProject()
+      setDetailGroup(null)
+      message.success('同款配置已带入左侧，可直接点击「立即生成」')
+    } catch (e) {
+      message.error('带入同款配置失败，请重试')
+    } finally {
+      setLoading(false)
+    }
   }
 
   // ── 模板 ──
@@ -345,13 +614,14 @@ export default function EcommerceGallery() {
     } catch (e) { /* 已提示 */ }
   }
 
-  const filteredShowcases = showcaseCat === '全部'
-    ? showcases
-    : showcases.filter((s) => s.category === showcaseCat)
-
   const totalCount = project
     ? project.plan_items.reduce((sum, i) => sum + (Number(i.output_settings?.count) || 1), 0)
     : 0
+
+  // 创作案例：按分类筛选
+  const filteredShowcases = showcaseCat === '全部'
+    ? showcases
+    : showcases.filter((s) => s.category === showcaseCat)
 
   if (loading) {
     return (
@@ -501,11 +771,17 @@ export default function EcommerceGallery() {
                       : '__default__'
                   }
                   style={{ width: '100%' }}
+                  popupMatchSelectWidth={false}
+                  dropdownStyle={{ minWidth: 320 }}
                   options={[
-                    { label: '默认（自动选择 AI 提供商默认图片模型）', value: '__default__' },
+                    { label: '默认（自动选择 AI 提供商默认图片模型）', value: '__default__', title: '默认（自动选择 AI 提供商默认图片模型）' },
                     ...imageModels.providers.map((p) => ({
                       label: p.provider_name,
-                      options: p.models.map((m) => ({ label: m.model_name, value: `${p.provider_id}::${m.model_name}` })),
+                      options: p.models.map((m) => ({
+                        label: m.model_name,
+                        value: `${p.provider_id}::${m.model_name}`,
+                        title: `${p.provider_name} · ${m.model_name}`,
+                      })),
                     })),
                   ]}
                   onChange={async (val: string) => {
@@ -649,142 +925,204 @@ export default function EcommerceGallery() {
 
           {/* 生成按钮 */}
           <div className="gen-bar">
-            <button className="btn-generate" onClick={handleGenerate} disabled={generating || !project || project.images.length === 0 || project.plan_items.length === 0}>
-              ✦ {generating ? '生成中…' : '立即生成'}
-              <small>预计生成 {totalCount} 张 · 消耗 {project?.estimated_points || 0} 积分</small>
-            </button>
+          <button className="btn-generate" onClick={handleGenerate} disabled={submitting || !project || project.images.length === 0 || project.plan_items.length === 0}>
+            ✦ {submitting ? '提交中…' : '立即生成'}
+            <small>预计生成 {totalCount} 张</small>
+          </button>
           </div>
         </aside>
 
         {/* ========== RIGHT: Content Area ========== */}
-        <main className="content-area">
+        <main className="content-area" ref={contentRef}>
           <div className="area-tabs">
-            <button className={`area-tab ${areaTab === 'results' ? 'active' : ''}`} onClick={() => setAreaTab('results')}>✦ AI 创作结果</button>
-            <button className={`area-tab ${areaTab === 'cases' ? 'active' : ''}`} onClick={() => setAreaTab('cases')}>📋 创作案例</button>
+            <button className={`area-tab ${areaTab === 'results' ? 'active' : ''}`} onClick={() => setAreaTab('results')}>📋 创作结果</button>
+            <button className={`area-tab ${areaTab === 'cases' ? 'active' : ''}`} onClick={() => setAreaTab('cases')}>✦ 创作案例</button>
+            <span className="area-tab-spacer" />
           </div>
 
           {areaTab === 'results' && (
             <>
-              <div className="hero-text">
-                <h1>上传产品图，自动生成主图、详情页等整套电商图</h1>
-                <p>支持产品多角度，支持智能分析与自定义参数，适配大陆与跨境电商</p>
+              <div className="results-head">
+            <div className="rh-left">
+              <h2>创作结果</h2>
+              <p>每次「立即生成」都会创建一条后台创作任务，实时显示进度与产出图</p>
+            </div>
+            <div className="rh-stats">
+              <div className="rh-stat"><b>{tasks.reduce((s, t) => s + t.total, 0)}</b><span>计划张数</span></div>
+              <div className="rh-stat"><b>{tasks.reduce((s, t) => s + t.done, 0)}</b><span>已完成</span></div>
+              <div className="rh-stat"><b>{tasks.filter((t) => t.status === 'pending' || t.status === 'running').length}</b><span>进行中</span></div>
+            </div>
+          </div>
+
+          {tasks.length === 0 ? (
+            <div className="record-empty">
+              <div className="re-ico">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 15l5-5 4 4 3-3 6 6" /><circle cx="9" cy="9" r="1.6" />
+                </svg>
               </div>
-
-              {/* 完整电商套图 · 示例 */}
-              <section className="showcase-section set-feature">
-                <div className="showcase-head">
-                  <h3>完整电商套图 · 示例</h3>
-                  <span className="set-sub">一套标准详情页套图，覆盖从主图到海报的全链路</span>
-                </div>
-                <div className="set-showcase">
-                  <div className="set-hero">
-                    <img src="https://picsum.photos/seed/shirt0/600/800" alt="主图" />
-                    <span className="set-hero-badge">主图 · 3:4</span>
-                  </div>
-                  <div className="set-grid">
-                    <div className="set-card"><img src="https://picsum.photos/seed/shirt1/400/533" alt="" /><span className="set-card-label">① 产品白底图</span></div>
-                    <div className="set-card"><img src="https://picsum.photos/seed/shirt2/400/533" alt="" /><span className="set-card-label">② 场景实拍图</span></div>
-                    <div className="set-card"><img src="https://picsum.photos/seed/shirt3/400/533" alt="" /><span className="set-card-label">③ 细节特写图</span></div>
-                    <div className="set-card"><img src="https://picsum.photos/seed/shirt4/400/533" alt="" /><span className="set-card-label">④ 核心卖点图</span></div>
-                  </div>
-                </div>
-                <p className="set-note">示例展示 4 / 8 类 · 完整套图还包含：尺寸参数图、包装展示图、使用对比图、活动海报</p>
-              </section>
-
-              {/* 热门套图示例 */}
-              <section className="showcase-section">
-                <div className="showcase-head">
-                  <h3>热门套图示例</h3>
-                  <div className="showcase-tabs">
-                    {(options.showcase_categories || ['全部']).map((c) => (
-                      <button key={c} className={`showcase-tab ${showcaseCat === c ? 'on' : ''}`} onClick={() => setShowcaseCat(c)}>{c}</button>
-                    ))}
-                  </div>
-                </div>
-                <div className="gallery-grid">
-                  {filteredShowcases.map((sc) => {
-                    const strip = caseStripImages(sc)
-                    return (
-                      <article className="case-card" key={sc.id}>
-                        <div className="case-strip">
-                          <div className="cell orig"><img src={strip[0]} alt="" /><span className="badge-orig">原图</span></div>
-                          {strip.slice(1, 3).map((u, i) => (
-                            <div className="cell" key={i}><img src={u} alt="" /></div>
-                          ))}
-                          <div className={`cell ${sc.total_count > 4 ? 'more' : ''}`} data-n={Math.max(0, sc.total_count - 4)}><img src={strip[3] || strip[0]} alt="" /></div>
-                        </div>
-                        <div className="case-body">
-                          <div className="case-meta"><span className="cat-dot" /><span className="cat">{sc.category}</span></div>
-                          <p className="case-name">{sc.name}</p>
-                          <div className="case-actions">
-                            <button className="btn btn-secondary" onClick={() => message.info('已为你打开 AI 智能策划台，可选择类型生成同款。')}>查看详情</button>
-                            <button className="btn btn-primary" onClick={openDrawer}>生成同款</button>
-                          </div>
-                        </div>
-                      </article>
-                    )
-                  })}
-                </div>
-              </section>
-
-              {/* 创作记录 */}
-              {records.length === 0 ? (
-                <div className="record-empty">
-                  <div className="re-ico">
-                    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 15l5-5 4 4 3-3 6 6" /><circle cx="9" cy="9" r="1.6" />
-                    </svg>
-                  </div>
-                  <h4>尚无作品，快去创作吧</h4>
-                  <p>左侧完成配置后点击「立即生成」即可开始</p>
-                </div>
-              ) : (
-                <section className="showcase-section">
-                  <div className="showcase-head"><h3>创作记录</h3></div>
-                  <div className="rec-grid">
-                    {records.map((r) => (
-                      <div className="rec-card" key={r.id}>
-                        <img src={r.result_url || ''} alt={r.title} />
-                        <div className="rec-cap">{r.title}</div>
-                        {r.model_name && <div className="rec-model">🖼 {r.model_name}</div>}
+              <h4>尚无创作任务</h4>
+              <p>左侧完成产品图与出图规划后，点击「立即生成」即可开始后台创作</p>
+            </div>
+          ) : (
+            <div className="task-list">
+              {tasks.map((task) => {
+                const running = task.status === 'pending' || task.status === 'running'
+                const pct = task.total > 0 ? Math.round((task.done / task.total) * 100) : (running ? 0 : 100)
+                return (
+                  <article className={`task-card status-${task.status}`} key={task.id} id={`task-${task.id}`}>
+                    <div className="task-head">
+                      <div className="task-title">
+                        <span className="task-time" title={formatTaskTime(task.created_at)}>{formatTaskTime(task.created_at)}</span>
+                        {editingTaskId === task.id ? (
+                          <Input
+                            className="task-rename-input input"
+                            value={editingName}
+                            autoFocus
+                            maxLength={60}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            onBlur={() => submitRename(task.id)}
+                            onPressEnter={() => submitRename(task.id)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') { setEditingTaskId(null); setEditingName('') } }}
+                          />
+                        ) : (
+                          <span className="task-pname" onClick={() => startRename(task)} title="点击重命名">
+                            {displayTaskName(task)}
+                          </span>
+                        )}
+                        {editingTaskId !== task.id && (
+                          <button className="task-rename-btn" title="重命名任务" onClick={() => startRename(task)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                </section>
-              )}
-            </>
+                      <span className={`ts-badge ts-${task.status}`}>
+                        {task.status === 'pending' && '排队中'}
+                        {task.status === 'running' && '创作中'}
+                        {task.status === 'completed' && '已完成'}
+                        {task.status === 'partial' && `部分完成（失败 ${task.failed}）`}
+                        {task.status === 'failed' && '失败'}
+                      </span>
+                    </div>
+                    <div className="task-progress">
+                      <div className="tp-bar"><div className="tp-fill" style={{ width: `${pct}%` }} /></div>
+                      <div className="tp-meta">
+                        <span className="tp-count">{task.done} / {task.total} 张</span>
+                        {running && <span className="tp-dot">● 后台生成中</span>}
+                        {task.status === 'failed' && task.error && <span className="tp-err">⚠ {task.error}</span>}
+                      </div>
+                    </div>
+                    <div className="task-grid">
+                      {task.records.map((rec, i) => {
+                        const isBusy = rec.status === 'pending' || rec.status === 'processing'
+                        const isFailed = rec.status === 'failed'
+                        const showReal = rec.status === 'completed' && !!rec.result_url && isRealImage(rec.result_url)
+                        return (
+                          <div
+                            className={`task-cell ${isBusy ? 'is-busy' : ''} ${isFailed ? 'is-failed' : ''}`}
+                            key={rec.id ?? i}
+                          >
+                            {showReal ? (
+                              <PreviewableImage src={rec.result_url!} alt={rec.title || ''} className="cell-img" />
+                            ) : isBusy ? (
+                              <div className="cell-busy">
+                                <span className="cell-spinner" />
+                                <span className="cell-busy-text">
+                                  {rec.status === 'processing' ? `生成中 · 第 ${i + 1} 张` : '排队中'}
+                                </span>
+                              </div>
+                            ) : isFailed ? (
+                              <div className="cell-failed">
+                                <span className="cell-failed-text">生成失败</span>
+                              </div>
+                            ) : (
+                              <img src={placeholderImg(rec.title || '作品')} alt={rec.title || ''} />
+                            )}
+                            {features.show_prompt && rec.prompt && <PromptBadge prompt={rec.prompt} />}
+                          </div>
+                        )
+                      })}
+                      {Array.from({ length: Math.max(0, task.total - task.records.length) }).map((_, i) => (
+                        <div className={`task-cell ${running ? 'skeleton' : ''}`} key={`sk-${i}`} />
+                      ))}
+                    </div>
+                    {task.records.length > 0 && (
+                      <div className="task-actions">
+                        <button className="btn btn-secondary" onClick={() => setDetailGroup(task.records)}>查看详情</button>
+                        <button className="btn btn-primary" onClick={() => setDetailGroup(task.records)}>🎨 一键做同款</button>
+                      </div>
+                    )}
+                    {task.records.some((r) => r.result_url && !r.result_url.endsWith('.svg')) && (
+                      <button className="btn btn-publish" onClick={() => handleOpenPublish(task)}>📤 发布到创作案例</button>
+                    )}
+                  </article>
+                )
+              })}
+            </div>
+          )}
+          </>
           )}
 
           {areaTab === 'cases' && (
             <>
-              <div className="hero-text">
-                <h1>创作案例库</h1>
-                <p>浏览其他用户创作的优秀套图，获取灵感或一键复用</p>
+              <div className="results-head">
+                <div className="rh-left">
+                  <h2>创作案例</h2>
+                  <p>把创作结果里优秀的套图发布到这里对外展示，其他人可一键制作同款</p>
+                </div>
+                <div className="rh-stats">
+                  <div className="rh-stat"><b>{showcases.length}</b><span>案例数</span></div>
+                </div>
               </div>
-              <div className="gallery-grid">
-                {showcases.map((sc) => {
-                  const strip = caseStripImages(sc)
-                  return (
-                    <article className="case-card" key={sc.id}>
-                      <div className="case-strip">
-                        <div className="cell orig"><img src={strip[0]} alt="" /><span className="badge-orig">原图</span></div>
-                        {strip.slice(1, 3).map((u, i) => (
-                          <div className="cell" key={i}><img src={u} alt="" /></div>
-                        ))}
-                        <div className={`cell ${sc.total_count > 4 ? 'more' : ''}`} data-n={Math.max(0, sc.total_count - 4)}><img src={strip[3] || strip[0]} alt="" /></div>
-                      </div>
-                      <div className="case-body">
-                        <div className="case-meta"><span className="cat-dot" /><span className="cat">{sc.category}</span></div>
-                        <p className="case-name">{sc.name}</p>
-                        <div className="case-actions">
-                          <button className="btn btn-secondary" onClick={() => message.info('已为你打开 AI 智能策划台，可选择类型生成同款。')}>查看详情</button>
-                          <button className="btn btn-primary" onClick={openDrawer}>生成同款</button>
-                        </div>
-                      </div>
-                    </article>
-                  )
-                })}
-              </div>
+
+              <section className="showcase-section">
+                <div className="showcase-head">
+                  <div className="showcase-tabs">
+                    {(options.showcase_categories && options.showcase_categories.length ? ['全部', ...options.showcase_categories] : ['全部']).map((c) => (
+                      <button key={c} className={`showcase-tab ${showcaseCat === c ? 'on' : ''}`} onClick={() => setShowcaseCat(c)}>{c}</button>
+                    ))}
+                  </div>
+                </div>
+                {filteredShowcases.length === 0 ? (
+                  <div className="record-empty">
+                    <div className="re-ico">
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                        <rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 15l5-5 4 4 3-3 6 6" /><circle cx="9" cy="9" r="1.6" />
+                      </svg>
+                    </div>
+                    <h4>暂无创作案例</h4>
+                    <p>在「创作结果」里挑出优秀的套图，点击「发布到创作案例」即可展示在这里</p>
+                  </div>
+                ) : (
+                  <div className="gallery-grid">
+                    {filteredShowcases.map((sc) => {
+                      const strip = caseStripImages(sc)
+                      return (
+                        <article className="case-card" key={sc.id}>
+                          <div className="case-strip">
+                            <div className="cell orig"><img src={strip[0] && isRealImage(strip[0]) ? strip[0] : placeholderImg(sc.name)} alt="" /><span className="badge-orig">原图</span></div>
+                            {strip.slice(1, 3).map((u, i) => (
+                              <div className="cell" key={i}><img src={u && isRealImage(u) ? u : placeholderImg('')} alt="" /></div>
+                            ))}
+                            <div className={`cell ${sc.total_count > 4 ? 'more' : ''}`} data-n={Math.max(0, sc.total_count - 4)}><img src={strip[3] && isRealImage(strip[3]) ? strip[3] : placeholderImg('')} alt="" /></div>
+                          </div>
+                          <div className="case-body">
+                            <div className="case-meta"><span className="cat-dot" /><span className="cat">{sc.category}</span></div>
+                            <p className="case-name">{sc.name}</p>
+                            <div className="case-actions">
+                              <button className="btn btn-secondary" onClick={() => setShowcaseDetail(sc)}>查看详情</button>
+                              <button className="btn btn-primary" onClick={openDrawer}>生成同款</button>
+                            </div>
+                          </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
             </>
           )}
         </main>
@@ -814,6 +1152,7 @@ export default function EcommerceGallery() {
         item={activeItem}
         options={options}
         imageModels={imageModels}
+        projectImages={project?.images || []}
         inheritedModel={
           project?.output_config?.provider_id != null && project?.output_config?.model_name
             ? {
@@ -823,6 +1162,7 @@ export default function EcommerceGallery() {
               }
             : null
         }
+        marketConfig={project?.market_config || {}}
         onSave={handleSaveSettings}
         onSaveAsTemplate={handleSaveAsTemplate}
       />
@@ -838,22 +1178,147 @@ export default function EcommerceGallery() {
         onSave={handleSaveTemplate}
       />
       <Modal
-        open={!!result}
-        onCancel={() => setResult(null)}
+        open={!!detailGroup}
+        onCancel={() => setDetailGroup(null)}
         footer={null}
-        width={720}
-        className="g-modal"
-        title="套图生成完成"
+        width={1080}
+        className="g-modal detail-modal"
+        title="作品详情"
       >
-        {result && (
-          <div>
-            <p style={{ color: 'var(--gb-ink-soft)', marginBottom: 16 }}>
-              共生成 <b style={{ color: 'var(--gb-brand)' }}>{result.total_images}</b> 张，消耗 {result.total_points} 积分，预计 {result.total_minutes} 分钟。
-            </p>
-            <div className="result-grid">
-              {result.records.map((r) => (
-                <img key={r.id} src={r.result_url || ''} alt={r.title} title={r.title} />
+        {detailGroup && (
+          <div className="detail-modal-body">
+            <div className="detail-layout">
+              <div className="detail-product">
+                <div className="detail-img">
+                  {project?.images?.[0] ? (
+                    <PreviewableImage src={project.images[0].url} alt="产品原图" className="cell-img" />
+                  ) : (
+                    <img src={placeholderImg('产品原图')} alt="产品原图" />
+                  )}
+                </div>
+                <div className="detail-title">产品原图</div>
+              </div>
+              <div className="detail-right">
+                <div className="detail-grid">
+                  {detailGroup.map((r) => (
+                    <div className="detail-item" key={r.id}>
+                      <div className="detail-img">
+                        {r.result_url && isRealImage(r.result_url) ? (
+                          <PreviewableImage src={r.result_url} alt={r.title} className="cell-img" />
+                        ) : (
+                          <img src={placeholderImg(r.title || '作品')} alt={r.title} />
+                        )}
+                        {features.show_prompt && r.prompt && <PromptBadge prompt={r.prompt} />}
+                      </div>
+                      <div className="detail-title">{r.title}</div>
+                      <div className="detail-meta">
+                        <span>类型：{typeTitle(types, r.type_id)}</span>
+                        {r.model_name && <span>模型：{r.model_name}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="detail-actions">
+              <button className="btn btn-primary" onClick={handleSameStyle}>🎨 一键做同款</button>
+              <button className="btn btn-secondary" onClick={() => { message.success('分享链接已复制'); navigator.clipboard?.writeText(window.location.href).catch(() => {}); }}>🔗 复制分享链接</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* 发布到创作案例 */}
+      <Modal
+        open={publishOpen}
+        onCancel={() => setPublishOpen(false)}
+        onOk={handlePublish}
+        okText="发布到创作案例"
+        cancelText="取消"
+        title="发布到创作案例"
+        width={680}
+      >
+        {publishTask && (
+          <div className="publish-modal">
+            <div className="pf-field">
+              <label>案例标题</label>
+              <Input value={publishName} onChange={(e) => setPublishName(e.target.value)} placeholder="给这套图起个名字" />
+            </div>
+            <div className="pf-field">
+              <label>分类</label>
+              <Select
+                value={publishCat}
+                style={{ width: '100%' }}
+                options={(options.showcase_categories && options.showcase_categories.length ? options.showcase_categories : ['其他']).map((c) => ({ label: c, value: c }))}
+                onChange={(v) => setPublishCat(v)}
+              />
+            </div>
+            <div className="pf-field">
+              <label>选择要发布的成图（默认已勾选真实成图，示例占位图不可选）</label>
+              <div className="pf-picks">
+                {publishTask.records.map((rec) => {
+                  const real = !!rec.result_url && !rec.result_url.endsWith('.svg')
+                  const checked = publishPicks.includes(rec.id)
+                  return (
+                    <button
+                      type="button"
+                      key={rec.id}
+                      className={`pf-pick ${checked ? 'on' : ''} ${real ? '' : 'disabled'}`}
+                      disabled={!real}
+                      onClick={() => {
+                        if (!real) return
+                        setPublishPicks((prev) => (prev.includes(rec.id) ? prev.filter((x) => x !== rec.id) : [...prev, rec.id]))
+                      }}
+                    >
+                      <img src={real ? rec.result_url! : placeholderImg('示例')} alt={rec.title || ''} />
+                      <span className="pf-pick-title">{rec.title}</span>
+                      {!real && <span className="pf-pick-flag">示例图</span>}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* 创作案例 · 详情 */}
+      <Modal
+        open={!!showcaseDetail}
+        onCancel={() => setShowcaseDetail(null)}
+        footer={null}
+        width={960}
+        className="g-modal detail-modal"
+        title="创作案例详情"
+      >
+        {showcaseDetail && (
+          <div className="detail-modal-body">
+            <div className="detail-grid">
+              <div className="detail-item">
+                <div className="detail-img">
+                  {isRealImage(showcaseDetail.original_url) ? (
+                    <PreviewableImage src={showcaseDetail.original_url} alt="原图" className="cell-img" />
+                  ) : (
+                    <img src={placeholderImg(showcaseDetail.name)} alt="原图" />
+                  )}
+                </div>
+                <div className="detail-title">原图</div>
+              </div>
+              {showcaseDetail.image_urls.map((u, i) => (
+                <div className="detail-item" key={i}>
+                  <div className="detail-img">
+                    {isRealImage(u) ? (
+                      <PreviewableImage src={u} alt="" className="cell-img" />
+                    ) : (
+                      <img src={placeholderImg('')} alt="" />
+                    )}
+                  </div>
+                </div>
               ))}
+            </div>
+            <div className="detail-actions">
+              <button className="btn btn-primary" onClick={() => { setShowcaseDetail(null); openDrawer() }}>🎨 生成同款</button>
+              <button className="btn btn-secondary" onClick={() => setShowcaseDetail(null)}>关闭</button>
             </div>
           </div>
         )}

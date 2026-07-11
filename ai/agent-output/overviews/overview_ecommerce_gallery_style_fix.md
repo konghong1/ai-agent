@@ -38,8 +38,8 @@
 - `tsc --noEmit`：通过。
 - `vite build`：成功（4287 modules，dist 输出正常）。
 - 使用 headless Chrome 截取设计稿与运行中的 React 页面做对比：
-  - 设计稿：`verify_shots/design.png`
-  - 修复后页面：`verify_shots/app-final.png`
+  - 设计稿：`../verify-shots/design.png`
+  - 修复后页面：`../verify-shots/app-final.png`
   - 对比结论：顶栏、2 栏布局、暖色背景、示例套图、热门案例卡片已高度一致。
 
 ## 备注

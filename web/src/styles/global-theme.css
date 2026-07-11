@@ -155,6 +155,80 @@ html, body, #root {
   background: var(--ice-bg-hover) !important;
 }
 
+/* 让 antd Sider 的内部容器成为纵向 flex 容器，Logo 固定、菜单区可滚动。
+   注意：antd 会把 children 包在 .ant-layout-sider-children 里，而非 Sider 根元素，
+   所以 flex 必须加在这一层，加在 <Sider> 上不会生效。 */
+.main-layout .ant-layout-sider-children {
+  display: flex !important;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 左侧导航菜单区独立滚动 + 精致滚动条 */
+.sidebar-menu-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ice-border) transparent;
+}
+.sidebar-menu-wrap::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar-menu-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar-menu-wrap::-webkit-scrollbar-thumb {
+  background: var(--ice-border);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+.sidebar-menu-wrap::-webkit-scrollbar-thumb:hover {
+  background: var(--ice-primary);
+}
+
+/* 左侧 Logo 可点击切换，hover 状态提升质感 */
+.sidebar-logo {
+  transition: background-color 0.2s ease, padding 0.2s ease;
+}
+.sidebar-logo:hover {
+  background-color: var(--ice-bg-hover);
+}
+.sidebar-logo:active {
+  background-color: var(--ice-primary-10);
+}
+
+/* 3D 动画机器人：浮空 + 眼睛呼吸 + 天线脉冲 */
+.robot-logo:active {
+  transform: scale(0.92);
+}
+.robot-svg {
+  animation: robotFloat 2.6s ease-in-out infinite;
+}
+@keyframes robotFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.8px); }
+}
+.robot-svg .robot-eye {
+  animation: robotEye 2.2s ease-in-out infinite;
+}
+@keyframes robotEye {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+.robot-svg .robot-antenna {
+  animation: robotPulse 1.8s ease-in-out infinite;
+}
+@keyframes robotPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+/* 尊重用户的减少动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .robot-svg .robot-float,
+  .robot-svg .robot-eye,
+  .robot-svg .robot-antenna {
+    animation: none;
+  }
+}
+
 /* =========================================================
    Responsive overrides for mobile/tablet
    ========================================================= */

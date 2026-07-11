@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Modal, Input, Select, message } from 'antd'
-import type { GalleryType, GalleryOptions, GalleryPlanItem, GalleryImageModelsResponse } from '@/services/gallery'
-import { aiFill } from '@/services/gallery'
+import { useEffect, useRef, useState } from 'react'
+import { Modal, Input, Select, message, Upload } from 'antd'
+import type { UploadProps } from 'antd/es/upload'
+import type { GalleryType, GalleryOptions, GalleryPlanItem, GalleryImageModelsResponse, GalleryImage } from '@/services/gallery'
+import { aiFill, uploadImages, uploadPlanItemImage } from '@/services/gallery'
 
 interface Props {
   open: boolean
@@ -11,13 +12,17 @@ interface Props {
   item: GalleryPlanItem | undefined
   options: GalleryOptions
   imageModels: GalleryImageModelsResponse
+  projectImages: GalleryImage[]
   inheritedModel: { provider_id: number | null; model_name: string | null; model_label: string | null } | null
+  marketConfig?: Record<string, string>
   onSave: (payload: {
     type_id: string
     personal_settings: Record<string, string>
     common_settings: Record<string, string>
     output_settings: Record<string, any>
     note: string
+    reference_images: string[]
+    product_image: string
   }) => void
   onSaveAsTemplate: (payload: {
     type_id: string
@@ -26,6 +31,8 @@ interface Props {
     common_settings: Record<string, string>
     output_settings: Record<string, any>
     note: string
+    reference_images: string[]
+    product_image: string
   }) => void
 }
 
@@ -42,12 +49,36 @@ const COMMON_DEFAULTS: Record<string, string> = {
   target_market: '北美',
   ecommerce_platform: '亚马逊',
   visual_style: '高级质感风',
-  copy_need: '核心卖点文案',
   tone_tendency: '高饱和色调',
 }
 
+interface SingleTagSelectProps {
+  value?: string
+  options: { label: string; value: string }[]
+  onChange: (val: string) => void
+  placeholder?: string
+}
+
+function SingleTagSelect({ value, options, onChange, placeholder }: SingleTagSelectProps) {
+  const [open, setOpen] = useState(false)
+  return (
+    <Select
+      value={value}
+      placeholder={placeholder}
+      mode="tags"
+      maxTagCount={1}
+      style={{ width: '100%' }}
+      options={options}
+      open={open}
+      onDropdownVisibleChange={setOpen}
+      onSelect={() => setOpen(false)}
+      onChange={(v) => onChange(Array.isArray(v) ? v[v.length - 1] : v)}
+    />
+  )
+}
+
 export default function TypeSettingsModal({
-  open, onClose, projectId, type, item, options, imageModels, inheritedModel, onSave, onSaveAsTemplate,
+  open, onClose, projectId, type, item, options, imageModels, projectImages, inheritedModel, marketConfig = {}, onSave, onSaveAsTemplate,
 }: Props) {
   const [personal, setPersonal] = useState<Record<string, string>>({})
   const [common, setCommon] = useState<Record<string, string>>({ ...COMMON_DEFAULTS })
@@ -59,14 +90,34 @@ export default function TypeSettingsModal({
   const [ratio, setRatio] = useState('自适应尺寸')
   const [resolution, setResolution] = useState('1K')
   const [filling, setFilling] = useState(false)
+  const [referenceImages, setReferenceImages] = useState<string[]>([])
+  const [galleryOpen, setGalleryOpen] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  // 图片库选择模式：reference=参考图；product=单独商品图
+  const [galleryMode, setGalleryMode] = useState<'reference' | 'product'>('reference')
+  const productFileRef = useRef<HTMLInputElement | null>(null)
+
+  // 单独商品图：仅本策划项使用的主图（与项目产品图区分）。存储落盘文件名，回显由文件名拼 /api/gallery/files/
+  const [productImage, setProductImage] = useState('')
+  const [productImageUrl, setProductImageUrl] = useState('')
+  const [productUploading, setProductUploading] = useState(false)
 
   useEffect(() => {
     if (!open || !type) return
     setPersonal(item?.personal_settings ? { ...item.personal_settings } : {})
-    setCommon({ ...COMMON_DEFAULTS, ...(item?.common_settings || {}) })
+    // 通用设置默认值：硬编码兜底 → 外层市场配置 → 用户已保存的手动修改
+    const baseCommon = { ...COMMON_DEFAULTS }
+    for (const { key } of COMMON_KEYS) {
+      const v = marketConfig?.[key]
+      if (v) baseCommon[key] = v
+    }
+    setCommon({ ...baseCommon, ...(item?.common_settings || {}) })
     setNote(item?.note || '')
+    setReferenceImages(item?.reference_images ? [...item.reference_images] : [])
+    const piImg = item?.product_image || ''
+    setProductImage(piImg)
+    setProductImageUrl(piImg ? `/api/gallery/files/${piImg}` : '')
     const os = item?.output_settings || {}
-    // 优先用条目自身已保存的模型，否则继承全局选择
     const pid = os.provider_id ?? inheritedModel?.provider_id ?? null
     const mname = os.model_name ?? inheritedModel?.model_name ?? null
     const mlbl = os.model_label ?? inheritedModel?.model_label ?? '默认图片模型'
@@ -76,7 +127,7 @@ export default function TypeSettingsModal({
     setCount(os.count || 1)
     setRatio(os.ratio || '自适应尺寸')
     setResolution(os.resolution || '1K')
-  }, [open, type, item, inheritedModel])
+  }, [open, type, item, inheritedModel, marketConfig])
 
   if (!type) return null
 
@@ -88,7 +139,6 @@ export default function TypeSettingsModal({
         common_settings: common,
         note,
       })
-      // 仅填充为空的项，避免覆盖用户已填内容
       setPersonal((prev) => {
         const next = { ...prev }
         for (const [k, v] of Object.entries(res.personal_settings || {})) {
@@ -112,44 +162,35 @@ export default function TypeSettingsModal({
     }
   }
 
+  const buildPayload = () => ({
+    type_id: type.id,
+    personal_settings: personal,
+    common_settings: common,
+    output_settings: {
+      provider_id: providerId,
+      model_name: modelName,
+      model_label: modelLabel,
+      model: modelLabel,
+      count,
+      ratio,
+      resolution,
+    },
+    note,
+    reference_images: referenceImages,
+    product_image: productImage,
+  })
+
   const handleSave = () => {
-    onSave({
-      type_id: type.id,
-      personal_settings: personal,
-      common_settings: common,
-      output_settings: {
-        provider_id: providerId,
-        model_name: modelName,
-        model_label: modelLabel,
-        model: modelLabel,
-        count,
-        ratio,
-        resolution,
-      },
-      note,
-    })
+    onSave(buildPayload())
   }
 
   const handleSaveAsTemplate = () => {
     onSaveAsTemplate({
-      type_id: type.id,
+      ...buildPayload(),
       title: type.title,
-      personal_settings: personal,
-      common_settings: common,
-      output_settings: {
-        provider_id: providerId,
-        model_name: modelName,
-        model_label: modelLabel,
-        model: modelLabel,
-        count,
-        ratio,
-        resolution,
-      },
-      note,
     })
   }
 
-  // 当前模型下拉值
   const modelValue =
     providerId != null && modelName
       ? `${providerId}::${modelName}`
@@ -169,13 +210,101 @@ export default function TypeSettingsModal({
     setModelLabel(p ? `${p.provider_name} · ${mname}` : mname)
   }
 
+  // 参考图片上传
+  const uploadProps: UploadProps = {
+    accept: 'image/*',
+    showUploadList: false,
+    multiple: true,
+    beforeUpload: (file) => {
+      const isImage = file.type.startsWith('image/')
+      if (!isImage) { message.error('请上传图片文件'); return Upload.LIST_IGNORE }
+      return true
+    },
+    customRequest: async ({ file, onSuccess, onError }) => {
+      if (referenceImages.length >= 4) {
+        message.warning('最多上传 4 张参考图片')
+        onError?.(new Error('超过 4 张'))
+        return
+      }
+      setUploading(true)
+      try {
+        const res = await uploadImages(projectId, [file as File])
+        const img = res[0]?.images?.find((i: GalleryImage) => i.url) || res[0]?.images?.[0]
+        if (img?.url) {
+          setReferenceImages((prev) => [...prev, img.url].slice(0, 4))
+          message.success('上传成功')
+          onSuccess?.(img.url)
+        } else {
+          throw new Error('上传失败')
+        }
+      } catch (e) {
+        message.error('上传失败，请重试')
+        onError?.(e as Error)
+      } finally {
+        setUploading(false)
+      }
+    },
+  }
+
+  const removeReferenceImage = (idx: number) => {
+    setReferenceImages((prev) => {
+      const next = [...prev]
+      next.splice(idx, 1)
+      return next
+    })
+  }
+
+  // 单独商品图上传（不污染项目产品图列表）
+  const handleProductImageUpload = async (file: File) => {
+    setProductUploading(true)
+    try {
+      const res = await uploadPlanItemImage(projectId, file)
+      if (res?.filename) {
+        setProductImage(res.filename)
+        setProductImageUrl(res.url)
+        message.success('单独商品图已上传')
+      } else {
+        throw new Error('上传失败')
+      }
+    } catch (e) {
+      message.error('上传失败，请重试')
+    } finally {
+      setProductUploading(false)
+    }
+  }
+
+  const removeProductImage = () => {
+    setProductImage('')
+    setProductImageUrl('')
+  }
+
+  const addFromGallery = (url: string) => {
+    if (galleryMode === 'product') {
+      // url 形如 /api/gallery/files/{filename}，还原为落盘文件名存入 product_image
+      const fname = url.replace(/^.*\/api\/gallery\/files\//, '')
+      if (fname) {
+        setProductImage(fname)
+        setProductImageUrl(url)
+        message.success('已选用项目图作为单独商品图')
+      }
+      setGalleryOpen(false)
+      return
+    }
+    if (referenceImages.length >= 4) {
+      message.warning('最多选择 4 张参考图片')
+      return
+    }
+    setReferenceImages((prev) => [...prev, url].slice(0, 4))
+    setGalleryOpen(false)
+  }
+
   return (
     <Modal
       open={open}
       onCancel={onClose}
       footer={null}
       width={typeof window !== 'undefined' && window.innerWidth < 820 ? '100%' : 960}
-      className="g-modal"
+      className="g-modal type-settings-modal"
       destroyOnClose
       title={null}
     >
@@ -200,11 +329,20 @@ export default function TypeSettingsModal({
                 {type.personal.map((f) => (
                   <div className="pf-row" key={f.label}>
                     <label>{f.label}</label>
-                    <Input
-                      value={personal[f.label] || ''}
-                      placeholder={f.placeholder || '请选择，或直接输入'}
-                      onChange={(e) => setPersonal((p) => ({ ...p, [f.label]: e.target.value }))}
-                    />
+                    {f.options && f.options.length > 0 ? (
+                      <SingleTagSelect
+                        value={personal[f.label] || undefined}
+                        placeholder={f.placeholder || '请选择，或直接输入'}
+                        options={f.options.map((o) => ({ label: o, value: o }))}
+                        onChange={(v) => setPersonal((p) => ({ ...p, [f.label]: v }))}
+                      />
+                    ) : (
+                      <Input
+                        value={personal[f.label] || ''}
+                        placeholder={f.placeholder || '请选择，或直接输入'}
+                        onChange={(e) => setPersonal((p) => ({ ...p, [f.label]: e.target.value }))}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -222,13 +360,11 @@ export default function TypeSettingsModal({
                 {COMMON_KEYS.map(({ key, label }) => (
                   <div className="pf-row" key={key}>
                     <label>{label}</label>
-                    <Select
+                    <SingleTagSelect
                       value={common[key] || undefined}
                       placeholder="请选择，或直接输入"
-                      mode="tags"
-                      style={{ width: '100%' }}
-                      options={(options.common[key] || []).map((o) => ({ label: o, value: o }))}
-                      onChange={(v: string | string[]) => setCommon((c) => ({ ...c, [key]: Array.isArray(v) ? v[v.length - 1] : v }))}
+                      options={(options.common[key] || []).map((o: string) => ({ label: o, value: o }))}
+                      onChange={(v) => setCommon((c) => ({ ...c, [key]: v }))}
                     />
                   </div>
                 ))}
@@ -236,7 +372,7 @@ export default function TypeSettingsModal({
             </div>
           </div>
 
-          {/* 右栏：补充说明 + 出图设置 */}
+          {/* 右栏：补充说明 + 出图设置 + 参考图片 */}
           <div className="modal-col">
             <div className="ms-block">
               <h4>补充说明</h4>
@@ -259,11 +395,17 @@ export default function TypeSettingsModal({
                     value={modelValue}
                     style={{ width: '100%' }}
                     placeholder="默认（自动选择）"
+                    popupMatchSelectWidth={false}
+                    dropdownStyle={{ minWidth: 320 }}
                     options={[
-                      { label: '默认（自动选择 AI 提供商默认图片模型）', value: '__default__' },
+                      { label: '默认（自动选择 AI 提供商默认图片模型）', value: '__default__', title: '默认（自动选择 AI 提供商默认图片模型）' },
                       ...imageModels.providers.map((p) => ({
                         label: p.provider_name,
-                        options: p.models.map((m) => ({ label: m.model_name, value: `${p.provider_id}::${m.model_name}` })),
+                        options: p.models.map((m) => ({
+                          label: m.model_name,
+                          value: `${p.provider_id}::${m.model_name}`,
+                          title: `${p.provider_name} · ${m.model_name}`,
+                        })),
                       })),
                     ]}
                     onChange={handleModelChange}
@@ -303,6 +445,84 @@ export default function TypeSettingsModal({
               </div>
             </div>
 
+            <div className="ms-block">
+              <h4>参考图片 <span className="ms-note">（可选，最多可上传 4 张）</span></h4>
+              <div className="ref-upload">
+                <div className="ref-upload-box">
+                  <div className="ref-upload-actions">
+                    <Upload {...uploadProps} disabled={uploading || referenceImages.length >= 4}>
+                      <button className="ref-upload-btn" disabled={uploading || referenceImages.length >= 4}>
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                          <polyline points="17 8 12 3 7 8" />
+                          <line x1="12" y1="3" x2="12" y2="15" />
+                        </svg>
+                        <span>{uploading ? '上传中…' : '本地上传'}</span>
+                      </button>
+                    </Upload>
+                    <button className="ref-lib-btn" onClick={() => { setGalleryMode('reference'); setGalleryOpen(true) }} disabled={referenceImages.length >= 4}>
+                      图片库
+                    </button>
+                  </div>
+                  <div className="ref-preview-list">
+                    {referenceImages.map((url, idx) => (
+                      <div className="ref-preview" key={`${url}-${idx}`}>
+                        <img src={url} alt="参考图片" />
+                        <button className="ref-remove" onClick={() => removeReferenceImage(idx)} title="移除">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 单独商品图（选填）：仅本策划项使用，不传则回退项目产品图 */}
+            <div className="ms-block">
+              <h4>单独商品图 <span className="ms-note">（选填，不传则使用项目产品图）</span></h4>
+              <p className="ms-note">为该出图类型单独指定一张商品主图，生成时优先使用它（其余类型仍用项目产品图）。</p>
+              <div className="ref-upload">
+                <div className="ref-upload-box">
+                  <div className="ref-upload-actions">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      ref={(el) => { productFileRef.current = el }}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0]
+                        if (f) handleProductImageUpload(f)
+                        e.target.value = ''
+                      }}
+                    />
+                    <button
+                      className="ref-upload-btn"
+                      disabled={productUploading}
+                      onClick={() => productFileRef.current?.click()}
+                    >
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 0 01-2-2v-4" />
+                        <polyline points="17 8 12 3 7 8" />
+                        <line x1="12" y1="3" x2="12" y2="15" />
+                      </svg>
+                      <span>{productUploading ? '上传中…' : '上传单独商品图'}</span>
+                    </button>
+                    {projectImages.length > 0 && (
+                      <button className="ref-lib-btn" onClick={() => { setGalleryMode('product'); setGalleryOpen(true) }}>
+                        从项目图选择
+                      </button>
+                    )}
+                  </div>
+                  {productImageUrl && (
+                    <div className="ref-preview-list">
+                      <div className="ref-preview">
+                        <img src={productImageUrl} alt="单独商品图" />
+                        <button className="ref-remove" onClick={removeProductImage} title="移除">✕</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -311,6 +531,29 @@ export default function TypeSettingsModal({
           <button className="btn-template" onClick={handleSaveAsTemplate}>另存为模板</button>
         </div>
       </div>
+
+      <Modal
+        open={galleryOpen}
+        onCancel={() => setGalleryOpen(false)}
+        footer={null}
+        title={galleryMode === 'product' ? '选择单独商品图' : '图片库'}
+        width={720}
+        className="g-modal gallery-picker-modal"
+      >
+        <div className="gallery-picker">
+          {projectImages.length === 0 ? (
+            <p className="gp-empty">暂无项目图片，请先上传产品图。</p>
+          ) : (
+            <div className="gp-grid">
+              {projectImages.map((img) => (
+                <div className="gp-item" key={img.id} onClick={() => addFromGallery(img.url)}>
+                  <img src={img.url} alt={img.filename} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
     </Modal>
   )
 }

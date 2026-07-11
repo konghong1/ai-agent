@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -420,6 +421,9 @@ class GalleryProject(TimestampMixin, Base):
     records: Mapped[list["GalleryRecord"]] = relationship(
         back_populates="project", cascade="all, delete-orphan", order_by="GalleryRecord.created_at"
     )
+    tasks: Mapped[list["GalleryTask"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan", order_by="GalleryTask.created_at"
+    )
 
 
 class GalleryProjectImage(TimestampMixin, Base):
@@ -461,6 +465,8 @@ class GalleryPlanItem(TimestampMixin, Base):
     note: Mapped[str] = mapped_column(Text, default="")
     # 参考图文件名列表（落盘于 uploads/gallery/）
     reference_images: Mapped[list] = mapped_column(SA_JSON, default=list)
+    # 单独商品图（仅本策划项使用的主图）：落盘文件名；为空则生成时回退到项目产品图[0]
+    product_image: Mapped[Optional[str]] = mapped_column(String(512), default="")
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
 
     project: Mapped["GalleryProject"] = relationship(back_populates="plan_items")
@@ -499,8 +505,41 @@ class GalleryRecord(TimestampMixin, Base):
     provider_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     provider_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 生成时刻的 plan_item 完整配置快照，便于「一键做同款」复用
+    plan_item_snapshot: Mapped[dict | None] = mapped_column(SA_JSON, nullable=True, default=None)
+    # 关联的异步生成任务（每次「立即生成」对应一个任务）
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("gallery_tasks.id", ondelete="SET NULL"), nullable=True, index=True)
 
     project: Mapped["GalleryProject"] = relationship(back_populates="records")
+    task: Mapped["GalleryTask"] = relationship(back_populates="records")
+
+
+class GalleryTask(TimestampMixin, Base):
+    """一次「立即生成」对应的异步任务。
+
+    在后台 worker 中执行，逐步生成图片并写入 GalleryRecord（带 task_id），
+    前端轮询该任务的进度（done/total）与已生成图片。
+    """
+
+    __tablename__ = "gallery_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("gallery_projects.id", ondelete="CASCADE"), index=True)
+    # pending -> running -> completed / failed / partial
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # 任务名称（用户可重命名）
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 计划生成的总图数 / 已完成 / 失败
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    done: Mapped[int] = mapped_column(Integer, default=0)
+    failed: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    project: Mapped["GalleryProject"] = relationship(back_populates="tasks")
+    records: Mapped[list["GalleryRecord"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan", order_by="GalleryRecord.created_at"
+    )
 
 
 class GalleryShowcase(TimestampMixin, Base):
@@ -514,5 +553,26 @@ class GalleryShowcase(TimestampMixin, Base):
     original_url: Mapped[str] = mapped_column(String(1000), default="")
     image_urls: Mapped[list] = mapped_column(SA_JSON, default=list)
     total_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class GalleryConfig(TimestampMixin, Base):
+    """电商套图模块的「固定配置」持久化表（落库）。
+
+    原本所有策划类型 / 个性化字段（含下拉选项）/ 通用·市场·输出选项 / 套图种子
+    都硬编码在 ``app.gallery_config`` 的 Python 常量里。一旦镜像或运行环境重置、
+    或需要可运营编辑，配置就「消失」。本表把这份固定配置落库，成为唯一可恢复的来源：
+
+    - ``config_key`` 唯一，如 ``plan_types`` / ``type_personal`` / ``common_options`` /
+      ``market_options`` / ``output_options`` / ``showcase_categories`` / ``showcase_seed``
+    - ``config_value`` 存对应 Python 常量的 JSON 序列化值
+    - 启动时由 ``seed_gallery_config`` 幂等写入；运行时优先从本表读取，缺失时回退代码常量
+    """
+
+    __tablename__ = "gallery_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_key: Mapped[str] = mapped_column(String(60), unique=True, index=True)
+    config_value: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+    description: Mapped[str] = mapped_column(String(200), default="")
 
 

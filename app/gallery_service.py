@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import base64
 import logging
+import mimetypes
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -24,10 +26,14 @@ from app.gallery_config import (
     estimate_cost,
     get_plan_type,
 )
+from app import gallery_prompt
 
 logger = logging.getLogger(__name__)
 
 # uploads/gallery/ 根目录（与 app/services.py 的 UPLOAD_DIR 平级）
+from app.http_client import download_bytes_with_fallback
+from app.storage import _downscale_image_bytes
+
 GALLERY_UPLOAD_ROOT = Path(__file__).resolve().parents[1] / "uploads" / "gallery"
 
 _ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
@@ -47,6 +53,30 @@ def _ensure_dirs() -> None:
 def _safe_ext(filename: str) -> str:
     ext = Path(filename).suffix.lower()
     return ext if ext in _ALLOWED_IMAGE_EXT else ".png"
+
+
+def _gallery_file_data_url(filename: str) -> str | None:
+    """把 gallery 本地文件内联为 base64 ``data:`` URL。
+
+    上游图片模型拉不到本地 ``/api/gallery/files/...`` 地址，参考图/商品图
+    必须是 base64。这里读取本地盘文件、按需压缩后返回 ``data:`` URL；
+    文件不存在或损坏时返回 ``None``（调用方据此跳过该参考图）。
+    """
+    p = resolve_file(filename)
+    if not p:
+        return None
+    try:
+        raw = p.read_bytes()
+    except Exception:
+        return None
+    if not raw:
+        return None
+    shrunk = _downscale_image_bytes(raw)
+    mime = "image/jpeg" if shrunk is not raw else (mimetypes.guess_type(filename)[0] or "image/png")
+    try:
+        return f"data:{mime};base64,{base64.b64encode(shrunk).decode()}"
+    except Exception:
+        return None
 
 
 def resolve_file(filename: str) -> Path | None:
@@ -71,6 +101,22 @@ def save_uploaded_image(project_id: int, data: bytes, original_name: str) -> dic
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return {"filename": fname, "url": f"/api/gallery/files/{fname}", "size": len(data)}
+
+
+def save_plan_item_image(project_id: int, data: bytes, original_name: str) -> dict:
+    """保存策划项「单独商品图」。
+
+    与 ``save_uploaded_image`` 的区别：不写入 ``GalleryProjectImage`` 行，
+    因此不会污染项目产品图列表（项目产品图列表只用于「统一上传」入口）。
+    返回 {filename, url}，落盘于 ``projects/{project_id}/items/``。
+    """
+    _ensure_dirs()
+    ext = _safe_ext(original_name)
+    fname = f"projects/{project_id}/items/{uuid.uuid4().hex}{ext}"
+    path = GALLERY_UPLOAD_ROOT / fname
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    return {"filename": fname, "url": f"/api/gallery/files/{fname}"}
 
 
 def _hue_from_key(key: str) -> int:
@@ -251,6 +297,7 @@ def add_plan_item(db: Session, user: models.User, project_id: int, payload: dict
         output_settings=payload.get("output_settings", {}) or {},
         note=payload.get("note", "") or "",
         reference_images=payload.get("reference_images", []) or [],
+        product_image=payload.get("product_image", "") or "",
     )
     db.add(item)
     db.commit()
@@ -385,6 +432,7 @@ def apply_template_to_project(db: Session, user: models.User, project_id: int, t
             output_settings=pi.get("output_settings", {}) or {},
             note=pi.get("note", "") or "",
             reference_images=pi.get("reference_images", []) or [],
+            product_image=pi.get("product_image", "") or "",
         ))
     if payload.get("market_config"):
         proj.market_config = payload["market_config"]
@@ -411,8 +459,6 @@ def ai_fill_suggestion(project: models.GalleryProject, type_id: str, current: di
 
     # 通用设置建议
     common = dict(current.get("common_settings", {}) or {})
-    if project.selling_points and not common.get("copy_need"):
-        common["copy_need"] = "核心卖点文案"
     market = project.market_config or {}
     if market.get("ecommerce_platform") and not common.get("ecommerce_platform"):
         common["ecommerce_platform"] = market["ecommerce_platform"]
@@ -449,37 +495,21 @@ def ai_fill_suggestion(project: models.GalleryProject, type_id: str, current: di
 # ─────────────────────────────────────────────────────────────
 
 def _build_prompt(project: models.GalleryProject, item: models.GalleryPlanItem, model_name: str | None = None) -> str:
-    t = get_plan_type(item.type_id)
-    title = t["title"] if t else item.type_id
-    parts = [f"为电商商品生成【{title}】。"]
-    if project.selling_points:
-        parts.append(f"核心卖点：{project.selling_points}。")
-    ps = item.personal_settings or {}
-    if ps:
-        kv = "；".join(f"{k}：{v}" for k, v in ps.items() if v)
-        if kv:
-            parts.append(f"个性化要求：{kv}。")
-    cs = item.common_settings or {}
-    if cs.get("target_market"):
-        parts.append(f"目标市场：{cs['target_market']}。")
-    if cs.get("visual_style"):
-        parts.append(f"视觉风格：{cs['visual_style']}。")
-    if cs.get("tone_tendency"):
-        parts.append(f"色调：{cs['tone_tendency']}。")
-    if item.note:
-        parts.append(f"补充说明：{item.note}。")
-    # 记录所选模型，确保「所有配置都有记录」
-    if model_name:
-        parts.append(f"使用模型：{model_name}。")
-    parts.append("输出高质量电商主图，白底或场景化，符合平台规范。")
-    return " ".join(parts)
+    """组装图片生成提示词（委派给提示词生成引擎）。
+
+    历史实现是字符串拼接，易出现「允许文字 / 禁止文字」自相矛盾、抽象词未量化、
+    缺市场 / 平台适配等问题。现统一委托 ``app.gallery_prompt.build_prompt`` 完成
+    Resolver → CopyPolicy → Assembler → Linter 全流程，函数签名保持不变。
+    """
+    return gallery_prompt.build_prompt(project, item, model_name=model_name)
 
 
 def list_image_models(db: Session, user: models.User) -> dict:
     """返回当前用户「已启用」的图片生成模型，按提供商分组。
 
-    供前端「模型」下拉框动态渲染 —— 取代原先硬编码的模型名列表，
-    确保用户在「AI 提供商」中配置的图片模型才是可选范围。
+    仅返回当前用户自己配置的图片模型——不跨用户共享。若用户未配置任何
+    图片模型，返回空列表，由前端提示去「AI 提供商」中添加，绝不拿其它
+    用户的模型来兜底。
     """
     rows = db.execute(
         select(models.Provider, models.ProviderModel)
@@ -524,8 +554,8 @@ def _resolve_image_model(
 ) -> tuple[models.Provider | None, models.ProviderModel | None]:
     """解析出图所用的 (Provider, ProviderModel)。
 
-    优先级：
-    1. 显式指定的 provider_id + model_name（用户在前端选择的 AI 提供商图片模型）
+    只解析当前用户「自己」的模型，绝不跨用户使用他人模型：
+    1. 显式指定的 provider_id + model_name（必须属于当前用户）
     2. 用户的默认图片模型（ProviderModel.is_default_image）
     3. 均未找到 → 返回 (None, None)，由调用方降级到离线 SVG 占位图
     """
@@ -560,6 +590,38 @@ def _resolve_image_model(
     return None, None
 
 
+def _save_generated_image(url: str) -> str | None:
+    """把 AI 提供商返回的临时图片下载到本地 ``uploads/gallery/results/``。
+
+    返回本地相对文件名（如 ``results/xxx.png``），失败返回 ``None``。
+    本地持久化后，下载/预览都走同源 ``/api/gallery/files/``，避免跨域。
+    """
+    try:
+        data, content_type = download_bytes_with_fallback(url, timeout=60)
+        if not data:
+            return None
+    except Exception:
+        return None
+
+    ext = ".png"
+    ct = (content_type or '').lower()
+    low = url.lower()
+    if ct.endswith('jpeg') or ct.endswith('jpg') or '.jpg' in low or '.jpeg' in low:
+        ext = ".jpg"
+    elif ct.endswith('webp') or '.webp' in low:
+        ext = ".webp"
+    elif ct.endswith('png') or '.png' in low:
+        ext = ".png"
+    fname = f"results/{uuid.uuid4().hex}{ext}"
+    _ensure_dirs()
+    path = GALLERY_UPLOAD_ROOT / fname
+    try:
+        path.write_bytes(data)
+    except Exception:
+        return None
+    return fname
+
+
 def _real_generate(
     db: Session,
     user: models.User,
@@ -570,7 +632,8 @@ def _real_generate(
 ) -> dict | None:
     """尝试用所选（或默认）AI 提供商的图片模型真实出图。
 
-    返回 {"url", "provider_id", "provider_name", "model_name"} 或 None（降级到离线 SVG）。
+    成功时把远程图片下载到本地，返回 {"url"（本地）, "filename", "provider_id",
+    "provider_name", "model_name"} 或 None（降级到离线 SVG）。
     """
     try:
         from app.media import MediaService
@@ -578,8 +641,14 @@ def _real_generate(
         provider, model = _resolve_image_model(db, user, provider_id, model_name)
         if not provider or not model:
             return None
-        # 参考图转为可访问 url
-        ref_urls = [f"/api/gallery/files/{f}" for f in reference_filenames if f]
+        # 参考图/商品图必须内联为 base64 data URL（上游拉不到本地地址）
+        ref_urls: list[str] = []
+        for f in reference_filenames:
+            if not f:
+                continue
+            du = _gallery_file_data_url(f)
+            if du:
+                ref_urls.append(du)
         result = MediaService.generate_image(
             provider=provider,
             model_name=model.model_name,
@@ -592,8 +661,19 @@ def _real_generate(
         images = result.get("data", [])
         url = images[0].get("url") if images else None
         if url:
+            filename = _save_generated_image(url)
+            if filename:
+                return {
+                    "url": f"/api/gallery/files/{filename}",
+                    "filename": filename,
+                    "provider_id": provider.id,
+                    "provider_name": provider.name,
+                    "model_name": model.model_name,
+                }
+            # 下载失败但仍保留远程 URL，避免整单失败
             return {
                 "url": url,
+                "filename": None,
                 "provider_id": provider.id,
                 "provider_name": provider.name,
                 "model_name": model.model_name,
@@ -603,84 +683,203 @@ def _real_generate(
     return None
 
 
-def generate(db: Session, user: models.User, project_id: int):
-    """执行生成：为每个策划项按其数量生成结果图，写入 GalleryRecord。"""
-    from app.schemas import GalleryGenerateResponse, GalleryRecordRead
+def generate(db: Session, user: models.User, project_id: int) -> models.GalleryTask:
+    """提交一次「立即生成」任务。
+
+    校验前置条件（产品图 / 出图类型）后创建 GalleryTask 并交给后台 worker
+    异步执行，立即返回任务对象，前端据此轮询进度。
+    """
+    from app.gallery_worker import enqueue_task
 
     proj = get_owned_project(db, user, project_id)
     if not proj:
-        return None
+        raise ValueError("项目不存在")
     if not proj.images:
         raise ValueError("请先上传至少一张产品原图")
     if not proj.plan_items:
         raise ValueError("请先在 AI 智能策划台选择要生成的类型")
 
-    proj.status = "generating"
-    db.commit()
-
-    oc = proj.output_config or {}
-    global_provider_id = oc.get("provider_id")
-    global_model = oc.get("model_name")
-
-    records: list[models.GalleryRecord] = []
-    total_images = 0
+    # 计算计划生成的总图数
+    total = 0
     for item in proj.plan_items:
-        t = get_plan_type(item.type_id)
-        title = t["title"] if t else item.type_id
         ios = item.output_settings or {}
-        count = max(1, int(ios.get("count", 1) or 1))
-        # 模型选择优先级：条目级 > 全局级
-        item_provider_id = ios.get("provider_id") or global_provider_id
-        item_model = ios.get("model_name") or global_model
-        prompt = _build_prompt(proj, item, model_name=item_model)
-        ref_files = item.reference_images or []
-        for i in range(1, count + 1):
-            total_images += 1
-            real = _real_generate(db, user, prompt, ref_files, item_provider_id, item_model)
-            if real:
-                result_filename = None
-                result_url = real["url"]
-                rec_provider_id = real["provider_id"]
-                rec_provider_name = real["provider_name"]
-                rec_model_name = real["model_name"]
-            else:
-                result_filename = write_result_svg(item.id, i, title, f"{item.type_id}-{i}")
-                result_url = f"/api/gallery/files/{result_filename}"
-                # 离线降级时仍记录用户所选配置，保证「所有配置都有记录」
-                rec_provider_id = item_provider_id
-                rec_provider_name = None
-                rec_model_name = item_model
-            rec = models.GalleryRecord(
-                project_id=project_id,
-                plan_item_id=item.id,
-                user_id=user.id,
-                type_id=item.type_id,
-                title=f"{title} #{i}",
-                result_filename=result_filename,
-                result_url=result_url,
-                status="completed",
-                prompt=prompt,
-                provider_id=rec_provider_id,
-                provider_name=rec_provider_name,
-                model_name=rec_model_name,
-            )
-            db.add(rec)
-            records.append(rec)
+        total += max(1, int(ios.get("count", 1) or 1))
 
-    proj.status = "completed"
-    db.commit()
-    for r in records:
-        db.refresh(r)
-
-    est = estimate_cost([{"type_id": it.type_id, "count": it.output_settings.get("count", 1)} for it in proj.plan_items])
-    return GalleryGenerateResponse(
+    task = models.GalleryTask(
+        user_id=user.id,
         project_id=project_id,
-        status="completed",
-        total_images=total_images,
-        total_points=est["total_points"],
-        total_minutes=est["total_minutes"],
-        records=[GalleryRecordRead.model_validate(r) for r in records],
+        name=None,  # 先留空，flush 取回 id 后再生成默认名
+        status="pending",
+        total=total,
+        done=0,
+        failed=0,
     )
+    db.add(task)
+    db.flush()  # 取回自增主键 id，用于生成默认任务名
+    # 默认任务名：项目有自定义名称则沿用，否则用「任务 {id}」序号
+    proj_name = (proj.name or "").strip()
+    task.name = proj_name if (proj_name and proj_name != "未命名套图") else f"任务 {task.id}"
+    db.commit()
+    db.refresh(task)
+
+    enqueue_task(task.id)
+    return task
+
+
+def rename_task(db: Session, user: models.User, task_id: int, name: str) -> models.GalleryTask | None:
+    """重命名一次创作任务。仅允许修改用户自己的任务。"""
+    task = db.get(models.GalleryTask, task_id)
+    if not task or task.user_id != user.id:
+        return None
+    task.name = name.strip() or None
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def run_gallery_task(task_id: int) -> None:
+    """后台 worker 执行的任务体：逐步生成图片并写入 GalleryRecord。
+
+    每张图生成后立刻提交并回写 task.done，因此前端轮询可看到实时进度与
+    陆续出现的图片。单张失败不影响整体（计入 failed 并继续）。
+    """
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        task = db.get(models.GalleryTask, task_id)
+        if not task:
+            return
+        task.status = "running"
+        db.commit()
+
+        proj = db.get(models.GalleryProject, task.project_id)
+        user = db.get(models.User, task.user_id)
+        if not proj or not user:
+            task.status = "failed"
+            task.error = "项目或用户不存在"
+            db.commit()
+            return
+        if not proj.images:
+            task.status = "failed"
+            task.error = "请先上传至少一张产品原图"
+            db.commit()
+            return
+        if not proj.plan_items:
+            task.status = "failed"
+            task.error = "请先在 AI 智能策划台选择要生成的类型"
+            db.commit()
+            return
+
+        oc = proj.output_config or {}
+        global_provider_id = oc.get("provider_id")
+        global_model = oc.get("model_name")
+
+        # 阶段1：预建全部 record（pending），前端轮询即可看到每张图的状态与提示词
+        plan: list[dict] = []
+        for item in proj.plan_items:
+            t = get_plan_type(item.type_id)
+            title = t["title"] if t else item.type_id
+            ios = item.output_settings or {}
+            count = max(1, int(ios.get("count", 1) or 1))
+            item_provider_id = ios.get("provider_id") or global_provider_id
+            item_model = ios.get("model_name") or global_model
+            prompt = _build_prompt(proj, item, model_name=item_model)
+            # 商品主图：优先用本条目单独上传的「单独商品图」，否则回退到项目产品图[0]
+            effective_product_image = item.product_image or (
+                proj.images[0].filename if proj.images else None
+            )
+            # 参考图列表：单独商品图作为主参考排首位，其余 reference_images 追加（去重）
+            ref_files: list[str] = []
+            if effective_product_image:
+                ref_files.append(effective_product_image)
+            ref_files.extend(
+                f for f in (item.reference_images or []) if f and f != effective_product_image
+            )
+            for i in range(1, count + 1):
+                rec = models.GalleryRecord(
+                    project_id=proj.id,
+                    plan_item_id=item.id,
+                    user_id=user.id,
+                    type_id=item.type_id,
+                    title=f"{title} #{i}",
+                    status="pending",
+                    prompt=prompt,
+                    provider_id=item_provider_id,
+                    provider_name=None,
+                    model_name=item_model,
+                    task_id=task.id,
+                    plan_item_snapshot={
+                        "type_id": item.type_id,
+                        "personal_settings": item.personal_settings or {},
+                        "common_settings": item.common_settings or {},
+                        "output_settings": item.output_settings or {},
+                        "note": item.note or "",
+                        "reference_images": item.reference_images or [],
+                        "product_image": item.product_image or "",
+                    },
+                )
+                db.add(rec)
+                db.commit()
+                db.refresh(rec)
+                plan.append({
+                    "rec": rec,
+                    "prompt": prompt,
+                    "ref_files": ref_files,
+                    "item_provider_id": item_provider_id,
+                    "item_model": item_model,
+                    "title": title,
+                    "i": i,
+                    "item": item,
+                })
+
+        # 阶段2：逐张处理（processing → completed / failed），前端实时看到「生成中」
+        done = 0
+        failed = 0
+        for entry in plan:
+            rec = entry["rec"]
+            try:
+                rec.status = "processing"
+                db.commit()
+                real = _real_generate(
+                    db, user, entry["prompt"], entry["ref_files"],
+                    entry["item_provider_id"], entry["item_model"],
+                )
+                if real:
+                    rec.result_filename = real.get("filename")
+                    rec.result_url = real["url"]
+                    rec.provider_id = real["provider_id"]
+                    rec.provider_name = real["provider_name"]
+                    rec.model_name = real["model_name"]
+                else:
+                    result_filename = write_result_svg(
+                        entry["item"].id, entry["i"], entry["title"],
+                        f"{entry['item'].type_id}-{entry['i']}",
+                    )
+                    rec.result_filename = result_filename
+                    rec.result_url = f"/api/gallery/files/{result_filename}"
+                    rec.provider_name = None
+                rec.status = "completed"
+                done += 1
+            except Exception as exc:
+                rec.status = "failed"
+                rec.result_url = None
+                failed += 1
+                logger.exception("gallery task %s 单图生成失败: %s", task_id, exc)
+            db.commit()
+            task.done = done
+            task.failed = failed
+            db.commit()
+
+        if failed == 0:
+            task.status = "completed"
+        elif done > 0:
+            task.status = "partial"
+        else:
+            task.status = "failed"
+        db.commit()
+    finally:
+        db.close()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -713,6 +912,54 @@ def list_showcases(db: Session, category: str | None = None) -> list[models.Gall
     if category and category != "全部":
         q = q.where(models.GalleryShowcase.category == category)
     return list(db.scalars(q.order_by(models.GalleryShowcase.id)))
+
+
+def publish_showcase(db: Session, user: models.User, *, name: str, category: str, record_ids: list[int]) -> models.GalleryShowcase:
+    """把创作结果里优秀的成图发布到「创作案例」对外展示。
+
+    - 仅允许发布当前用户自己的 GalleryRecord；
+    - 跳过 SVG 占位图（生成失败/示例），只收真实成图；
+    - 原图优先取项目首张产品图，缺则回退到第一张成图。
+    """
+    if not record_ids:
+        raise ValueError("请至少选择一张要发布的作品")
+    recs = list(db.scalars(
+        select(models.GalleryRecord).where(
+            models.GalleryRecord.id.in_(record_ids),
+            models.GalleryRecord.user_id == user.id,
+        )
+    ))
+    by_id = {r.id: r for r in recs}
+    recs = [by_id[i] for i in record_ids if i in by_id]
+    if not recs:
+        raise ValueError("没有可发布的作品（仅能发布你自己的创作结果）")
+
+    proj = db.get(models.GalleryProject, recs[0].project_id)
+    original_url = ""
+    if proj and proj.images:
+        original_url = f"/api/gallery/files/{proj.images[0].filename}"
+
+    image_urls: list[str] = []
+    for r in recs:
+        if r.result_url and not str(r.result_url).endswith(".svg"):
+            image_urls.append(r.result_url)
+    if not image_urls:
+        raise ValueError("所选作品中没有有效的成图，无法发布")
+
+    if not original_url:
+        original_url = image_urls[0]
+
+    sc = models.GalleryShowcase(
+        category=category or "其他",
+        name=name.strip() or "我的电商套图",
+        original_url=original_url,
+        image_urls=image_urls,
+        total_count=len(image_urls) + 1,
+    )
+    db.add(sc)
+    db.commit()
+    db.refresh(sc)
+    return sc
 
 
 def list_records(db: Session, user: models.User, project_id: int | None = None) -> list[models.GalleryRecord]:

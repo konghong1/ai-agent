@@ -22,6 +22,8 @@ import { useLayoutStore } from "@/stores/layout"
 
 import { ParticleBg } from "@/components/ParticleBg"
 
+import { RobotLogo } from "@/components/RobotLogo"
+
 
 
 const { Sider, Header, Content } = Layout
@@ -143,6 +145,9 @@ export default function BasicLayout() {
 
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768
 
+  // 与 Sider 实际折叠状态保持一致：桌面端跟随 store，移动端抽屉打开时为展开
+  const siderCollapsed = isMobile ? !mobileOpen : collapsed
+
 
 
   const userMenu = {
@@ -171,13 +176,11 @@ export default function BasicLayout() {
 
       <Sider
 
-        collapsible={isMobile ? false : true}
-
         collapsed={isMobile ? mobileOpen : collapsed}
 
-        onCollapse={isMobile ? setMobileOpen : toggleCollapsed}
-
         width={256}
+
+        collapsedWidth={80}
 
         style={{
 
@@ -201,31 +204,55 @@ export default function BasicLayout() {
 
       >
 
-        <div style={{ padding: "20px 16px", textAlign: "center", borderBottom: "1px solid var(--ice-border)" }}>
-
-          <Text strong style={{ fontSize: 18, color: "var(--ice-primary)", letterSpacing: 1 }}>AI Agent</Text>
-
-          <br /><Text type="secondary" style={{ fontSize: 12 }}>管理平台</Text>
-
+        {/* Logo 区域：3D 动画机器人图标 + 平台名称，点击可切换侧边栏展开/折叠 */}
+        <div
+          className="sidebar-logo"
+          style={{
+            flexShrink: 0,
+            padding: siderCollapsed ? "16px 0" : "16px 16px",
+            textAlign: "center",
+            borderBottom: "1px solid var(--ice-border)",
+            overflow: "hidden",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: siderCollapsed ? "center" : "flex-start",
+            gap: 12,
+          }}
+        >
+          <RobotLogo
+            collapsed={siderCollapsed}
+            onClick={() => isMobile ? setMobileOpen(!mobileOpen) : toggleCollapsed()}
+          />
+          {!siderCollapsed && (
+            <div style={{ textAlign: "left", lineHeight: 1.2 }}>
+              <Text strong style={{ fontSize: 17, color: "var(--ice-primary)", letterSpacing: 0.5 }}>AI Agent</Text>
+              <br />
+              <Text type="secondary" style={{ fontSize: 11 }}>管理平台</Text>
+            </div>
+          )}
         </div>
 
-        <Menu
+        <div className="sidebar-menu-wrap" style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
 
-          mode="inline"
+          <Menu
 
-          items={menuItems}
+            mode="inline"
 
-          selectedKeys={[location.pathname]}
+            items={menuItems}
 
-          onClick={({ key }) => navigate(key)}
+            selectedKeys={[location.pathname]}
 
-          style={{ borderRight: "none", background: "transparent" }}
+            onClick={({ key }) => navigate(key)}
 
-          theme="light"
+            style={{ borderRight: "none", background: "transparent", height: "100%" }}
 
-          className="sidebar-menu"
+            theme="light"
 
-        />
+            className="sidebar-menu"
+
+          />
+
+        </div>
 
       </Sider>
 

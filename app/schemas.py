@@ -587,6 +587,7 @@ class GalleryPlanItemRead(BaseModel):
     output_settings: dict = Field(default_factory=dict)
     note: str = ""
     reference_images: list = Field(default_factory=list)
+    product_image: str | None = None
     status: str
 
     model_config = ConfigDict(from_attributes=True)
@@ -605,9 +606,32 @@ class GalleryRecordRead(BaseModel):
     provider_id: int | None = None
     provider_name: str | None = None
     model_name: str | None = None
+    task_id: int | None = None
     created_at: datetime
+    # 生成时刻的 plan_item 配置快照，用于「一键做同款」
+    plan_item_snapshot: dict | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryTaskRead(BaseModel):
+    id: int
+    project_id: int
+    name: str | None = None
+    status: str
+    total: int
+    done: int
+    failed: int
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    records: list[GalleryRecordRead] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryTaskUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class GalleryShowcaseRead(BaseModel):
@@ -617,6 +641,14 @@ class GalleryShowcaseRead(BaseModel):
     original_url: str
     image_urls: list = Field(default_factory=list)
     total_count: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class GalleryShowcaseCreate(BaseModel):
+    name: str
+    category: str
+    record_ids: list[int] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -686,6 +718,7 @@ class GalleryPlanItemCreate(BaseModel):
     output_settings: dict = Field(default_factory=dict)
     note: str = ""
     reference_images: list = Field(default_factory=list)
+    product_image: str = ""
 
 
 class GalleryPlanItemUpdate(BaseModel):
@@ -695,6 +728,7 @@ class GalleryPlanItemUpdate(BaseModel):
     output_settings: dict | None = None
     note: str | None = None
     reference_images: list | None = None
+    product_image: str | None = None
     order: int | None = None
 
 
@@ -714,6 +748,7 @@ class GalleryGenerateResponse(BaseModel):
 class GalleryTypesResponse(BaseModel):
     types: list[dict] = Field(default_factory=list)
     options: dict = Field(default_factory=dict)
+    features: dict = Field(default_factory=dict)
 
 
 class GalleryEstimateResponse(BaseModel):

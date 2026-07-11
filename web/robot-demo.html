@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AI Agent 机器人 Logo 演示</title>
+<style>
+  :root {
+    --ice-bg-primary: #f8fafc;
+    --ice-bg-secondary: #ffffff;
+    --ice-bg-hover: #f1f5f9;
+    --ice-primary: #3b82f6;
+    --ice-primary-10: rgba(59,130,246,0.1);
+    --ice-border: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: var(--ice-bg-primary);
+    color: #0f172a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 28px;
+  }
+  .stage {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--ice-bg-secondary);
+    border: 1px solid var(--ice-border);
+    border-radius: 16px;
+    padding: 24px 28px;
+    box-shadow: 0 10px 30px rgba(15,23,42,0.06);
+  }
+  /* 模拟侧边栏 Logo 区域 */
+  .sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    border: 1px solid var(--ice-border);
+    transition: background-color 0.2s ease;
+    user-select: none;
+  }
+  .sidebar-logo:hover { background-color: var(--ice-bg-hover); }
+  .sidebar-logo:active { background-color: var(--ice-primary-10); }
+  .brand-name { line-height: 1.2; }
+  .brand-name strong { font-size: 17px; color: var(--ice-primary); }
+  .brand-name span { font-size: 11px; color: #64748b; }
+
+  /* ===== 机器人动画 ===== */
+  .robot-logo {
+    cursor: pointer;
+    width: 44px; height: 44px;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 12px;
+    transition: transform 0.15s ease;
+  }
+  .robot-logo:active { transform: scale(0.92); }
+  .robot-svg {
+    overflow: visible;
+    filter: drop-shadow(0 3px 6px rgba(59,130,246,0.3));
+    animation: robotFloat 2.6s ease-in-out infinite;
+  }
+  @keyframes robotFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-1.8px); }
+  }
+  .robot-svg .robot-eye { animation: robotEye 2.2s ease-in-out infinite; }
+  @keyframes robotEye { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+  .robot-svg .robot-antenna { animation: robotPulse 1.8s ease-in-out infinite; }
+  @keyframes robotPulse { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
+  /* hover 时抬起右手（指向侧边栏方向） */
+  .robot-logo:hover .robot-arm-right { transform: rotate(-52deg); }
+  .robot-arm-right {
+    transform-origin: 44px 39px;
+    transform: rotate(0deg);
+    transition: transform 0.45s cubic-bezier(0.16,1,0.3,1);
+  }
+  .robot-hint { transition: opacity 0.3s ease; }
+
+  .controls { display: flex; gap: 12px; }
+  button {
+    padding: 10px 18px; border-radius: 10px; border: 1px solid var(--ice-border);
+    background: var(--ice-primary); color: #fff; font-size: 14px; cursor: pointer;
+  }
+  button.ghost { background: var(--ice-bg-secondary); color: var(--ice-primary); }
+  .tip { color: #64748b; font-size: 13px; max-width: 420px; text-align: center; line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="sidebar-logo" id="logoZone">
+      <div class="robot-logo" id="robot" title="点击切换侧边栏">
+        <svg viewBox="0 0 64 64" width="40" height="40" class="robot-svg">
+          <defs>
+            <radialGradient id="headGrad" cx="35%" cy="28%" r="80%">
+              <stop offset="0%" stop-color="#bfdbfe" />
+              <stop offset="45%" stop-color="#3b82f6" />
+              <stop offset="100%" stop-color="#1e3a8a" />
+            </radialGradient>
+            <linearGradient id="bodyGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#e0e7ff" />
+              <stop offset="50%" stop-color="#818cf8" />
+              <stop offset="100%" stop-color="#4338ca" />
+            </linearGradient>
+            <radialGradient id="eyeGrad" cx="50%" cy="40%" r="60%">
+              <stop offset="0%" stop-color="#ffffff" />
+              <stop offset="45%" stop-color="#22d3ee" />
+              <stop offset="100%" stop-color="#0e7490" />
+            </radialGradient>
+            <filter id="eyeGlow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="1.2" result="b" />
+              <feMerge><feMergeNode in="b" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+          <ellipse cx="32" cy="61" rx="13" ry="2.5" fill="rgba(30,58,138,0.18)" />
+          <line x1="32" y1="9" x2="32" y2="3" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" />
+          <circle cx="32" cy="3" r="2.6" fill="#22d3ee" filter="url(#eyeGlow)" class="robot-antenna" />
+          <circle cx="32" cy="21" r="13" fill="url(#headGrad)" stroke="rgba(255,255,255,0.35)" stroke-width="0.6" />
+          <ellipse cx="27" cy="16" rx="4.5" ry="3" fill="rgba(255,255,255,0.45)" />
+          <circle cx="27" cy="20" r="3.1" fill="url(#eyeGrad)" filter="url(#eyeGlow)" class="robot-eye" />
+          <circle cx="37" cy="20" r="3.1" fill="url(#eyeGrad)" filter="url(#eyeGlow)" class="robot-eye" />
+          <rect x="29" y="26.5" width="6" height="1.6" rx="0.8" fill="#1e3a8a" opacity="0.8" />
+          <rect x="21" y="34" width="22" height="19" rx="6" fill="url(#bodyGrad)" stroke="rgba(255,255,255,0.3)" stroke-width="0.6" />
+          <rect x="24" y="37" width="4" height="12" rx="2" fill="rgba(255,255,255,0.25)" />
+          <rect x="17" y="39" width="4" height="11" rx="2" fill="url(#bodyGrad)" />
+          <circle cx="19" cy="51" r="2.6" fill="#6366f1" />
+          <g class="robot-arm-right">
+            <rect x="42" y="39" width="4" height="12" rx="2" fill="url(#bodyGrad)" />
+            <circle cx="44" cy="52" r="2.6" fill="#6366f1" />
+          </g>
+          <rect x="26" y="53" width="5" height="4" rx="2" fill="#4f46e5" />
+          <rect x="33" y="53" width="5" height="4" rx="2" fill="#4f46e5" />
+          <g class="robot-hint" id="hint" opacity="0.55">
+            <path d="M6 32 L1 32 M6 32 L3.5 29.5 M6 32 L3.5 34.5" stroke="#22d3ee" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+          </g>
+        </svg>
+      </div>
+      <div class="brand-name" id="brandName">
+        <strong>AI Agent</strong><br />
+        <span>管理平台</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="toggleBtn" class="ghost">切换折叠状态</button>
+    <button id="hintBtn">显示/隐藏方向箭头</button>
+  </div>
+  <p class="tip">把鼠标移到机器人上 → 右手会抬起指向侧边栏方向，并浮空发光。<br/>点击“切换折叠状态”可模拟侧边栏收起 / 展开时机器人的手势变化。</p>
+
+<script>
+  let collapsed = false;
+  let showHint = true;
+  const arm = document.querySelector('.robot-arm-right');
+  const hint = document.getElementById('hint');
+  const brandName = document.getElementById('brandName');
+  const toggleBtn = document.getElementById('toggleBtn');
+  const hintBtn = document.getElementById('hintBtn');
+
+  function render() {
+    // 折叠时：右手抬起 + 显示方向箭头 + 隐藏文字
+    arm.style.transform = collapsed ? 'rotate(-52deg)' : 'rotate(0deg)';
+    hint.style.opacity = (collapsed && showHint) ? '1' : '0';
+    brandName.style.display = collapsed ? 'none' : 'block';
+  }
+  toggleBtn.onclick = () => { collapsed = !collapsed; render(); };
+  hintBtn.onclick = () => { showHint = !showHint; render(); };
+  render();
+</script>
+</body>
+</html>

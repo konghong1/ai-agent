@@ -53,6 +53,7 @@ export interface GalleryPlanItem {
   output_settings: Record<string, any>
   note: string
   reference_images: string[]
+  product_image: string
   status: string
 }
 
@@ -86,6 +87,17 @@ export interface GalleryRecord {
   provider_name: string | null
   model_name: string | null
   created_at: string
+  task_id?: number | null
+  // 生成时刻的 plan_item 配置快照，用于「一键做同款」
+  plan_item_snapshot?: {
+    type_id: string
+    personal_settings: Record<string, string>
+    common_settings: Record<string, string>
+    output_settings: Record<string, any>
+    note: string
+    reference_images: string[]
+    product_image?: string
+  } | null
 }
 
 export interface GalleryShowcase {
@@ -115,17 +127,43 @@ export interface GalleryGenerateResponse {
   records: GalleryRecord[]
 }
 
+// 一次「立即生成」对应的异步任务，前端据此轮询进度
+export interface GalleryTask {
+  id: number
+  project_id: number
+  name: string | null
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'partial'
+  total: number
+  done: number
+  failed: number
+  error: string | null
+  created_at: string
+  updated_at: string
+  records: GalleryRecord[]
+}
+
 // ─────────────────────────────────────────────────────────────
 // 配置 / 示例
 // ─────────────────────────────────────────────────────────────
 
-export function getTypes(): Promise<{ types: GalleryType[]; options: GalleryOptions }> {
+export function getTypes(): Promise<{ types: GalleryType[]; options: GalleryOptions; features?: { show_prompt?: boolean } }> {
   return get(`${BASE}/types`)
 }
 
 export function getShowcases(category?: string): Promise<GalleryShowcase[]> {
   const q = category && category !== '全部' ? `?category=${encodeURIComponent(category)}` : ''
   return get(`${BASE}/showcases${q}`)
+}
+
+// 把创作结果里优秀的成图发布到「创作案例」
+export interface GalleryShowcaseCreate {
+  name: string
+  category: string
+  record_ids: number[]
+}
+
+export function publishShowcase(data: GalleryShowcaseCreate): Promise<GalleryShowcase> {
+  return post(`${BASE}/showcases`, data)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -204,6 +242,7 @@ export function createPlanItem(
     output_settings?: Record<string, any>
     note?: string
     reference_images?: string[]
+    product_image?: string
   },
 ): Promise<GalleryPlanItem> {
   return post(`${BASE}/projects/${projectId}/plan-items`, data)
@@ -219,10 +258,21 @@ export function updatePlanItem(
     output_settings: Record<string, any>
     note: string
     reference_images: string[]
+    product_image?: string
     order: number
   }>,
 ): Promise<GalleryPlanItem> {
   return patch(`${BASE}/projects/${projectId}/plan-items/${itemId}`, data)
+}
+
+// 上传策划项「单独商品图」（不写入项目产品图列表），返回 {filename, url}
+export function uploadPlanItemImage(
+  projectId: number,
+  file: File,
+): Promise<{ filename: string; url: string }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  return upload(`${BASE}/projects/${projectId}/plan-items/upload-image`, fd)
 }
 
 export function deletePlanItem(projectId: number, itemId: number): Promise<null> {
@@ -249,8 +299,21 @@ export function aiFill(
 // 生成
 // ─────────────────────────────────────────────────────────────
 
-export function generate(projectId: number): Promise<GalleryGenerateResponse> {
+export function generate(projectId: number): Promise<GalleryTask> {
   return post(`${BASE}/projects/${projectId}/generate`)
+}
+
+// 创作结果：按任务拉取生成进度与已生成的图片
+export function getTasks(): Promise<GalleryTask[]> {
+  return get(`${BASE}/tasks`)
+}
+
+export function getTask(taskId: number): Promise<GalleryTask> {
+  return get(`${BASE}/tasks/${taskId}`)
+}
+
+export function updateTask(taskId: number, data: { name?: string }): Promise<GalleryTask> {
+  return patch(`${BASE}/tasks/${taskId}`, data)
 }
 
 export function getProjectRecords(projectId: number): Promise<GalleryRecord[]> {

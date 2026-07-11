@@ -159,6 +159,10 @@ services:
       DEBUG: "true"
       CORS_ORIGINS: "${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000}"
 
+      # ── Gallery dev flags ──
+      # 查看单张生成图的提示词（默认关闭，开发验证期间开启）
+      GALLERY_PROMPT_VIEW: "1"
+
       # ── Init ──
       INIT_DB_ON_STARTUP: "true"
     depends_on:
@@ -209,6 +213,9 @@ services:
       HTTP_PROXY: http://host.docker.internal:33210
       NO_PROXY: localhost,127.0.0.1,::1,minio,mysql,ai-agent-minio,ai-agent-mysql
       no_proxy: localhost,127.0.0.1,::1,minio,mysql,ai-agent-minio,ai-agent-mysql
+
+      # ── Gallery dev flags ──
+      GALLERY_PROMPT_VIEW: "1"
 
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
     depends_on:

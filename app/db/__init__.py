@@ -18,7 +18,8 @@ import os
 import sys
 import time
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect as sa_inspect, text
+from sqlalchemy.schema import CreateColumn
 
 from app.db_url import normalize_db_url
 
@@ -75,6 +76,7 @@ def seed_database():
     from app.core.database import SessionLocal
     from app.core.security import hash_password
     from app.models import Provider, User, PromptTemplate
+    from app.gallery_config import seed_gallery_config
 
     agnes_api_key = os.getenv(
         "AGNES_API_KEY", "sk-0T1BpcsI51cKxXgWZejpvONrcUs8vDc1Tqzz7NkObIWAyezd"
@@ -178,6 +180,11 @@ def seed_database():
             ])
             logger.info("Created 5 default prompt templates")
 
+        # 电商套图固定配置落库（策划类型/个性化字段含下拉选项/通用·市场·输出选项/套图种子）
+        added = seed_gallery_config(db)
+        if added:
+            logger.info("Seeded %d gallery config rows into gallery_configs", added)
+
         db.commit()
     finally:
         db.close()
@@ -235,40 +242,75 @@ def ensure_indexes() -> None:
             logger.warning("ensure_indexes: could not create %s on %s: %s", name, table, exc)
 
 
-def ensure_gallery_record_columns() -> None:
-    """Add gallery_records columns introduced after the table was first created.
+def sync_model_columns() -> None:
+    """自动对齐 ORM 模型与数据库表的列，避免新增字段在旧库上运行时崩溃。
 
-    ``Base.metadata.create_all`` only creates *missing tables* — it never adds a
-    column to an already-existing table. So a DB that was bootstrapped before the
-    ``provider_id`` / ``provider_name`` / ``model_name`` columns existed on
-    ``gallery_records`` would raise ``OperationalError: no such column`` the first
-    time the gallery generation records a model. This closes that gap idempotently
-    (SQLite + MySQL both accept the same ADD COLUMN DDL).
+    SQLAlchemy ``Base.metadata.create_all`` 只会创建缺失的表，不会给已存在的表
+    追加新列。随着模型迭代，旧数据库（例如 MySQL 生产库、本地 SQLite 历史库）
+    的表结构会落后于 ``app/models.py``。此函数在启动时自动检测并补全缺失列，使
+    「代码模型」成为 schema 的唯一可信源，无需手动写 ``ALTER TABLE``。
+
+    策略：
+    - 仅追加缺失列，不删除、不修改已有列（保守安全）。
+    - 主键列 / 外键约束列跳过（ALTER TABLE 无法追加主键）。
+    - 如果模型列是 NOT NULL 且没有默认值，则先以 NULLABLE 追加并告警，避免在
+      已存在行上违反 NOT NULL 约束；运营需要时再手动回填数据并改为 NOT NULL。
+    - 支持 SQLite / MySQL / PostgreSQL（通过 SQLAlchemy 方言编译类型）。
     """
-    from app.core.database import engine
-    from sqlalchemy import inspect as sa_inspect, text as sa_text
+    from app import models  # noqa: F401  (register all models on Base.metadata)
+    from app.core.database import Base, engine
 
-    table = "gallery_records"
-    desired = [
-        ("provider_id", "INTEGER"),
-        ("provider_name", "VARCHAR(200)"),
-        ("model_name", "VARCHAR(200)"),
-    ]
-    try:
-        inspector = sa_inspect(engine)
-        existing = {c["name"] for c in inspector.get_columns(table, bind=engine)}
-    except Exception:
-        existing = set()
-
-    for name, ddl_type in desired:
-        if name in existing:
-            continue
+    inspector = sa_inspect(engine)
+    for table in Base.metadata.sorted_tables:
         try:
-            with engine.begin() as conn:
-                conn.execute(sa_text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
-            logger.info("ensure_gallery_record_columns: added %s to %s", name, table)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("ensure_gallery_record_columns: could not add %s to %s: %s", name, table, exc)
+            existing = {c["name"] for c in inspector.get_columns(table.name, bind=engine)}
+        except Exception:
+            existing = set()
+
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            if column.primary_key:
+                logger.warning(
+                    "sync_model_columns: skip PK column %s.%s (cannot ADD COLUMN primary key)",
+                    table.name,
+                    column.name,
+                )
+                continue
+
+            try:
+                col_ddl = str(CreateColumn(column).compile(dialect=engine.dialect))
+                # 如果模型是 NOT NULL 且无默认值，在旧库上直接 ADD NOT NULL 会失败；
+                # 把它改成 NULLABLE 追加，并记录警告以便后续人工回填。
+                if not column.nullable and column.server_default is None and column.default is None:
+                    logger.warning(
+                        "sync_model_columns: %s.%s is NOT NULL without default; adding as NULLABLE, "
+                        "please backfill data and set NOT NULL manually if required",
+                        table.name,
+                        column.name,
+                    )
+                    col_ddl = col_ddl.replace("NOT NULL", "NULL")
+                ddl = f"ALTER TABLE {table.name} ADD COLUMN {col_ddl}"
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
+                logger.info(
+                    "sync_model_columns: added %s.%s to %s",
+                    table.name,
+                    column.name,
+                    engine.url.drivername,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "sync_model_columns: could not add %s.%s: %s",
+                    table.name,
+                    column.name,
+                    exc,
+                )
+
+
+def ensure_gallery_record_columns() -> None:
+    """历史兼容：gallery_records 追加过多次后增列，统一由 sync_model_columns 处理。"""
+    sync_model_columns()
 
 
 def main():

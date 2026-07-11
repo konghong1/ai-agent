@@ -67,3 +67,27 @@ def _migrate_sqlite_columns() -> None:
             ))
             conn.commit()
             logger.info("Added rag_config column to knowledge_bases")
+
+    # gallery_plan_items.product_image（策划项单独商品图）
+    if insp.has_table("gallery_plan_items"):
+        gpi_cols = {c["name"] for c in insp.get_columns("gallery_plan_items")}
+        if "product_image" not in gpi_cols:
+            with engine.connect() as conn:
+                # 注意：SQLite 对已有数据的表不允许直接 ADD NOT NULL 列，
+                # 因此此处加可空列（模型侧 default="" 会在插入时补默认值）。
+                conn.execute(text(
+                    "ALTER TABLE gallery_plan_items ADD COLUMN product_image VARCHAR(512)"
+                ))
+                conn.commit()
+                logger.info("Added product_image column to gallery_plan_items")
+
+    # gallery_records.task_id（关联异步生成任务）
+    if insp.has_table("gallery_records"):
+        gr_cols = {c["name"] for c in insp.get_columns("gallery_records")}
+        if "task_id" not in gr_cols:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE gallery_records ADD COLUMN task_id INTEGER"
+                ))
+                conn.commit()
+                logger.info("Added task_id column to gallery_records")

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user
 from app import models
-from app.gallery_config import serialize_options, serialize_types
+from app.gallery_config import GALLERY_FEATURES, serialize_options, serialize_types
 from app.gallery_service import (
     add_image,
     add_plan_item,
@@ -32,10 +32,13 @@ from app.gallery_service import (
     list_projects,
     list_records,
     list_showcases,
+    publish_showcase,
     list_templates,
     recompute_estimate,
     reorder_plan_items,
+    rename_task,
     resolve_file,
+    save_plan_item_image,
     save_template,
     seed_showcases,
     update_plan_item,
@@ -52,6 +55,10 @@ from app.schemas import (
     GalleryProjectCreate,
     GalleryProjectRead,
     GalleryProjectUpdate,
+    GalleryShowcaseCreate,
+    GalleryShowcaseRead,
+    GalleryTaskRead,
+    GalleryTaskUpdate,
     GalleryTemplateCreate,
     GalleryTemplateRead,
     GalleryTemplateUpdate,
@@ -68,8 +75,17 @@ router = APIRouter(prefix="/api/gallery", tags=["gallery"])
 # ─────────────────────────────────────────────────────────────
 
 @router.get("/types", response_model=GalleryTypesResponse)
-def get_types(current_user: models.User = Depends(get_current_user)) -> GalleryTypesResponse:
-    return GalleryTypesResponse(types=serialize_types(), options=serialize_options())
+def get_types(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> GalleryTypesResponse:
+    # 保证固定配置已落库（若被清空可自动恢复），运行时优先读库
+    from app.gallery_config import seed_gallery_config
+
+    if db.query(models.GalleryConfig).count() == 0:
+        seed_gallery_config(db)
+        db.commit()
+    return GalleryTypesResponse(types=serialize_types(db), options=serialize_options(db), features=GALLERY_FEATURES)
 
 
 @router.get("/image-models")
@@ -87,7 +103,7 @@ def get_showcases(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ) -> list:
-    seed_showcases(db)
+    # 不再自动注入 SVG 示例图：创作案例只展示用户真实发布的优秀成图
     items = list_showcases(db, category)
     return [
         {
@@ -100,6 +116,23 @@ def get_showcases(
         }
         for s in items
     ]
+
+
+@router.post("/showcases", response_model=GalleryShowcaseRead, status_code=status.HTTP_201_CREATED)
+def create_showcase(
+    payload: GalleryShowcaseCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> models.GalleryShowcase:
+    """把创作结果里优秀的成图发布到「创作案例」。"""
+    try:
+        sc = publish_showcase(
+            db, current_user,
+            name=payload.name, category=payload.category, record_ids=payload.record_ids,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return sc
 
 
 # ─────────────────────────────────────────────────────────────
@@ -259,6 +292,27 @@ def reorder_items(
     return proj
 
 
+@router.post("/projects/{project_id}/plan-items/upload-image")
+def upload_plan_item_image(
+    project_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> dict:
+    """上传策划项「单独商品图」。
+
+    与项目产品图接口不同：本接口不写入 ``GalleryProjectImage`` 表，
+    仅落盘并返回 {filename, url}，由前端存入对应策划项的 ``product_image`` 字段。
+    """
+    proj = get_owned_project(db, current_user, project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="空文件")
+    return save_plan_item_image(project_id, data, file.filename or "image.png")
+
+
 # ─────────────────────────────────────────────────────────────
 # AI 帮填（规则化建议）
 # ─────────────────────────────────────────────────────────────
@@ -282,19 +336,65 @@ def ai_fill(
 # 生成
 # ─────────────────────────────────────────────────────────────
 
-@router.post("/projects/{project_id}/generate", response_model=GalleryGenerateResponse)
+@router.post("/projects/{project_id}/generate", response_model=GalleryTaskRead)
 def run_generate(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
-) -> GalleryGenerateResponse:
+) -> GalleryTaskRead:
     try:
-        result = generate(db, current_user, project_id)
+        task = generate(db, current_user, project_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if not result:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    return result
+    return GalleryTaskRead.model_validate(task)
+
+
+@router.get("/tasks", response_model=list[GalleryTaskRead])
+def list_tasks(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> list[GalleryTaskRead]:
+    from sqlalchemy import select
+
+    tasks = db.scalars(
+        select(models.GalleryTask)
+        .where(models.GalleryTask.user_id == current_user.id)
+        .order_by(models.GalleryTask.created_at.desc())
+    ).all()
+    return [GalleryTaskRead.model_validate(t) for t in tasks]
+
+
+@router.get("/tasks/{task_id}", response_model=GalleryTaskRead)
+def get_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> GalleryTaskRead:
+    from sqlalchemy import select
+
+    task = db.scalar(
+        select(models.GalleryTask).where(
+            models.GalleryTask.id == task_id,
+            models.GalleryTask.user_id == current_user.id,
+        )
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return GalleryTaskRead.model_validate(task)
+
+
+@router.patch("/tasks/{task_id}", response_model=GalleryTaskRead)
+def patch_task(
+    task_id: int,
+    payload: GalleryTaskUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> GalleryTaskRead:
+    """重命名创作任务。"""
+    task = rename_task(db, current_user, task_id, payload.name or "")
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return GalleryTaskRead.model_validate(task)
 
 
 @router.get("/projects/{project_id}/records", response_model=list)
@@ -334,6 +434,7 @@ def _rec_to_dict(r: models.GalleryRecord) -> dict:
         "provider_name": r.provider_name,
         "model_name": r.model_name,
         "created_at": r.created_at.isoformat() if r.created_at else None,
+        "plan_item_snapshot": r.plan_item_snapshot,
     }
 
 

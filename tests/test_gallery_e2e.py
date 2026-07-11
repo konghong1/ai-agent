@@ -9,6 +9,7 @@ import json
 import random
 import string
 import sys
+import time
 
 import requests
 
@@ -33,6 +34,18 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         print(f"  [FAIL] {name}  -> {detail}")
 
 
+def poll_task(s: requests.Session, task_id: int, timeout: int = 30) -> dict:
+    """轮询任务直到完成或超时，返回最终任务对象。"""
+    for _ in range(timeout * 2):
+        r = s.get(f"{BASE}/api/gallery/tasks/{task_id}")
+        if r.status_code == 200:
+            t = r.json() or {}
+            if t.get("status") in ("completed", "partial", "failed"):
+                return t
+        time.sleep(0.5)
+    return {}
+
+
 def jprint(label: str, resp: requests.Response) -> None:
     print(f"--- {label} | HTTP {resp.status_code}")
     try:
@@ -45,11 +58,12 @@ def jprint(label: str, resp: requests.Response) -> None:
 def main() -> int:
     s = requests.Session()
 
-    # 1) 注册新用户（随机邮箱避免冲突）
+    # 1) 注册新用户（随机邮箱/用户名避免冲突）
     suffix = "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
     email = f"gallery_{suffix}@test.com"
+    username = f"guser_{suffix}"
     pw = "gallery123"
-    r = s.post(f"{BASE}/api/auth/register", json={"email": email, "username": "guser", "password": pw})
+    r = s.post(f"{BASE}/api/auth/register", json={"email": email, "username": username, "password": pw})
     jprint("register", r)
     if r.status_code != 200:
         print("注册失败，终止")
@@ -61,7 +75,7 @@ def main() -> int:
     r = s.get(f"{BASE}/api/gallery/types")
     jprint("types", r)
     types = (r.json() or {}).get("types", [])
-    check("types=18", len(types) == 18, f"len={len(types)}")
+    check("types=19", len(types) == 19, f"len={len(types)}")
     type_ids = [t["id"] for t in types]
     check("首类型=bg", type_ids and type_ids[0] == "bg", f"first={type_ids[:1]}")
 
@@ -105,8 +119,30 @@ def main() -> int:
     jprint("generate", r)
     gen = r.json() or {}
     check("生成成功", r.status_code == 200, f"code={r.status_code}")
-    check("生成有records", len(gen.get("records", [])) >= 1, f"recs={len(gen.get('records', []))}")
-    check("生成total_images", gen.get("total_images", 0) >= 1, f"t={gen.get('total_images')}")
+    check("生成任务有name", bool(gen.get("name")), f"name={gen.get('name')}")
+    check("生成任务有created_at", bool(gen.get("created_at")), f"created_at={gen.get('created_at')}")
+    task_id = gen.get("id")
+    check("生成任务有id", bool(task_id), f"id={task_id}")
+
+    # 7b) 轮询任务完成
+    final = poll_task(s, task_id) if task_id else {}
+    if final:
+        print("--- task_final | polling done")
+        print("    " + json.dumps(final, ensure_ascii=False)[:600])
+        check("任务最终状态", final.get("status") in ("completed", "partial", "failed"), f"status={final.get('status')}")
+        recs = final.get("records", [])
+        check("生成有records", len(recs) >= 1, f"recs={len(recs)}")
+        if recs:
+            prompt = recs[0].get("prompt", "")
+            check("提示词含反文字指令", "不要出现任何文字" in prompt, f"prompt={prompt[:120]}")
+    else:
+        check("任务最终状态", False, "poll timeout")
+
+    # 7c) 重命名任务
+    if task_id:
+        r = s.patch(f"{BASE}/api/gallery/tasks/{task_id}", json={"name": "我的测试任务"})
+        jprint("rename_task", r)
+        check("重命名任务成功", r.status_code == 200 and (r.json() or {}).get("name") == "我的测试任务", f"code={r.status_code}")
 
     # 8) 项目记录
     r = s.get(f"{BASE}/api/gallery/projects/{pid}/records")
@@ -141,10 +177,10 @@ def main() -> int:
     else:
         check("应用模板成功", False, "tpl_id/pid2 missing")
 
-    # 12) 示例展示
+    # 12) 示例展示：当前已关闭自动 seed，无数据是正确行为
     r = s.get(f"{BASE}/api/gallery/showcases")
     jprint("showcases", r)
-    check("示例展示有数据", len(r.json() or []) >= 1, f"n={len(r.json() or [])}")
+    check("示例展示接口正常", r.status_code == 200, f"code={r.status_code}")
 
     # 13) 更新策划项
     if item_id:
