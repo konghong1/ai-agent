@@ -23,6 +23,9 @@ from app.gallery_config import (
     COPY_ALLOWED_TYPES,
     VALUE_FOCUS_VOCAB,
     VALUE_HINT_VOCAB,
+    PRODUCT_PRESENT_VOCAB,
+    FABRIC_VOCAB,
+    CRAFT_VOCAB,
     GLOBAL_RETROUCH,
     get_plan_type,
     TYPE_LAYOUT,
@@ -37,19 +40,38 @@ _DEFAULT_PLATFORM: dict = {
     "forbidden": "肢体畸形、局部裁切、杂乱背景、过重阴影、反光光斑",
 }
 
-# 个性化字段分类：归属到哪一段组装
-_PRODUCT_LABELS = {"产品呈现", "价值聚焦", "服装品类"}
-_STYLE_LABELS = {"视觉强化", "氛围浓度"}
-# 人物判定：哪些类型本质关于人（强制人物），以及哪些个性化字段一旦填写即代表需要人物
+# 个性化字段分类（V8 电商转化视角）
+# 所有类型统一收敛到 5 个转化维度：价值聚焦 / 视觉强化 / 产品呈现 / 氛围浓度 / 价值暗示
+# 另保留少量「类型辅助字段」和「旧数据兼容字段」。
+
+# V8 核心转化维度
+_CORE_DIMENSIONS = {"价值聚焦", "视觉强化", "产品呈现", "氛围浓度", "价值暗示"}
+# M4 视觉风格字段（用于遍历个人设置中的风格词）
+_STYLE_LABELS = {"视觉强化", "氛围浓度", "视觉氛围", "情绪基调"}
+# 辅助字段（直接输出，不触发人物）
+_AUXILIARY_LABELS = {"背景处理", "光影质感", "展示逻辑", "自定义需求"}
+# 旧数据兼容字段（仍映射为视觉指令）
+_COMPAT_LABELS = {"面料质感", "工艺细节", "展示方式", "场景环境", "互动形式", "构图方式", "情感传递", "产品融入度"}
+
+# 人物判定：试穿/代言/买家秀 本质关于人 → 强制人物；
+# V8 不再要求用户填 8 个人物参数，人物基础描述由 target_market 市场档案提供。
 _HUMAN_FORCED_TYPES = {"tryon", "model", "buyer"}
+# 历史字段兼容：若旧数据仍有人物信号字段，仍触发人物
 _HUMAN_SIGNAL_LABELS = {
     "人种肤色", "性别物种", "年龄维度", "身型身材",
     "穿着风格", "动作姿态", "表情神态",
 }
-# 有无人物都可使用的中性字段（场景/光影/角度），不触发人物注入
+# 有无人物都可使用的中性字段（场景/光影/角度/互动/构图），不触发人物注入
 _SUBJECT_NEUTRAL_LABELS = {
-    "场景环境", "背景处理", "光影效果", "产品角度",
+    "场景环境", "光影效果", "产品角度",
+    "互动形式", "构图方式", "情感传递", "产品融入度",
 }
+# M2/M3/M4 已显式处理的标签全集——通用兜底跳过这些，避免重复注入
+_EXPLICITLY_HANDLED = (
+    _CORE_DIMENSIONS | _AUXILIARY_LABELS | _COMPAT_LABELS |
+    _HUMAN_SIGNAL_LABELS | _SUBJECT_NEUTRAL_LABELS |
+    {"服装品类", "面料质感", "工艺细节", "展示方式", "场景环境", "互动形式", "构图方式", "情感传递", "产品融入度"}
+)
 
 # Linter 矛盾检测锚点
 #   零文字约束锚点：提示词明确声明「画面中不得有任何文字」
@@ -76,7 +98,7 @@ def _resolve_platform(platform: str | None) -> dict:
 # ① Resolver：配置归一化
 # ─────────────────────────────────────────────────────────────
 
-def _resolve_config(project, item) -> dict:
+def _resolve_config(project, item, effective_product_image: str | None = None) -> dict:
     """优先级合并：market_config → common_settings（后者覆盖前者）。"""
     market = dict(project.market_config or {})
     cs = dict(item.common_settings or {})
@@ -96,6 +118,13 @@ def _resolve_config(project, item) -> dict:
     copy_language = pick("copy_language")
 
     t = get_plan_type(item.type_id) or {}
+    # 参考图判定：以运行时实际使用的参考文件为准（含项目产品图回退），
+    # 避免「传了参考图但提示词没写主体一致性约束」导致生成图与产品无关。
+    has_reference = bool(
+        item.product_image or item.reference_images or effective_product_image
+    )
+    # 输出比例：仅当用户明确选择非自适应时才注入提示词
+    ratio = (item.output_settings or {}).get("ratio") or "自适应尺寸"
     return {
         "type_id": item.type_id,
         "title": t.get("title", item.type_id),
@@ -107,7 +136,8 @@ def _resolve_config(project, item) -> dict:
         "personal": ps,
         "selling_points": (project.selling_points or "").strip(),
         "note": (item.note or "").strip(),
-        "has_reference": bool(item.product_image or item.reference_images),
+        "ratio": ratio,
+        "has_reference": has_reference,
     }
 
 
@@ -159,33 +189,32 @@ def _to_product_composition(text: str) -> str:
 
 
 def _subject_fidelity_block(cfg: dict) -> str:
-    """有参考图时的「主体一致性锚定」——解决「生成图与产品图不一致」的核心约束。
+    """有参考图时的「主体一致性锚定 + 颜色锁定」——解决「生成图与产品图不一致」的核心约束。
 
-    参考图商品即画面唯一主体，外观须逐处一致；允许在角度 / 视距 / 背景 / 构图 /
-    光影上做变化（用户要的多样性），但商品本身的身份（版型 / 颜色 / 图案 / logo）
-    绝不可改变、替换或重新设计。
+    V5 重构：把颜色锁定从 M4 的「补救式」前移到 M1 紧接标题处，作为最强优先指令。
+    明确告诉模型：商品颜色、图案、logo = 参考图 = 唯一事实源；
+    配色 / 色调 = 背景维度 = 不得作用于商品本体。
+
     人物类型（试穿 / 代言 / 买家秀）：所展示的商品须与参考图一致，人物仅作载体。
     """
     wants_human = _wants_human(cfg["type_id"], cfg["personal"])
     if wants_human:
         return (
-            "参考图即本图要展示的商品：模特所穿着 / 手持 / 展示的商品必须与参考图"
-            "该商品逐处一致——版型、轮廓、颜色、材质、图案纹理、logo 与标识、"
-            "结构比例均不可改变；人物仅作展示载体，可变化姿态 / 人种 / 场景，但"
-            "绝不得改变所展示的商品本身，也不得用其他近似款替代。"
-            "注：本提示词中「色调倾向 / 配色参考 / 视觉强化」等关于配色的描述"
-            "仅作用于背景与场景氛围，所展示商品的颜色、图案、logo 须严格以"
-            "参考图该商品为准，不得套用上述配色改变商品颜色。"
+            "【主体一致性 + 颜色锁定】参考图即本图要展示的商品：模特所穿着 / 手持 / "
+            "展示的商品必须与参考图该商品逐处一致——版型、轮廓、颜色、材质、图案纹理、"
+            "logo 与标识、结构比例均不可改变。商品颜色严格以参考图为准，本提示词中所有"
+            "关于「色调 / 配色 / 色系」的描述仅作用于背景与场景氛围，绝不改变商品本体"
+            "的颜色、图案或 logo。人物仅作展示载体，可变化姿态 / 人种 / 场景，但绝不得"
+            "改变所展示的商品本身，也不得用其他近似款替代。"
         )
     return (
-        "参考图即本图要展示的商品本体：画面主体必须严格以参考图商品为准，"
-        "外观、版型、轮廓、颜色、材质、图案纹理、logo 与标识、结构比例"
-        "逐处一致，不得改变、重新设计或用其他款替换。允许变化的仅限"
-        "拍摄角度、视距（特写 / 全景）、背景与场景、构图方式、光影氛围与"
-        "道具搭配——商品本身的外观身份必须保持不变。"
-        "注：本提示词中「色调倾向 / 配色参考 / 视觉强化」等关于配色的描述"
-        "仅作用于背景与场景氛围，商品本身的颜色、图案、logo 须严格以参考图"
-        "为准，不得套用上述配色改变商品本体颜色。"
+        "【主体一致性 + 颜色锁定】参考图即本图要展示的商品本体：画面主体必须严格以"
+        "参考图商品为准，外观、版型、轮廓、颜色、材质、图案纹理、logo 与标识、"
+        "结构比例逐处一致，不得改变、重新设计或用其他款替换。商品颜色严格以参考图"
+        "为准——本提示词中所有关于「色调 / 配色 / 色系」的描述仅作用于背景与场景"
+        "氛围，绝不改变商品本体的颜色、图案或 logo。允许变化的仅限拍摄角度、视距"
+        "（特写 / 全景）、背景与场景、构图方式、光影氛围与道具搭配——商品本身的"
+        "外观身份与颜色必须保持不变。"
     )
 
 
@@ -217,6 +246,8 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
     if cfg["target_market"]:
         lines.append(f"目标市场与受众地域：{cfg['target_market']}。")
     lines.append(f"画质要求：{platform['resolution']}；{GLOBAL_RETROUCH}。")
+    if cfg.get("ratio") and cfg["ratio"] != "自适应尺寸":
+        lines.append(f"画面比例：严格按 {cfg['ratio']} 构图，不得改变比例或额外留白。")
     if cfg["platform"] and platform.get("composition"):
         comp = platform["composition"]
         ratio = platform.get("subject_ratio", "")
@@ -250,19 +281,66 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
     if market.get("avoid"):
         lines.append(f"避免：{market['avoid']}。")
 
-    # M3 服装 / 产品视觉表达（单一事实源：面料质感传递品质，绝不文字）
-    cat = cfg["personal"].get("服装品类")
-    if cat:
-        lines.append(f"服装品类：{cat}（精准匹配类目版型，完整展示不遮挡核心剪裁）。")
-    product_present = cfg["personal"].get("产品呈现")
-    if product_present:
-        lines.append(f"产品呈现：{product_present}（完整展示，不遮挡核心剪裁与版型）。")
-    # 价值聚焦：视觉重心指令（与下方品质质感描述互补，不重复）
+    # M3 电商转化语义层（V8 重构）
+    # 把「价值聚焦 / 视觉强化 / 产品呈现 / 氛围浓度 / 价值暗示」5 个维度
+    # 翻译为具体视觉指令，让提示词直接驱动「保持原型 + 吸引客户」的画面。
+
+    # 3.1 产品呈现：商品以什么状态出现（最高优先级之一）
+    display = cfg["personal"].get("产品呈现")
+    if display:
+        mapped = PRODUCT_PRESENT_VOCAB.get(display)
+        lines.append(f"产品呈现：{mapped}。" if mapped else f"产品呈现：{display}。")
+
+    # 3.2 兼容旧数据：展示方式（仍被部分旧数据使用）
+    legacy_display = cfg["personal"].get("展示方式")
+    if legacy_display and legacy_display != display:
+        lines.append(f"展示方式：{legacy_display}（完整展示，不遮挡核心剪裁与版型）。")
+
+    # 3.3 价值聚焦：这张图想让买家记住什么
     vf = cfg["personal"].get("价值聚焦")
     if vf:
         mapped = VALUE_FOCUS_VOCAB.get(vf)
         lines.append(f"价值聚焦：{mapped}。" if mapped else f"价值聚焦：{vf}。")
-    # 卖点：仅以视觉元素体现（允许文字的类型才放少量版面文案）
+
+    # 3.4 视觉强化：如何一眼抓住注意力
+    vs_hook = cfg["personal"].get("视觉强化")
+    if vs_hook:
+        mapped = STYLE_VOCAB.get(vs_hook)
+        lines.append(f"视觉强化：{mapped}。" if mapped else f"视觉强化：{vs_hook}。")
+
+    # 3.5 氛围浓度：画面要给买家什么感觉
+    atmo = cfg["personal"].get("氛围浓度")
+    if atmo:
+        mapped = STYLE_VOCAB.get(atmo)
+        lines.append(f"氛围浓度：{mapped}。" if mapped else f"氛围浓度：{atmo}。")
+
+    # 3.6 价值暗示：凭什么让买家相信品质
+    vh = cfg["personal"].get("价值暗示")
+    if vh:
+        mapped = VALUE_HINT_VOCAB.get(vh)
+        lines.append(f"价值暗示：{mapped}。" if mapped else f"价值暗示：{vh}。")
+
+    # 3.7 辅助字段（直接作为视觉指令）
+    for lbl in ("背景处理", "光影质感", "展示逻辑", "自定义需求"):
+        val = cfg["personal"].get(lbl)
+        if val:
+            lines.append(f"{lbl}：{val}。")
+
+    # 3.8 兼容旧数据：面料质感 / 工艺细节 / 场景环境 / 互动形式 / 构图方式 / 情感传递 / 产品融入度
+    fabric = cfg["personal"].get("面料质感")
+    if fabric:
+        fv = FABRIC_VOCAB.get(fabric, fabric)
+        lines.append(f"面料质感：{fv}。")
+    craft_detail = cfg["personal"].get("工艺细节")
+    if craft_detail:
+        cv = CRAFT_VOCAB.get(craft_detail, craft_detail)
+        lines.append(f"工艺细节：{cv}。")
+    for lbl in ("场景环境", "互动形式", "构图方式", "情感传递", "产品融入度"):
+        val = cfg["personal"].get(lbl)
+        if val:
+            lines.append(f"{lbl}：{val}。")
+
+    # 3.9 卖点：仅以视觉元素体现（允许文字的类型才放少量版面文案）
     sp = cfg["selling_points"]
     if sp and copy["allow_text"]:
         lines.append(
@@ -274,8 +352,9 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
             f"核心卖点「{sp}」仅用光、面料、人物姿态等视觉元素体现，"
             f"绝不转为图上文字。"
         )
-    # 品质质感统一描述（整段 prompt 只出现一次，避免与价值暗示重复）
-    if wants_human or cfg["personal"].get("服装品类"):
+
+    # 3.10 品质质感统一描述（整段 prompt 只出现一次，避免与价值暗示重复）
+    if wants_human or cfg["personal"].get("面料质感"):
         craft = "服装面料垂坠肌理、立体缝线、柔和面料反光、细腻剪裁光影"
     else:
         craft = "产品材质肌理、工艺细节、柔和反光与精致光影"
@@ -283,11 +362,12 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
         f"产品价值仅通过{craft}等视觉细节传递高品质做工，"
         f"全程不使用任何文字标注卖点。"
     )
-    # 价值暗示：除「品质细节」外（已由上句覆盖）才单独输出
-    vh = cfg["personal"].get("价值暗示")
-    if vh and vh != "品质细节":
-        mapped = VALUE_HINT_VOCAB.get(vh)
-        lines.append(f"价值暗示：{mapped}。" if mapped else f"价值暗示：{vh}。")
+
+    # M3.5 通用兜底：注入所有尚未被 M3 显式处理的个性化字段
+    for lbl, val in cfg["personal"].items():
+        if lbl not in _EXPLICITLY_HANDLED and val:
+            vocab = STYLE_VOCAB.get(val)
+            lines.append(f"{lbl}：{vocab}。" if vocab else f"{lbl}：{val}。")
 
     # M4 视觉风格系统（抽象词量化映射）
     if cfg["visual_style"]:
@@ -297,16 +377,13 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
         tone_txt = STYLE_VOCAB.get(cfg["tone"], cfg["tone"])
         if market.get("palette"):
             if cfg["has_reference"]:
-                # 有参考图：配色仅作用于背景，并摘掉“任选其一作为服装主色”
-                # 之类的诱导从句，防止模型把商品重新染色（与主体一致性锚定冲突）
-                pal_bg = market["palette"].split("（任选其一作为服装主色")[0].strip("，, ")
+                # 有参考图：配色仅作用于背景，措辞从源头杜绝"染产品色"
                 lines.append(
-                    f"背景配色倾向：{tone_txt}；背景配色参考{pal_bg}"
-                    f"（此配色仅用于背景与场景氛围，商品颜色须严格以参考图为准，"
-                    f"不得套用）。"
+                    f"背景色调：{tone_txt}；背景配色参考{market['palette']}"
+                    f"（此配色仅用于背景与场景氛围，商品颜色严格以参考图为准，不得套用）。"
                 )
             else:
-                # 市场调色板无条件注入，换市场即换配色（不再卡「高饱和」）
+                # 无参考图：市场调色板可用于整体画面（含商品）
                 lines.append(f"色调倾向：{tone_txt}；配色参考{market['palette']}。")
         else:
             lines.append(f"色调倾向：{tone_txt}。")
@@ -340,8 +417,8 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
         tail += (
             "参考图上的水印 / 价格签 / 背景文字 / 无关标签请忽略，不要复制到生成图；"
             "但参考图中的商品本体须严格还原，不得因忽略其上文字而改变商品外观。"
-            "绝对禁止改变商品外观 / 版型 / 颜色 / 图案 / logo，禁止用其他近似产品"
-            "替代参考图商品。"
+            "绝对禁止改变商品颜色 / 图案 / 版型 / logo，禁止用其他近似产品"
+            "替代参考图商品——商品颜色始终以参考图为唯一标准。"
         )
     lines.append(tail)
 
@@ -378,12 +455,14 @@ def _lint(prompt: str, allow_text: bool) -> None:
 # 对外入口
 # ─────────────────────────────────────────────────────────────
 
-def build_prompt(project, item, model_name: str | None = None) -> str:
+def build_prompt(project, item, model_name: str | None = None, effective_product_image: str | None = None) -> str:
     """根据项目 / 条目配置组装分层、量化、无矛盾的图片生成提示词。
 
     ``model_name`` 保留仅为向后兼容签名，引擎内部不再使用。
+    ``effective_product_image`` 用于提示词内参考图一致性判定，解决运行时回退到
+    项目产品图但提示词未感知的问题。
     """
-    cfg = _resolve_config(project, item)
+    cfg = _resolve_config(project, item, effective_product_image=effective_product_image)
     copy = _decide_copy_policy(cfg["type_id"], cfg["copy_language"])
     market = _resolve_market(cfg["target_market"])
     platform = _resolve_platform(cfg["platform"])

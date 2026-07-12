@@ -1,0 +1,17 @@
+{
+  "taskCell": {
+    "boundingH": 160,
+    "computedHeight": "160px"
+  },
+  "detail": {
+    "metaCount": 0,
+    "itemTitleCount": 3,
+    "productTitle": "产品原图",
+    "firstRecordTitle": "首屏视觉图 #1",
+    "renamedTitle": "验证改名XYZ",
+    "renameOk": true,
+    "restoredTitle": "首屏视觉图 #1",
+    "restoreOk": true
+  },
+  "ok": true
+}

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Modal, Input, Select, message, Upload } from 'antd'
 import type { UploadProps } from 'antd/es/upload'
 import type { GalleryType, GalleryOptions, GalleryPlanItem, GalleryImageModelsResponse, GalleryImage } from '@/services/gallery'
-import { aiFill, uploadImages, uploadPlanItemImage } from '@/services/gallery'
+import { aiFill, uploadImages } from '@/services/gallery'
 
 interface Props {
   open: boolean
@@ -93,14 +93,6 @@ export default function TypeSettingsModal({
   const [referenceImages, setReferenceImages] = useState<string[]>([])
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
-  // 图片库选择模式：reference=参考图；product=单独商品图
-  const [galleryMode, setGalleryMode] = useState<'reference' | 'product'>('reference')
-  const productFileRef = useRef<HTMLInputElement | null>(null)
-
-  // 单独商品图：仅本策划项使用的主图（与项目产品图区分）。存储落盘文件名，回显由文件名拼 /api/gallery/files/
-  const [productImage, setProductImage] = useState('')
-  const [productImageUrl, setProductImageUrl] = useState('')
-  const [productUploading, setProductUploading] = useState(false)
 
   useEffect(() => {
     if (!open || !type) return
@@ -114,9 +106,6 @@ export default function TypeSettingsModal({
     setCommon({ ...baseCommon, ...(item?.common_settings || {}) })
     setNote(item?.note || '')
     setReferenceImages(item?.reference_images ? [...item.reference_images] : [])
-    const piImg = item?.product_image || ''
-    setProductImage(piImg)
-    setProductImageUrl(piImg ? `/api/gallery/files/${piImg}` : '')
     const os = item?.output_settings || {}
     const pid = os.provider_id ?? inheritedModel?.provider_id ?? null
     const mname = os.model_name ?? inheritedModel?.model_name ?? null
@@ -177,7 +166,7 @@ export default function TypeSettingsModal({
     },
     note,
     reference_images: referenceImages,
-    product_image: productImage,
+    product_image: item?.product_image || '',
   })
 
   const handleSave = () => {
@@ -254,42 +243,7 @@ export default function TypeSettingsModal({
     })
   }
 
-  // 单独商品图上传（不污染项目产品图列表）
-  const handleProductImageUpload = async (file: File) => {
-    setProductUploading(true)
-    try {
-      const res = await uploadPlanItemImage(projectId, file)
-      if (res?.filename) {
-        setProductImage(res.filename)
-        setProductImageUrl(res.url)
-        message.success('单独商品图已上传')
-      } else {
-        throw new Error('上传失败')
-      }
-    } catch (e) {
-      message.error('上传失败，请重试')
-    } finally {
-      setProductUploading(false)
-    }
-  }
-
-  const removeProductImage = () => {
-    setProductImage('')
-    setProductImageUrl('')
-  }
-
   const addFromGallery = (url: string) => {
-    if (galleryMode === 'product') {
-      // url 形如 /api/gallery/files/{filename}，还原为落盘文件名存入 product_image
-      const fname = url.replace(/^.*\/api\/gallery\/files\//, '')
-      if (fname) {
-        setProductImage(fname)
-        setProductImageUrl(url)
-        message.success('已选用项目图作为单独商品图')
-      }
-      setGalleryOpen(false)
-      return
-    }
     if (referenceImages.length >= 4) {
       message.warning('最多选择 4 张参考图片')
       return
@@ -460,7 +414,7 @@ export default function TypeSettingsModal({
                         <span>{uploading ? '上传中…' : '本地上传'}</span>
                       </button>
                     </Upload>
-                    <button className="ref-lib-btn" onClick={() => { setGalleryMode('reference'); setGalleryOpen(true) }} disabled={referenceImages.length >= 4}>
+                    <button className="ref-lib-btn" onClick={() => setGalleryOpen(true)} disabled={referenceImages.length >= 4}>
                       图片库
                     </button>
                   </div>
@@ -476,53 +430,6 @@ export default function TypeSettingsModal({
               </div>
             </div>
 
-            {/* 单独商品图（选填）：仅本策划项使用，不传则回退项目产品图 */}
-            <div className="ms-block">
-              <h4>单独商品图 <span className="ms-note">（选填，不传则使用项目产品图）</span></h4>
-              <p className="ms-note">为该出图类型单独指定一张商品主图，生成时优先使用它（其余类型仍用项目产品图）。</p>
-              <div className="ref-upload">
-                <div className="ref-upload-box">
-                  <div className="ref-upload-actions">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      hidden
-                      ref={(el) => { productFileRef.current = el }}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0]
-                        if (f) handleProductImageUpload(f)
-                        e.target.value = ''
-                      }}
-                    />
-                    <button
-                      className="ref-upload-btn"
-                      disabled={productUploading}
-                      onClick={() => productFileRef.current?.click()}
-                    >
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15v4a2 2 0 01-2 2H5a2 0 01-2-2v-4" />
-                        <polyline points="17 8 12 3 7 8" />
-                        <line x1="12" y1="3" x2="12" y2="15" />
-                      </svg>
-                      <span>{productUploading ? '上传中…' : '上传单独商品图'}</span>
-                    </button>
-                    {projectImages.length > 0 && (
-                      <button className="ref-lib-btn" onClick={() => { setGalleryMode('product'); setGalleryOpen(true) }}>
-                        从项目图选择
-                      </button>
-                    )}
-                  </div>
-                  {productImageUrl && (
-                    <div className="ref-preview-list">
-                      <div className="ref-preview">
-                        <img src={productImageUrl} alt="单独商品图" />
-                        <button className="ref-remove" onClick={removeProductImage} title="移除">✕</button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -536,7 +443,7 @@ export default function TypeSettingsModal({
         open={galleryOpen}
         onCancel={() => setGalleryOpen(false)}
         footer={null}
-        title={galleryMode === 'product' ? '选择单独商品图' : '图片库'}
+        title={'图片库'}
         width={720}
         className="g-modal gallery-picker-modal"
       >

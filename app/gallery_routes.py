@@ -36,6 +36,7 @@ from app.gallery_service import (
     list_templates,
     recompute_estimate,
     reorder_plan_items,
+    rename_record,
     rename_task,
     resolve_file,
     save_plan_item_image,
@@ -55,6 +56,8 @@ from app.schemas import (
     GalleryProjectCreate,
     GalleryProjectRead,
     GalleryProjectUpdate,
+    GalleryRecordRead,
+    GalleryRecordUpdate,
     GalleryShowcaseCreate,
     GalleryShowcaseRead,
     GalleryTaskRead,
@@ -417,6 +420,20 @@ def my_records(
 ) -> list:
     recs = list_records(db, current_user)
     return [_rec_to_dict(r) for r in recs]
+
+
+@router.patch("/records/{record_id}", response_model=GalleryRecordRead)
+def patch_record(
+    record_id: int,
+    payload: GalleryRecordUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> models.GalleryRecord:
+    """重命名单张创作记录（图片）的标题。仅允许用户修改自己的记录。"""
+    rec = rename_record(db, current_user, record_id, payload.title or "")
+    if not rec:
+        raise HTTPException(status_code=404, detail="记录不存在")
+    return rec
 
 
 def _rec_to_dict(r: models.GalleryRecord) -> dict:

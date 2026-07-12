@@ -1,0 +1,63 @@
+{
+  "found": true,
+  "titleText": "生成结果详情",
+  "titleRect": {
+    "x": 144,
+    "y": 116,
+    "width": 1152,
+    "height": 25.5,
+    "top": 116,
+    "right": 1296,
+    "bottom": 141.5,
+    "left": 144
+  },
+  "closeRect": {
+    "x": 1272,
+    "y": 112,
+    "width": 32,
+    "height": 32,
+    "top": 112,
+    "right": 1304,
+    "bottom": 144,
+    "left": 1272
+  },
+  "headerRect": {
+    "x": 120,
+    "y": 100,
+    "width": 1200,
+    "height": 58.5,
+    "top": 100,
+    "right": 1320,
+    "bottom": 158.5,
+    "left": 120
+  },
+  "titleStyle": {
+    "color": "rgb(27, 26, 33)",
+    "fontSize": "17px",
+    "fontWeight": "600",
+    "overflow": "visible",
+    "whiteSpace": "normal",
+    "textOverflow": "clip",
+    "maxWidth": "none",
+    "lineHeight": "25.5px"
+  },
+  "headerStyle": {
+    "padding": "16px 24px",
+    "color": "rgb(27, 26, 33)",
+    "borderBottom": "1px solid rgb(236, 234, 228)"
+  },
+  "closeStyle": {
+    "position": "absolute",
+    "top": "12px",
+    "right": "16px",
+    "insetInlineEnd": "16px"
+  },
+  "cut": {
+    "scrollW": 1152,
+    "clientW": 1152,
+    "overflow": "visible",
+    "whiteSpace": "normal",
+    "textOverflow": "clip",
+    "maxW": "none"
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "url": "http://localhost/ecommerce-gallery",
+  "taskCells": [
+    {
+      "width": 160,
+      "height": 160
+    },
+    {
+      "width": 160,
+      "height": 160
+    },
+    {
+      "width": 160,
+      "height": 160
+    },
+    {
+      "width": 160,
+      "height": 160
+    },
+    {
+      "width": 160,
+      "height": 160
+    },
+    {
+      "width": 160,
+      "height": 160
+    },
+    {
+      "width": 160,
+      "height": 160
+    },
+    {
+      "width": 160,
+      "height": 160
+    }
+  ],
+  "allSameWidth": true,
+  "allSameHeight": true,
+  "sampleWidths": [
+    160,
+    160,
+    160,
+    160,
+    160,
+    160,
+    160,
+    160
+  ],
+  "sampleHeights": [
+    160,
+    160,
+    160,
+    160,
+    160,
+    160,
+    160,
+    160
+  ],
+  "imageObjectFit": "contain"
+}

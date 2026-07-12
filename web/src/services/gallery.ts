@@ -316,6 +316,10 @@ export function updateTask(taskId: number, data: { name?: string }): Promise<Gal
   return patch(`${BASE}/tasks/${taskId}`, data)
 }
 
+export function updateRecord(recordId: number, data: { title?: string }): Promise<GalleryRecord> {
+  return patch(`${BASE}/records/${recordId}`, data)
+}
+
 export function getProjectRecords(projectId: number): Promise<GalleryRecord[]> {
   return get(`${BASE}/projects/${projectId}/records`)
 }

@@ -1,0 +1,3 @@
+CONSOLE verbose: [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o
+case-strip imgs found: 24
+result 查看详情 buttons: 0

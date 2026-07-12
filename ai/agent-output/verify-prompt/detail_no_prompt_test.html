@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>作品详情 - 无提示词按钮</title>
+  <link rel="stylesheet" href="../../../web/dist/assets/index-CCei-DD-.css" />
+  <style>
+    body { padding: 40px; background: #fff; color-scheme: light; }
+    .ant-modal-content { background: #fff !important; }
+    .ant-modal-header { background: #fff !important; border-bottom: 1px solid #ECEAE4 !important; }
+    .ant-modal-title { color: #1B1A21 !important; }
+  </style>
+</head>
+<body>
+  <div class="gallery-page">
+    <div class="ant-modal-root g-modal detail-modal">
+      <div class="ant-modal-wrap" style="display:block;position:static;background:transparent;">
+        <div class="ant-modal" style="width:1080px;max-width:95vw;margin:0 auto;">
+          <div class="ant-modal-content">
+            <div class="ant-modal-header">
+              <div class="ant-modal-title">作品详情</div>
+            </div>
+            <div class="ant-modal-body" style="max-height: calc(100vh - 150px); overflow-y: auto;">
+              <div class="detail-modal-body">
+                <div class="detail-layout">
+                  <div class="detail-product">
+                    <div class="detail-img">
+                      <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'%3E%3Crect width='768' height='1024' fill='%23e8f0f9'/%3E%3Ctext x='50%25' y='50%25' font-size='28' fill='%23333' text-anchor='middle'%3E产品原图%3C/text%3E%3C/svg%3E" alt="产品原图" />
+                    </div>
+                    <div class="detail-title">产品原图</div>
+                  </div>
+                  <div class="detail-right">
+                    <div class="detail-grid">
+                      <div class="detail-item">
+                        <div class="detail-img">
+                          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'%3E%3Crect width='768' height='1024' fill='%23d6e4f0'/%3E%3Ctext x='50%25' y='50%25' font-size='28' fill='%23333' text-anchor='middle'%3E3:4 竖图%3C/text%3E%3C/svg%3E" alt="首屏视觉图 #1" />
+                        </div>
+                        <div class="detail-title">首屏视觉图 #1</div>
+                        <div class="detail-meta"><span>类型：首屏视觉图</span><span>模型：agnes-image-2.1-flash</span></div>
+                      </div>
+                      <div class="detail-item">
+                        <div class="detail-img">
+                          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1024' height='576'%3E%3Crect width='1024' height='576' fill='%23d9f0e2'/%3E%3Ctext x='50%25' y='50%25' font-size='28' fill='%23333' text-anchor='middle'%3E16:9 横图%3C/text%3E%3C/svg%3E" alt="产品白底图 #1" />
+                        </div>
+                        <div class="detail-title">产品白底图 #1</div>
+                        <div class="detail-meta"><span>类型：产品白底图</span><span>模型：agnes-image-2.1-flash</span></div>
+                      </div>
+                      <div class="detail-item">
+                        <div class="detail-img">
+                          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024'%3E%3Crect width='1024' height='1024' fill='%23f9e8d6'/%3E%3Ctext x='50%25' y='50%25' font-size='28' fill='%23333' text-anchor='middle'%3E1:1 方图%3C/text%3E%3C/svg%3E" alt="细节特写图 #1" />
+                        </div>
+                        <div class="detail-title">细节特写图 #1</div>
+                        <div class="detail-meta"><span>类型：细节特写图</span><span>模型：agnes-image-2.1-flash</span></div>
+                      </div>
+                      <div class="detail-item">
+                        <div class="detail-img">
+                          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='1024' height='420'%3E%3Crect width='1024' height='420' fill='%23e6d9f0'/%3E%3Ctext x='50%25' y='50%25' font-size='28' fill='%23333' text-anchor='middle'%3E超宽 Banner%3C/text%3E%3C/svg%3E" alt="运输安装 #1" />
+                        </div>
+                        <div class="detail-title">运输安装 #1</div>
+                        <div class="detail-meta"><span>类型：运输安装</span><span>模型：agnes-image-2.1-flash</span></div>
+                      </div>
+                      <div class="detail-item">
+                        <div class="detail-img">
+                          <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='768' height='1024'%3E%3Crect width='768' height='1024' fill='%23f0e6d9'/%3E%3Ctext x='50%25' y='50%25' font-size='28' fill='%23333' text-anchor='middle'%3E3:4%3C/text%3E%3C/svg%3E" alt="LongTitle" />
+                        </div>
+                        <div class="detail-title">ThisIsAVeryLongEnglishTitleWithoutSpacesThatShouldWrapCorrectlyAndNotOverflow</div>
+                        <div class="detail-meta"><span>类型：试穿图</span><span>模型：agnes-image-2.1-flash</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="detail-actions">
+                  <button class="btn btn-primary">🎨 一键做同款</button>
+                  <button class="btn btn-secondary">复制分享链接</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

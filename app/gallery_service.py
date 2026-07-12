@@ -494,14 +494,21 @@ def ai_fill_suggestion(project: models.GalleryProject, type_id: str, current: di
 # 生成（可插拔）
 # ─────────────────────────────────────────────────────────────
 
-def _build_prompt(project: models.GalleryProject, item: models.GalleryPlanItem, model_name: str | None = None) -> str:
+def _build_prompt(
+    project: models.GalleryProject,
+    item: models.GalleryPlanItem,
+    model_name: str | None = None,
+    effective_product_image: str | None = None,
+) -> str:
     """组装图片生成提示词（委派给提示词生成引擎）。
 
     历史实现是字符串拼接，易出现「允许文字 / 禁止文字」自相矛盾、抽象词未量化、
     缺市场 / 平台适配等问题。现统一委托 ``app.gallery_prompt.build_prompt`` 完成
     Resolver → CopyPolicy → Assembler → Linter 全流程，函数签名保持不变。
     """
-    return gallery_prompt.build_prompt(project, item, model_name=model_name)
+    return gallery_prompt.build_prompt(
+        project, item, model_name=model_name, effective_product_image=effective_product_image
+    )
 
 
 def list_image_models(db: Session, user: models.User) -> dict:
@@ -622,6 +629,24 @@ def _save_generated_image(url: str) -> str | None:
     return fname
 
 
+def _ratio_to_size(ratio: str | None) -> str:
+    """把前端选择的图片比例映射到图片生成模型可接受的尺寸字符串。
+
+    尺寸保持短边 1024，长边按比例取 64 整数倍，兼顾 SD 系列与 Agnes 等
+    OpenAI-compatible 图片模型的常见输入要求。未知/自适应时默认正方形。
+    """
+    mapping = {
+        "方图 1:1": "1024x1024",
+        "竖图 3:4": "768x1024",
+        "竖图 4:5": "832x1024",
+        "竖图 9:16": "576x1024",
+        "竖图 2:3": "704x1024",
+        "横图 16:9": "1024x576",
+        "横图 4:3": "1024x768",
+    }
+    return mapping.get(ratio or "", "1024x1024")
+
+
 def _real_generate(
     db: Session,
     user: models.User,
@@ -629,6 +654,7 @@ def _real_generate(
     reference_filenames: list[str],
     provider_id: int | None = None,
     model_name: str | None = None,
+    size: str = "1024x1024",
 ) -> dict | None:
     """尝试用所选（或默认）AI 提供商的图片模型真实出图。
 
@@ -653,7 +679,7 @@ def _real_generate(
             provider=provider,
             model_name=model.model_name,
             prompt=prompt,
-            size="1024x1024",
+            size=size,
             n=1,
             reference_images=ref_urls or None,
             tags=["gallery"],
@@ -737,6 +763,17 @@ def rename_task(db: Session, user: models.User, task_id: int, name: str) -> mode
     return task
 
 
+def rename_record(db: Session, user: models.User, record_id: int, title: str) -> models.GalleryRecord | None:
+    """重命名单张创作记录（图片）的标题。仅允许修改用户自己的记录。"""
+    rec = db.get(models.GalleryRecord, record_id)
+    if not rec or rec.user_id != user.id:
+        return None
+    rec.title = title.strip()
+    db.commit()
+    db.refresh(rec)
+    return rec
+
+
 def run_gallery_task(task_id: int) -> None:
     """后台 worker 执行的任务体：逐步生成图片并写入 GalleryRecord。
 
@@ -782,12 +819,18 @@ def run_gallery_task(task_id: int) -> None:
             title = t["title"] if t else item.type_id
             ios = item.output_settings or {}
             count = max(1, int(ios.get("count", 1) or 1))
+            # 用户为该策划项选择的图片比例 → 生成模型尺寸
+            ratio = ios.get("ratio") or "自适应尺寸"
+            size = _ratio_to_size(ratio)
             item_provider_id = ios.get("provider_id") or global_provider_id
             item_model = ios.get("model_name") or global_model
-            prompt = _build_prompt(proj, item, model_name=item_model)
             # 商品主图：优先用本条目单独上传的「单独商品图」，否则回退到项目产品图[0]
             effective_product_image = item.product_image or (
                 proj.images[0].filename if proj.images else None
+            )
+            prompt = _build_prompt(
+                proj, item, model_name=item_model,
+                effective_product_image=effective_product_image,
             )
             # 参考图列表：单独商品图作为主参考排首位，其余 reference_images 追加（去重）
             ref_files: list[str] = []
@@ -826,6 +869,7 @@ def run_gallery_task(task_id: int) -> None:
                     "rec": rec,
                     "prompt": prompt,
                     "ref_files": ref_files,
+                    "size": size,
                     "item_provider_id": item_provider_id,
                     "item_model": item_model,
                     "title": title,
@@ -844,6 +888,7 @@ def run_gallery_task(task_id: int) -> None:
                 real = _real_generate(
                     db, user, entry["prompt"], entry["ref_files"],
                     entry["item_provider_id"], entry["item_model"],
+                    size=entry["size"],
                 )
                 if real:
                     rec.result_filename = real.get("filename")

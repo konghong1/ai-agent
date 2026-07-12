@@ -1,0 +1,50 @@
+{
+  "labelText": "选择要发布的成图（默认已勾选真实成图，示例占位图不可选）",
+  "footerButtons": [
+    {
+      "text": "取 消",
+      "visible": true
+    },
+    {
+      "text": "发布到创作案例",
+      "visible": true
+    }
+  ],
+  "modalBox": {
+    "content": {
+      "x": 343,
+      "y": 100,
+      "width": 680,
+      "height": 472.609375,
+      "top": 100,
+      "right": 1023,
+      "bottom": 572.609375,
+      "left": 343
+    },
+    "footer": {
+      "x": 343,
+      "y": 540.609375,
+      "width": 680,
+      "height": 32,
+      "top": 540.609375,
+      "right": 1023,
+      "bottom": 572.609375,
+      "left": 343
+    },
+    "body": {
+      "x": 343,
+      "y": 133,
+      "width": 680,
+      "height": 395.609375,
+      "top": 133,
+      "right": 1023,
+      "bottom": 528.609375,
+      "left": 343
+    },
+    "viewport": {
+      "width": 1366,
+      "height": 768
+    }
+  },
+  "footerVisible": true
+}

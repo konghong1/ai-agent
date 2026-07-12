@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { message, Modal, Spin, Input, Select, Image } from 'antd'
 import {
   getTypes, getDraft, getTemplates,
-  getImageModels, getTasks, getTask, updateTask, getShowcases, publishShowcase,
+  getImageModels, getTasks, getTask, updateTask, updateRecord, getShowcases, publishShowcase,
   uploadImages, deleteImage, updateProject,
   createPlanItem, updatePlanItem, deletePlanItem,
   generate, createTemplate, deleteTemplate, applyTemplate, updateTemplate,
@@ -36,6 +36,7 @@ function placeholderImg(label: string): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
+// 把用户选择的图片比例映射为 CSS aspect-ratio 字符串，供详情弹窗按设置比例展示
 // 可点击放大 + 可下载的图片组件。
 // 真实成图用 antd <Image>（点击原生放大预览）；悬停叠加下载按钮，
 // 下载时通过 fetch 取 blob 再触发本地保存，避免跨域导致 a.download 失效。
@@ -211,6 +212,10 @@ export default function EcommerceGallery() {
   // 任务重命名
   const [editingTaskId, setEditingTaskId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
+
+  // 单张创作记录（图片）重命名
+  const [editingRecordId, setEditingRecordId] = useState<number | null>(null)
+  const [editingRecordName, setEditingRecordName] = useState('')
 
   const [warnClosed, setWarnClosed] = useState(false)
 
@@ -502,6 +507,30 @@ export default function EcommerceGallery() {
     } catch (e) { /* 已提示 */ } finally {
       setEditingTaskId(null)
       setEditingName('')
+    }
+  }
+
+  // ── 重命名单张创作记录（图片标题，如「首屏视觉图 #1」）──
+  const startRenameRecord = (rec: GalleryRecord) => {
+    setEditingRecordId(rec.id)
+    setEditingRecordName(rec.title || '')
+  }
+  const submitRenameRecord = async (recordId: number) => {
+    const name = editingRecordName.trim()
+    if (!name) {
+      setEditingRecordId(null)
+      setEditingRecordName('')
+      return
+    }
+    try {
+      const updated = await updateRecord(recordId, { title: name })
+      setDetailGroup((prev) =>
+        prev ? prev.map((r) => (r.id === recordId ? { ...r, title: updated.title } : r)) : prev,
+      )
+      message.success('图片名称已更新')
+    } catch (e) { /* 已提示 */ } finally {
+      setEditingRecordId(null)
+      setEditingRecordName('')
     }
   }
 
@@ -1181,9 +1210,9 @@ export default function EcommerceGallery() {
         open={!!detailGroup}
         onCancel={() => setDetailGroup(null)}
         footer={null}
-        width={1080}
+        width={1200}
         className="g-modal detail-modal"
-        title="作品详情"
+        title="生成结果详情"
       >
         {detailGroup && (
           <div className="detail-modal-body">
@@ -1208,12 +1237,32 @@ export default function EcommerceGallery() {
                         ) : (
                           <img src={placeholderImg(r.title || '作品')} alt={r.title} />
                         )}
-                        {features.show_prompt && r.prompt && <PromptBadge prompt={r.prompt} />}
                       </div>
-                      <div className="detail-title">{r.title}</div>
-                      <div className="detail-meta">
-                        <span>类型：{typeTitle(types, r.type_id)}</span>
-                        {r.model_name && <span>模型：{r.model_name}</span>}
+                      <div className="detail-title-row">
+                        {editingRecordId === r.id ? (
+                          <Input
+                            className="detail-rename-input input"
+                            value={editingRecordName}
+                            autoFocus
+                            maxLength={200}
+                            onChange={(e) => setEditingRecordName(e.target.value)}
+                            onBlur={() => submitRenameRecord(r.id)}
+                            onPressEnter={() => submitRenameRecord(r.id)}
+                            onKeyDown={(e) => { if (e.key === 'Escape') { setEditingRecordId(null); setEditingRecordName('') } }}
+                          />
+                        ) : (
+                          <span className="detail-title" onClick={() => startRenameRecord(r)} title="点击重命名">
+                            {r.title}
+                          </span>
+                        )}
+                        {editingRecordId !== r.id && (
+                          <button className="detail-rename-btn" title="重命名图片" onClick={() => startRenameRecord(r)}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1237,6 +1286,8 @@ export default function EcommerceGallery() {
         cancelText="取消"
         title="发布到创作案例"
         width={680}
+        className="g-modal publish-modal"
+        styles={{ body: { maxHeight: 'calc(85vh - 132px)', overflowY: 'auto', padding: '20px 24px' }, content: { maxHeight: '85vh' } }}
       >
         {publishTask && (
           <div className="publish-modal">
@@ -1287,14 +1338,14 @@ export default function EcommerceGallery() {
         open={!!showcaseDetail}
         onCancel={() => setShowcaseDetail(null)}
         footer={null}
-        width={960}
+        width={1200}
         className="g-modal detail-modal"
         title="创作案例详情"
       >
         {showcaseDetail && (
           <div className="detail-modal-body">
-            <div className="detail-grid">
-              <div className="detail-item">
+            <div className="detail-layout">
+              <div className="detail-product">
                 <div className="detail-img">
                   {isRealImage(showcaseDetail.original_url) ? (
                     <PreviewableImage src={showcaseDetail.original_url} alt="原图" className="cell-img" />
@@ -1304,17 +1355,22 @@ export default function EcommerceGallery() {
                 </div>
                 <div className="detail-title">原图</div>
               </div>
-              {showcaseDetail.image_urls.map((u, i) => (
-                <div className="detail-item" key={i}>
-                  <div className="detail-img">
-                    {isRealImage(u) ? (
-                      <PreviewableImage src={u} alt="" className="cell-img" />
-                    ) : (
-                      <img src={placeholderImg('')} alt="" />
-                    )}
-                  </div>
+              <div className="detail-right">
+                <div className="detail-grid">
+                  {showcaseDetail.image_urls.map((u, i) => (
+                    <div className="detail-item" key={i}>
+                      <div className="detail-img">
+                        {isRealImage(u) ? (
+                          <PreviewableImage src={u} alt="" className="cell-img" />
+                        ) : (
+                          <img src={placeholderImg('')} alt="" />
+                        )}
+                      </div>
+                      <div className="detail-title">生成图 #{i + 1}</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
             </div>
             <div className="detail-actions">
               <button className="btn btn-primary" onClick={() => { setShowcaseDetail(null); openDrawer() }}>🎨 生成同款</button>

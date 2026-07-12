@@ -614,6 +614,12 @@ class GalleryRecordRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class GalleryRecordUpdate(BaseModel):
+    """重命名单张创作记录（图片）的标题。"""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+
+
 class GalleryTaskRead(BaseModel):
     id: int
     project_id: int
