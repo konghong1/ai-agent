@@ -83,6 +83,8 @@ export interface GalleryRecord {
   result_url: string | null
   status: string
   prompt: string
+  prompt_en: string | null
+  prompt_source?: string
   provider_id: number | null
   provider_name: string | null
   model_name: string | null
@@ -284,7 +286,7 @@ export function reorderPlanItems(projectId: number, orderedIds: number[]): Promi
 }
 
 // ─────────────────────────────────────────────────────────────
-// AI 帮填（规则化建议）
+// AI 帮写（由 Agnes 多模态大模型根据产品图生成）
 // ─────────────────────────────────────────────────────────────
 
 export function aiFill(
@@ -293,6 +295,19 @@ export function aiFill(
   current: { personal_settings?: Record<string, string>; common_settings?: Record<string, string>; note?: string },
 ): Promise<{ common_settings: Record<string, string>; personal_settings: Record<string, string>; note: string }> {
   return post(`${BASE}/projects/${projectId}/ai-fill`, { type_id: typeId, current })
+}
+
+// 卖点 AI 帮写：根据产品图，AI 输出结构化卖点
+export interface AiSellingPoints {
+  product_name: string
+  selling_points: string
+  audience: string
+  scene: string
+  params: string
+}
+
+export function aiWriteSellingPoints(projectId: number): Promise<AiSellingPoints> {
+  return post(`${BASE}/projects/${projectId}/ai-write-selling-points`, {})
 }
 
 // ─────────────────────────────────────────────────────────────

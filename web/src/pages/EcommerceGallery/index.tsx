@@ -6,11 +6,12 @@ import {
   uploadImages, deleteImage, updateProject,
   createPlanItem, updatePlanItem, deletePlanItem,
   generate, createTemplate, deleteTemplate, applyTemplate, updateTemplate,
+  aiWriteSellingPoints,
 } from '@/services/gallery'
 import type {
   GalleryType, GalleryOptions, GalleryProject,
   GalleryRecord, GalleryTemplate, GalleryPlanItem,
-  GalleryImageModelsResponse, GalleryTask, GalleryShowcase,
+  GalleryImageModelsResponse, GalleryTask, GalleryShowcase, AiSellingPoints,
 } from '@/services/gallery'
 import PlannerDrawer from './PlannerDrawer'
 import SaveTemplateModal from './SaveTemplateModal'
@@ -94,14 +95,17 @@ function PreviewableImage({ src, alt, className }: { src: string; alt?: string; 
   )
 }
 
-// 查看单张图片的生成提示词。入口仅在后端 features.show_prompt 开启、且该图
+// 查看单张图片的生成提示词（中英双语）。入口仅在后端 features.show_prompt 开启、且该图
 // 确实带有 prompt 时由调用方渲染（见任务卡片与作品详情）。
-function PromptBadge({ prompt }: { prompt: string }) {
+function PromptBadge({ prompt, prompt_en, promptSource }: { prompt: string; prompt_en?: string | null; promptSource?: string }) {
   const [open, setOpen] = useState(false)
+  const [lang, setLang] = useState<'cn' | 'en'>('cn')
   const [copied, setCopied] = useState(false)
+  const isAi = promptSource === 'ai'
+  const activePrompt = lang === 'en' && prompt_en ? prompt_en : prompt
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(prompt)
+      await navigator.clipboard.writeText(activePrompt)
       setCopied(true)
       setTimeout(() => setCopied(false), 1800)
     } catch {
@@ -115,6 +119,7 @@ function PromptBadge({ prompt }: { prompt: string }) {
           <path d="M12 2L13.8 9.2L21 11L13.8 12.8L12 20L10.2 12.8L3 11L10.2 9.2L12 2Z" />
         </svg>
         提示词
+        {isAi && <span className="prompt-badge-ai">AI</span>}
       </button>
       <Modal
         open={open}
@@ -132,21 +137,39 @@ function PromptBadge({ prompt }: { prompt: string }) {
           </div>
           <div className="prompt-modal-titles">
             <h3>图片生成提示词</h3>
-            <p>基于当前配置与核心卖点自动组装</p>
+            <p>基于当前配置与核心卖点自动组装 · 中文版展示 / 英文版用于模型生成</p>
           </div>
         </div>
         <div className="prompt-modal-body">
-          <div className="prompt-text">{prompt}</div>
+          <div className="prompt-lang-tabs">
+            <button
+              className={lang === 'cn' ? 'active' : ''}
+              onClick={() => setLang('cn')}
+              type="button"
+            >
+              中文版
+            </button>
+            {prompt_en ? (
+              <button
+                className={lang === 'en' ? 'active' : ''}
+                onClick={() => setLang('en')}
+                type="button"
+              >
+                英文版（生成用）
+              </button>
+            ) : null}
+          </div>
+          <div className="prompt-text">{activePrompt}</div>
         </div>
         <div className="prompt-modal-footer">
-          <span className="prompt-meta">{prompt.length} 字 · 已随生成记录保存</span>
+          <span className="prompt-meta">{activePrompt.length} 字 · 已随生成记录保存</span>
           <button className="prompt-copy-btn" onClick={copy}>
             {copied ? (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
             ) : (
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
             )}
-            {copied ? '已复制' : '复制提示词'}
+            {copied ? '已复制' : `复制${lang === 'en' ? '英文' : '中文'}提示词`}
           </button>
         </div>
       </Modal>
@@ -218,6 +241,9 @@ export default function EcommerceGallery() {
   const [editingRecordName, setEditingRecordName] = useState('')
 
   const [warnClosed, setWarnClosed] = useState(false)
+
+  // 卖点 AI 帮写（加载态）
+  const [spFilling, setSpFilling] = useState(false)
 
   const fileRef = useRef<HTMLInputElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -716,7 +742,38 @@ export default function EcommerceGallery() {
           <section className="cfg-section">
             <div className="cfg-header">
               <h3>✨ 核心卖点</h3>
-              <button className="ai-chip" onClick={() => message.info('在「属性设置」弹窗中可使用 AI 帮写自动生成卖点文案。')}>✨ AI 帮写</button>
+              <button
+                className="ai-chip"
+                disabled={spFilling || !project?.images?.length}
+                title={project?.images?.length ? '根据产品图，AI 帮写结构化卖点' : '请先上传产品图'}
+                onClick={async () => {
+                  if (!project) return
+                  setSpFilling(true)
+                  try {
+                    const sp: AiSellingPoints = await aiWriteSellingPoints(project.id)
+                    const parts: string[] = []
+                    if (sp.product_name) parts.push(`产品名称：${sp.product_name}`)
+                    if (sp.selling_points) parts.push(`核心卖点：${sp.selling_points}`)
+                    if (sp.audience) parts.push(`适用人群：${sp.audience}`)
+                    if (sp.scene) parts.push(`期望场景：${sp.scene}`)
+                    if (sp.params) parts.push(`具体参数：${sp.params}`)
+                    const merged = parts.join('\n')
+                    if (merged) {
+                      setProject((p) => (p ? { ...p, selling_points: merged } : p))
+                      try { await updateProjectSafe(project.id, { selling_points: merged }) } catch {}
+                      message.success('AI 已根据产品图帮写卖点，可继续微调')
+                    } else {
+                      message.info('AI 暂未返回内容，请手动填写或重试')
+                    }
+                  } catch {
+                    /* 错误已由 request 统一提示 */
+                  } finally {
+                    setSpFilling(false)
+                  }
+                }}
+              >
+                {spFilling ? 'AI 帮写中…' : '✨ AI 帮写'}
+              </button>
             </div>
             <div className="field">
               <Input.TextArea
@@ -1070,7 +1127,8 @@ export default function EcommerceGallery() {
                             ) : (
                               <img src={placeholderImg(rec.title || '作品')} alt={rec.title || ''} />
                             )}
-                            {features.show_prompt && rec.prompt && <PromptBadge prompt={rec.prompt} />}
+                            {rec.title && <div className="cell-caption" title={rec.title}>{rec.title}</div>}
+                            {features.show_prompt && rec.prompt && <PromptBadge prompt={rec.prompt} prompt_en={rec.prompt_en} promptSource={rec.prompt_source} />}
                           </div>
                         )
                       })}
@@ -1262,6 +1320,11 @@ export default function EcommerceGallery() {
                               <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
                             </svg>
                           </button>
+                        )}
+                        {features.show_prompt && r.prompt && (
+                          <span className="detail-prompt-badge">
+                            <PromptBadge prompt={r.prompt} prompt_en={r.prompt_en} promptSource={r.prompt_source} />
+                          </span>
                         )}
                       </div>
                     </div>

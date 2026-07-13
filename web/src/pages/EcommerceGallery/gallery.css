@@ -1236,6 +1236,8 @@
   gap: 8px;
   padding: 12px 4px 8px;
 }
+.g-modal.detail-modal .detail-prompt-badge { flex-shrink: 0; display: inline-flex; }
+.g-modal.detail-modal .detail-prompt-badge .prompt-badge { margin: 0; }
 .g-modal.detail-modal .detail-title-row .detail-title {
   flex: 1;
   min-width: 0;
@@ -1592,12 +1594,22 @@
 .gallery-page .task-cell {
   position: relative;
   width: 160px; min-width: 160px; max-width: 160px;
-  height: 160px;
+  /* 统一 3:4 竖图框（与电商主图一致），不再强制正方形；图片 object-fit:contain 完整居中 */
+  aspect-ratio: 3 / 4;
+  height: auto;
   border-radius: var(--gb-r-md);
   overflow: hidden;
   background: var(--gb-surface-2);
   border: 1px solid var(--gb-line);
   display: flex; align-items: center; justify-content: center;
+}
+/* 每个任务格顶部显示该图标题/角度信息，无需点开即可识别 */
+.gallery-page .task-cell .cell-caption {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+  padding: 4px 8px; pointer-events: none;
+  font-size: 11px; line-height: 1.3; color: #fff; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: linear-gradient(to bottom, rgba(17, 22, 33, .62), rgba(17, 22, 33, 0));
 }
 .gallery-page .task-cell .pv-img { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
 .gallery-page .task-cell .pv-img .ant-image,
@@ -1638,7 +1650,7 @@
   .gallery-page .rh-stats { width: 100%; }
   .gallery-page .rh-stat { flex: 1; min-width: 0; }
   .gallery-page .task-grid { grid-template-columns: repeat(auto-fill, 120px); }
-  .gallery-page .task-cell { width: 120px; min-width: 120px; max-width: 120px; height: 120px; }
+  .gallery-page .task-cell { width: 120px; min-width: 120px; max-width: 120px; aspect-ratio: 3 / 4; height: auto; }
 }
 
 /* 发布到创作案例 · 按钮与弹窗 */
@@ -1811,6 +1823,14 @@
   box-shadow: 0 4px 10px rgba(124, 58, 237, .14);
 }
 .gallery-page .prompt-badge-icon { opacity: .92; }
+/* AI 生成来源徽标 */
+.gallery-page .prompt-badge-ai {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 800; letter-spacing: .04em;
+  color: #fff; background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  border-radius: 999px; padding: 2px 5px; line-height: 1;
+  box-shadow: 0 1px 3px rgba(79, 70, 229, .35);
+}
 /* 任务卡片网格单元裁切了溢出，提示词入口浮于图片左下角，避免被裁掉 */
 .gallery-page .task-cell { position: relative; }
 .gallery-page .task-cell .prompt-badge {
@@ -1880,6 +1900,24 @@
 }
 .g-modal.prompt-modal .prompt-copy-btn:active { transform: translateY(0); }
 .g-modal.prompt-modal .prompt-copy-btn svg { pointer-events: none; }
+
+/* 双语提示词切换标签 */
+.g-modal.prompt-modal .prompt-lang-tabs {
+  display: flex; gap: 8px; margin-bottom: 14px;
+}
+.g-modal.prompt-modal .prompt-lang-tabs button {
+  border: 1px solid var(--gb-line); background: var(--gb-surface);
+  color: var(--gb-ink-faint); font-size: 13px; font-weight: 600;
+  padding: 7px 14px; border-radius: 8px; cursor: pointer;
+  transition: all .15s var(--gb-ease);
+}
+.g-modal.prompt-modal .prompt-lang-tabs button:hover {
+  border-color: var(--gb-line-strong); color: var(--gb-ink);
+}
+.g-modal.prompt-modal .prompt-lang-tabs button.active {
+  border-color: var(--gb-ai-purple); background: var(--gb-ai-purple);
+  color: #fff;
+}
 
 .gallery-page .pv-dl-spinner {
   width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.25);

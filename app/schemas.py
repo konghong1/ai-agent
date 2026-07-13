@@ -603,6 +603,8 @@ class GalleryRecordRead(BaseModel):
     result_url: str | None
     status: str
     prompt: str
+    prompt_en: str | None = None
+    prompt_source: str = "template"
     provider_id: int | None = None
     provider_name: str | None = None
     model_name: str | None = None

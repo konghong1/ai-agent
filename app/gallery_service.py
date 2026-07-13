@@ -231,8 +231,10 @@ def delete_project(db: Session, user: models.User, project_id: int) -> bool:
 
 
 def recompute_estimate(db: Session, project: models.GalleryProject) -> None:
-    items = [{"type_id": it.type_id, "count": it.output_settings.get("count", 1)} for it in project.plan_items]
-    est = estimate_cost(items)
+    resolved = []
+    for it in project.plan_items:
+        resolved.append({"type_id": it.type_id, "count": it.output_settings.get("count", 1)})
+    est = estimate_cost(resolved)
     project.estimated_points = est["total_points"]
     project.estimated_minutes = est["total_minutes"]
 
@@ -448,46 +450,18 @@ def apply_template_to_project(db: Session, user: models.User, project_id: int, t
 
 
 # ─────────────────────────────────────────────────────────────
-# AI 帮填（规则化建议，可后续替换为真实大模型）
+# AI 帮写（由 Agnes 多模态大模型，根据产品图 + 类型，帮写更优配置）
 # ─────────────────────────────────────────────────────────────
 
 def ai_fill_suggestion(project: models.GalleryProject, type_id: str, current: dict | None = None) -> dict:
-    """基于已填字段给出规则化补全建议。"""
-    current = current or {}
-    t = get_plan_type(type_id)
-    title = t["title"] if t else type_id
+    """调用 Agnes 多模态，根据产品图 + 已选类型，帮商家补全/优化配置。
 
-    # 通用设置建议
-    common = dict(current.get("common_settings", {}) or {})
-    market = project.market_config or {}
-    if market.get("ecommerce_platform") and not common.get("ecommerce_platform"):
-        common["ecommerce_platform"] = market["ecommerce_platform"]
-    if market.get("target_market") and not common.get("target_market"):
-        common["target_market"] = market["target_market"]
-    if market.get("copy_language") and not common.get("copy_language"):
-        common["copy_language"] = market["copy_language"]
-    if market.get("visual_style") and not common.get("visual_style"):
-        common["visual_style"] = market["visual_style"]
-    if not common.get("tone_tendency"):
-        common["tone_tendency"] = "高饱和色调"
+    返回 {common_settings, personal_settings, note}，与旧规则版结构一致，
+    便于前端无缝替换。AI 失败时返回空结构（前端保留用户已填内容）。
+    """
+    from app.gallery_prompt_ai import ai_write_type_config
 
-    # 个性化设置建议：用「卖点」回填首个字段，其余给占位示例
-    personal = dict(current.get("personal_settings", {}) or {})
-    from app.gallery_config import get_personal_fields
-    fields = get_personal_fields(type_id)
-    for f in fields:
-        if f["label"] not in personal:
-            if project.selling_points and f == fields[0]:
-                personal[f["label"]] = project.selling_points[:30]
-            else:
-                personal[f["label"]] = f["placeholder"]
-
-    # 补充说明建议
-    note = current.get("note") or ""
-    if not note and project.selling_points:
-        note = f"围绕核心卖点「{project.selling_points[:20]}」生成{title}，突出差异化优势。"
-
-    return {"common_settings": common, "personal_settings": personal, "note": note}
+    return ai_write_type_config(project, type_id, current)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -499,15 +473,22 @@ def _build_prompt(
     item: models.GalleryPlanItem,
     model_name: str | None = None,
     effective_product_image: str | None = None,
-) -> str:
-    """组装图片生成提示词（委派给提示词生成引擎）。
+    ratio: str | None = None,
+) -> dict:
+    """组装图片生成提示词（中英双语）。
 
-    历史实现是字符串拼接，易出现「允许文字 / 禁止文字」自相矛盾、抽象词未量化、
-    缺市场 / 平台适配等问题。现统一委托 ``app.gallery_prompt.build_prompt`` 完成
-    Resolver → CopyPolicy → Assembler → Linter 全流程，函数签名保持不变。
+    重构后：优先由 Agnes 2.0 Flash 多模态大模型，根据「用户配置 + 卖点 + 参考图」
+    动态生成贴合产品的提示词（prompt_source="ai"）；AI 不可达 / 解析失败时自动
+    降级到旧模板引擎（prompt_source="template"），保证系统不挂。
+
+    返回 {prompt: 中文版展示提示词, prompt_en: 英文版生成提示词, prompt_source: str}。
+    英文版直接用于图片模型生成；中文版保留给前端展示与排查。
     """
-    return gallery_prompt.build_prompt(
-        project, item, model_name=model_name, effective_product_image=effective_product_image
+    from app.gallery_prompt_ai import generate_prompt_via_ai
+
+    return generate_prompt_via_ai(
+        project, item, model_name=model_name,
+        effective_product_image=effective_product_image, ratio=ratio,
     )
 
 
@@ -872,7 +853,7 @@ def generate(db: Session, user: models.User, project_id: int) -> models.GalleryT
     if not proj.plan_items:
         raise ValueError("请先在 AI 智能策划台选择要生成的类型")
 
-    # 计算计划生成的总图数
+    # 计算计划生成的总图数（与 run_gallery_task / recompute_estimate 一致）
     total = 0
     for item in proj.plan_items:
         ios = item.output_settings or {}
@@ -965,7 +946,6 @@ def run_gallery_task(task_id: int) -> None:
             t = get_plan_type(item.type_id)
             title = t["title"] if t else item.type_id
             ios = item.output_settings or {}
-            count = max(1, int(ios.get("count", 1) or 1))
             # 用户为该策划项选择的图片比例 → 生成模型尺寸
             ratio = ios.get("ratio") or "自适应尺寸"
             # 每个策划项可单独指定 provider / 模型，否则回退到项目全局配置
@@ -976,10 +956,6 @@ def run_gallery_task(task_id: int) -> None:
                 proj.images[0].filename if proj.images else None
             )
             size = _ratio_to_size(ratio, reference_filename=effective_product_image)
-            prompt = _build_prompt(
-                proj, item, model_name=item_model,
-                effective_product_image=effective_product_image,
-            )
             # 参考图列表：单独商品图作为主参考排首位，其余 reference_images 追加（去重）
             ref_files: list[str] = []
             if effective_product_image:
@@ -987,15 +963,28 @@ def run_gallery_task(task_id: int) -> None:
             ref_files.extend(
                 f for f in (item.reference_images or []) if f and f != effective_product_image
             )
-            for i in range(1, count + 1):
+
+            # 构建本策划项要生成的「每张图」提示词清单（entries_spec）。
+            # 每个策划项按 output_settings.count 生成对应张数（默认 1）；同一策划项共用一份提示词。
+            count = max(1, int(ios.get("count", 1) or 1))
+            pd = _build_prompt(
+                proj, item, model_name=item_model,
+                effective_product_image=effective_product_image, ratio=ratio,
+            )
+            entries_spec = [{"prompt_cn": pd["prompt"], "prompt_en": pd["prompt_en"], "prompt_source": pd.get("prompt_source", "template")}] * count
+
+            for idx, spec in enumerate(entries_spec, start=1):
+                rec_title = f"{title} #{idx}"
                 rec = models.GalleryRecord(
                     project_id=proj.id,
                     plan_item_id=item.id,
                     user_id=user.id,
                     type_id=item.type_id,
-                    title=f"{title} #{i}",
+                    title=rec_title,
                     status="pending",
-                    prompt=prompt,
+                    prompt=spec["prompt_cn"],
+                    prompt_en=spec["prompt_en"],
+                    prompt_source=spec["prompt_source"],
                     provider_id=item_provider_id,
                     provider_name=None,
                     model_name=item_model,
@@ -1015,13 +1004,14 @@ def run_gallery_task(task_id: int) -> None:
                 db.refresh(rec)
                 plan.append({
                     "rec": rec,
-                    "prompt": prompt,
+                    "prompt_cn": spec["prompt_cn"],
+                    "prompt_en": spec["prompt_en"],
                     "ref_files": ref_files,
                     "size": size,
                     "item_provider_id": item_provider_id,
                     "item_model": item_model,
                     "title": title,
-                    "i": i,
+                    "i": idx,
                     "item": item,
                 })
 
@@ -1034,7 +1024,7 @@ def run_gallery_task(task_id: int) -> None:
                 rec.status = "processing"
                 db.commit()
                 real = _real_generate(
-                    db, user, entry["prompt"], entry["ref_files"],
+                    db, user, entry["prompt_en"], entry["ref_files"],
                     entry["item_provider_id"], entry["item_model"],
                     size=entry["size"],
                 )

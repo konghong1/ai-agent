@@ -336,6 +336,26 @@ def ai_fill(
 
 
 # ─────────────────────────────────────────────────────────────
+# 卖点 AI 帮写（根据产品图，AI 输出结构化卖点）
+# ─────────────────────────────────────────────────────────────
+
+@router.post("/projects/{project_id}/ai-write-selling-points")
+def ai_write_selling_points_endpoint(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    proj = get_owned_project(db, current_user, project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    if not proj.images:
+        raise HTTPException(status_code=400, detail="请先上传至少一张产品图，AI 才能理解产品")
+    from app.gallery_prompt_ai import ai_write_selling_points
+
+    return ai_write_selling_points(proj, db)
+
+
+# ─────────────────────────────────────────────────────────────
 # 生成
 # ─────────────────────────────────────────────────────────────
 

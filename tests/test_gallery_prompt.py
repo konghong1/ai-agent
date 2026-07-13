@@ -15,7 +15,7 @@ import types
 # 让 `from app...` 可被直接执行时发现
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.gallery_prompt import build_prompt, _lint  # noqa: E402
+from app.gallery_prompt import build_prompt, _lint, build_prompt_bilingual  # noqa: E402
 
 
 # ── 测试用假对象（仅携带引擎需要的属性） ──────────────────────────
@@ -31,6 +31,7 @@ def _make_item(
     note: str = "",
     product_image: str = "",
     reference_images: list | None = None,
+    output_settings: dict | None = None,
 ) -> types.SimpleNamespace:
     return types.SimpleNamespace(
         type_id=type_id,
@@ -39,7 +40,7 @@ def _make_item(
         note=note,
         product_image=product_image,
         reference_images=reference_images or [],
-        output_settings={},
+        output_settings=output_settings or {},
     )
 
 
@@ -409,6 +410,105 @@ def test_no_reference_no_fidelity_block():
     print("[PASS] test_no_reference_no_fidelity_block")
 
 
+_CJK_RE = __import__("re").compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]")
+
+
+def test_bilingual_returns_both_versions():
+    """双语生成应同时返回中文（展示）与英文（生成）两个版本。"""
+    project = _make_project(
+        market_config={"target_market": "日韩", "ecommerce_platform": "淘宝 / 天猫"},
+        selling_points="lightweight and waterproof",
+    )
+    item = _make_item("angle",
+                      personal_settings={"展示角度": "多角度拼接", "角度数量": "三个角度（全面覆盖）"},
+                      product_image="prod.png", output_settings={"ratio": "自适应尺寸"})
+    d = build_prompt_bilingual(project, item)
+
+    assert isinstance(d, dict) and "prompt" in d and "prompt_en" in d, "应返回 {prompt, prompt_en}"
+    assert d["prompt"] and d["prompt_en"], "两个版本均非空"
+    print("[PASS] test_bilingual_returns_both_versions")
+
+
+def test_bilingual_en_has_no_system_chinese():
+    """英文版不得泄漏系统生成的中文（用户 selling_points 用纯英文以隔离用户内容）。"""
+    project = _make_project(
+        market_config={"target_market": "北美", "ecommerce_platform": "淘宝 / 天猫",
+                       "visual_style": "高级质感风"},
+        selling_points="lightweight, waterproof",
+    )
+    # 覆盖多个推荐类型，确保各类型英文版均无系统中文
+    for t in ["bg", "amz", "detail", "angle", "hero", "usp", "pain", "scene",
+              "detail2", "tryon", "model", "design", "cmp", "ship", "spec",
+              "pkg", "buyer", "promo"]:
+        item = _make_item(t,
+                          personal_settings={"氛围浓度": "轻度氛围", "视觉强化": "色彩冲击",
+                                             "场景类型": "居家空间", "排版呈现": "多场景拼接"},
+                          product_image="prod.png")
+        en = build_prompt_bilingual(project, item)["prompt_en"]
+        leaks = _CJK_RE.findall(en)
+        assert not leaks, f"类型 {t} 英文版泄漏中文: {set(leaks)} | {en[:120]}"
+    print("[PASS] test_bilingual_en_has_no_system_chinese")
+
+
+def test_bilingual_en_is_compact_and_config_relevant():
+    """英文版应精简且配置相关：angle 例必须含多角度/平台/三角度/自适应比例等关键约束。"""
+    project = _make_project(
+        market_config={"target_market": "日韩", "ecommerce_platform": "淘宝 / 天猫",
+                       "visual_style": "高级质感风"},
+        selling_points="lightweight, waterproof",
+    )
+    item = _make_item("angle",
+                      personal_settings={"展示角度": "多角度拼接", "角度数量": "三个角度（全面覆盖）",
+                                         "排版呈现": "多场景拼接"},
+                      product_image="prod.png", output_settings={"ratio": "自适应尺寸"})
+    d = build_prompt_bilingual(project, item)
+    en = d["prompt_en"]
+
+    for token in ("Taobao/Tmall", "three-angle view", "multi-angle",
+                  "match reference aspect ratio", "no people"):
+        assert token in en, f"angle 英文版应含配置约束 {token!r}"
+    # 英文版应明显短于中文版（中文版含冗余说明性约束）
+    assert len(en) < len(d["prompt"]), "英文版应比中文版精简"
+    print(f"[PASS] test_bilingual_en_is_compact_and_config_relevant (en={len(en)} cn={len(d['prompt'])})")
+
+
+def test_angle_type_is_single_image_multi_angle():
+    """「产品多角度」= 一张图内展示产品多个视角（拼接/collage），不是生成多张图。
+
+    - build_prompt_bilingual 返回单条提示词（对应一张图）；
+    - 英文版应含 multi-angle collage（单图多视角），且不含 single 单角度拆分；
+    - 角度数量/展示角度等配置仍应落地（three-angle view / view: multi-angle collage）；
+    - 系统生成部分不得泄漏中文。
+    """
+    project = _make_project(
+        market_config={"target_market": "日韩", "ecommerce_platform": "淘宝 / 天猫", "visual_style": "高级质感风"},
+    )
+    item = _make_item(
+        "angle",
+        personal_settings={
+            "角度数量": "三个角度（全面覆盖）", "展示角度": "多角度拼接",
+            "背景场景": "纯白色", "细节强化": "突出轮廓线条", "视觉强化": "轮廓强化",
+        },
+    )
+    d = build_prompt_bilingual(project, item)
+    cn = d["prompt"]
+    en = d["prompt_en"]
+
+    # 单张图：返回单条提示词，不出现单角度拆分
+    assert "multi-angle collage" in en, "angle 应为单图多视角拼接"
+    assert "single " not in en, "angle 不应拆成单角度多张图"
+    # 配置相关性仍落地
+    assert "three-angle view" in en, "角度数量 应落地到英文版"
+    assert "view: multi-angle collage" in en, "展示角度 应落地到英文版"
+    # 中文版同样落地
+    assert "三个角度（全面覆盖）" in cn, "角度数量 应落地到中文版"
+    assert "多角度拼接" in cn, "展示角度 应落地到中文版"
+    # 无系统中文泄漏（未设置卖点）
+    leak = [c for c in en if "一" <= c <= "鿿"]
+    assert not leak, f"英文版泄漏中文: {''.join(leak)}"
+    print("[PASS] test_angle_type_is_single_image_multi_angle")
+
+
 def test_all_plan_types_no_contradiction():
     """遍历全部策划类型，引擎产出均不应抛异常（矛盾/缺要素自检通过）。"""
     project = _make_project(
@@ -447,6 +547,10 @@ def _run_all() -> None:
     test_reference_fidelity_human()
     test_reference_color_not_recolored()
     test_no_reference_no_fidelity_block()
+    test_bilingual_returns_both_versions()
+    test_bilingual_en_has_no_system_chinese()
+    test_bilingual_en_is_compact_and_config_relevant()
+    test_angle_type_is_single_image_multi_angle()
     print("\nALL TESTS PASSED ✅")
 
 

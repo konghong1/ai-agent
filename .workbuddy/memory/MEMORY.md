@@ -38,6 +38,9 @@
 - **配置版本化**: `GALLERY_CONFIG_VERSION=8`（V8 已升级），版本变化时强制更新 DB。
 - **V8 电商转化视角重构 (2026-07-12)**: 全部推荐类型配置项收敛到 5 个转化维度——价值聚焦 / 视觉强化 / 产品呈现 / 氛围浓度 / 价值暗示；人物类配置项大幅精简，人物基础描述由 `target_market` 市场档案提供。新增 `PRODUCT_PRESENT_VOCAB` 并扩展 `STYLE_VOCAB` / `VALUE_FOCUS_VOCAB` / `VALUE_HINT_VOCAB`，提示词 M3 层按 5 维度量化注入。
 - `gallery_service._build_prompt` 为薄委派，签名不变。
+- **双语生成 (V13)**: `build_prompt_bilingual()` 返回 `{prompt: 中文展示版, prompt_en: 英文生成版}`；**生成时以 `prompt_en` 送图像模型**（经 `run_gallery_task` → `_real_generate`）。UI `PromptBadge` 中/英 Tab 展示。
+- **angle 类型语义硬约束（2026-07-13 用户纠正）**: `产品多角度` = 一张图内展示产品多个视角（提示词 `multi-angle collage`），**绝不可拆成多张单角度图**。`run_gallery_task` 对所有类型统一按 `output_settings.count`（默认 1）生成单图；不要为 angle 特判多图，也不要把「角度数量」映射成张数。曾误加 `resolve_angle_views`/`build_angle_prompts` 拆多图，已全量回退删除。
+- **英文版零中文规则（硬约束）**: `_t()` 对未命中 `OPTIONS_EN` 的中文值会原样泄漏；任何新选项值/类型标题/平台名/修图串若进入英文路径，必须在 `OPTIONS_EN` 或专用 `*_EN` 词典（`VALUE_FOCUS_VOCAB_EN`/`STYLE_VOCAB_EN`/`PRODUCT_PRESENT_VOCAB_EN`/`VALUE_HINT_VOCAB_EN`/`FABRIC_VOCAB_EN`/`CRAFT_VOCAB_EN`）中有英文映射，且 `_DEFAULT_PLATFORM` 兜底必须是英文。唯一允许的中文是用户自己写的 `selling_points`。改提示词引擎后必须重跑 `tests/audit_bilingual.py` + `tests/test_gallery_prompt.py` 验证零泄漏。
 
 ## 电商套图 · 环境双栈
 - **Docker 正确栈（推荐）**: `http://localhost/`（docker web 映射 80），连 MySQL `ai_agent`（5 个图片模型，能真实出图）。
@@ -65,3 +68,22 @@
 
 - 所有生成文件归入 `ai/agent-output/`：`overviews/`（总结）、`verify-shots/`（截图）、`logs/`（日志）。
 - 不可移动：`agent.db`/`.env`/运行时 SQLite；项目文档（PRD/FDD/README/AGENTS/TASKS）；`designs/`、`疑问/`。
+
+## 电商套图 · 提示词工程 = Agnes 多模态 AI 生成（2026-07-13 重构）
+
+**架构定调**: 提示词**不再**用 `gallery_prompt.py` 的 86 项硬编码拼装（已降级为兜底）。主路径由 **Agnes 2.0 Flash 多模态**（`OPENAI_BASE_URL`=https://apihub.agnes-ai.com/v1，model=agnes-2.0-flash，复用 `settings`）根据「用户配置+卖点+参考图(base64 内联)」生成差异化提示词。
+
+- **核心引擎**: `app/gallery_prompt_ai.py` — `generate_prompt_via_ai`(生成图提示词, 返回 `{prompt,prompt_en,prompt_source}`)、`ai_write_selling_points`(卖点帮写: 产品名称/核心卖点/适用人群/期望场景/具体参数)、`ai_write_type_config`(类型配置帮写)。
+- **降级**: AI 不可达/超时/解析失败 → 降级旧 `gallery_prompt.build_prompt_bilingual`，`prompt_source` 标 `template`（用户明确选"AI 为主+模板兜底"）。Agnes 偶发 503(server memory overloaded) 属服务端瞬时过载，走兜底是预期行为。
+- **英文零中文**: `prompt_en` 经 `_strip_cjk` 兜底清中文（硬约束）。
+- **落库**: `gallery_records.prompt_source`(VARCHAR16) 记录来源；`core/database._migrate_sqlite_columns` 已加 ALTER（SQLite/MySQL 兼容）。
+- **前端**: `gallery.ts` 的 `aiWriteSellingPoints()`；`index.tsx` 卖点「AI 帮写」回填文本框、`PromptBadge` 加「AI」徽标（`promptSource` 属性）；`TypeSettingsModal`「AI帮填」后端已变 AI，前端不改。
+- **验证**: `python tests/test_gallery_prompt_ai.py`(7 passed)；`tsc --noEmit` 零错误；`vite build` 4289 模块。
+- **生效**: 后端改 → 重启 `ai-agent-api`+`ai-agent-worker`；前端 Ctrl+F5。
+
+## Docker 前端白屏/登录不上 = nginx sendfile bug（重要排错项）
+- **现象**: 浏览器打开 `localhost`(Docker web 容器 :80) 白屏、登录页点不动；`curl` 从**宿主**访问 `/assets/*.js|css` 返回 `Content-Length` 正确但**响应体 0 字节**；容器内 `curl 127.0.0.1` 却完整。后端 `/api/auth/login` 一直正常（401=正确校验）。
+- **根因**: `docker/nginx.conf` 作为 `default.conf` 挂进 `ai-agent-web`，base `nginx.conf` 的 `http` 块默认 `sendfile on`；`../web/dist` 是**从 Windows 宿主机 bind mount** 进容器的。Docker Desktop 下 `sendfile()` 对挂载卷文件向**外部客户端**发 0 字节体（容器内回环正常，所以自测发现不了）。
+- **修复**: 在 `docker/nginx.conf` 的 `server` 块加 `sendfile off;`（持久化，覆盖 http 级 on），`docker restart ai-agent-web` 生效。改后宿主可完整下发 js(2.8MB)/css(120KB)。
+- **快速诊断命令**: `docker exec ai-agent-web curl -s -o /dev/null -w '%{size_download}' http://127.0.0.1:80/assets/<hash>.js`（容器内）对比宿主 `curl -s -o /dev/null -w '%{size_download}' http://localhost/assets/<hash>.js`（宿主）；不一致即此 bug。
+- **注意**: `sendfile off` 后偶发 reload 瞬间仍 0 字节，等容器完全起来再测；若仍 0 字节可能是 Docker Desktop 网络抖动，重启 web 容器即可。

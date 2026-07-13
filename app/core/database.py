@@ -91,3 +91,19 @@ def _migrate_sqlite_columns() -> None:
                 ))
                 conn.commit()
                 logger.info("Added task_id column to gallery_records")
+        # gallery_records.prompt_en（英文版生成提示词）
+        if "prompt_en" not in gr_cols:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE gallery_records ADD COLUMN prompt_en TEXT DEFAULT ''"
+                ))
+                conn.commit()
+                logger.info("Added prompt_en column to gallery_records")
+        # gallery_records.prompt_source（提示词来源：ai / template）
+        if "prompt_source" not in gr_cols:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "ALTER TABLE gallery_records ADD COLUMN prompt_source VARCHAR(16) DEFAULT 'template'"
+                ))
+                conn.commit()
+                logger.info("Added prompt_source column to gallery_records")

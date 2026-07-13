@@ -40,6 +40,26 @@ from app.gallery_config import (
     QUALITY_BOOSTERS,
     NEGATIVE_BASE,
     RATIO_FORMAT,
+    # 英文版提示词资产
+    MARKET_PROFILES_EN,
+    PLATFORM_PROFILES_EN,
+    STYLE_VOCAB_EN,
+    HUMAN_STYLE_VOCAB_EN,
+    VALUE_FOCUS_VOCAB_EN,
+    VALUE_HINT_VOCAB_EN,
+    PRODUCT_PRESENT_VOCAB_EN,
+    FABRIC_VOCAB_EN,
+    CRAFT_VOCAB_EN,
+    SETTING_TEMPLATE_EN,
+    TYPE_LAYOUT_EN,
+    TYPE_CAMERA_EN,
+    NEGATIVE_BASE_EN,
+    QUALITY_BOOSTERS_EN,
+    RATIO_FORMAT_EN,
+    GLOBAL_RETROUCH_EN,
+    RETOUCH_NO_HUMAN_EN,
+    WHITE_TECH_EN,
+    OPTIONS_EN,
 )
 
 # V8 转化维度词 → 语义 VOCAB 映射（避免裸值输出，保留专业视觉表达）
@@ -53,10 +73,10 @@ _DIM_VOCAB = {
 # 兜底档案（配置缺失时回退，避免 KeyError）
 _DEFAULT_MARKET = "全球"
 _DEFAULT_PLATFORM: dict = {
-    "composition": "居中清晰构图，主体突出，完整展示",
-    "subject_ratio": "主体占画面约 65%，四周均匀留白",
-    "resolution": "8K 超高清，商业精修，高锐度，无镜头畸变",
-    "forbidden": "肢体畸形、局部裁切、杂乱背景、过重阴影、反光光斑",
+    "composition": "centered clear composition, subject prominent, complete display",
+    "subject_ratio": "subject fills about 65%, even margins around",
+    "resolution": "8K ultra HD, commercial retouch, high sharpness, no lens distortion",
+    "forbidden": "limb deformity, partial crop, cluttered background, heavy shadows, reflection spots",
 }
 
 # 个性化字段分类（V8 电商转化视角）
@@ -389,8 +409,11 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
     buckets["PERSON"] = person + buckets["PERSON"]
 
     # ── 其余配置项按 BUCKET_ROUTING 路由 ──
+    skip_labels = set()
     for lbl, val in ps.items():
         if not val:
+            continue
+        if lbl in skip_labels:
             continue
         # 已在【核心商品主体】合成的部分直接跳过
         if lbl == "产品呈现":
@@ -573,3 +596,301 @@ def build_prompt(project, item, model_name: str | None = None, effective_product
     prompt = _assemble(cfg, copy, market, platform)
     _lint(prompt, copy["allow_text"])
     return prompt
+
+
+# ─────────────────────────────────────────────────────────────
+# 英文版紧凑提示词生成器（V13 · 供图片模型直接消费）
+# 目标：短小、精准、配置相关性强，优先把「类型 + 用户选择」放在句首。
+# ─────────────────────────────────────────────────────────────
+
+def _t(v: str | None) -> str:
+    """把中文选项值翻译成英文；无命中时原样返回。"""
+    if not v:
+        return ""
+    return OPTIONS_EN.get(v, v)
+
+
+def _type_opening_en(cfg: dict, sem: dict, platform_en: dict) -> str:
+    """英文提示词最强句首：类型 + 平台/市场，尽可能短。"""
+    type_id = cfg["type_id"]
+    title = OPTIONS_EN.get(cfg["title"], cfg["title"])
+    layout = TYPE_LAYOUT_EN.get(type_id, "")
+    ps = cfg["personal"]
+
+    # 角度类：单张图内呈现产品多个视角
+    if type_id == "angle":
+        return f"Product multi-angle collage for {platform_en.get('name', 'e-commerce')}. {layout}"
+
+    if type_id in {"bg", "amz", "detail", "detail2"}:
+        return f"{title} for {platform_en.get('name', 'e-commerce')}. {layout}"
+
+    if type_id in {"tryon", "model", "buyer"}:
+        return f"{title} for {platform_en.get('name', 'e-commerce')}. {layout}"
+
+    if type_id == "promo":
+        theme = _t(ps.get("主题定位", ""))
+        return f"{title} for {platform_en.get('name', 'e-commerce')}{', ' + theme if theme else ''}. {layout}"
+
+    return f"{title} for {platform_en.get('name', 'e-commerce')}. {layout}"
+
+
+def _subject_fidelity_en(cfg: dict) -> str:
+    """有参考图时的紧凑主体一致性约束。"""
+    if not cfg["has_reference"]:
+        return ""
+    wants_human = _wants_human(cfg["type_id"], cfg["personal"])
+    if wants_human:
+        return (
+            "Product worn/held/displayed must exactly match reference in color, material, "
+            "pattern, logo and structure. Only pose, angle, lighting and background may change."
+        )
+    return (
+        "Product must exactly match reference in color, material, pattern, logo and structure. "
+        "Only angle, distance, background and lighting may change."
+    )
+
+
+def _market_subject_en(cfg: dict, market_en: dict) -> str:
+    """人物类型的人物档案（英文）。"""
+    if not _wants_human(cfg["type_id"], cfg["personal"]):
+        return ""
+    return market_en.get("subject", "")
+
+
+def _person_details_en(cfg: dict) -> str:
+    """把人物信号字段合并成简短英文描述。"""
+    ps = cfg["personal"]
+    fields = ["人种肤色", "性别物种", "年龄维度", "身型身材", "穿着风格", "动作姿态", "表情神态", "性别风格", "年龄特点"]
+    vals = [OPTIONS_EN.get(ps.get(l), ps.get(l)) for l in fields if ps.get(l)]
+    return ", ".join(vals)
+
+
+def _resolve_market_en(target_market: str | None) -> dict:
+    return MARKET_PROFILES_EN.get(target_market or "", MARKET_PROFILES_EN.get(_DEFAULT_MARKET, {}))
+
+
+def _resolve_platform_en(platform: str | None) -> dict:
+    p = PLATFORM_PROFILES_EN.get(platform or "", dict(_DEFAULT_PLATFORM))
+    p["name"] = _t(platform) or "e-commerce"
+    return p
+
+
+def _assemble_en(cfg: dict, copy: dict, market_en: dict, platform_en: dict) -> str:
+    """紧凑英文提示词组装器：以类型/配置为核心，去除冗余标题。"""
+    type_id = cfg["type_id"]
+    sem = TYPE_SEMANTICS.get(type_id, {"bg_mode": "scene", "person": "optional", "tech": {}, "medium": "commercial product photography"})
+    bg_mode = sem.get("bg_mode", "scene")
+    tech = WHITE_TECH_EN if bg_mode == "white" else {}
+    medium = TYPE_CAMERA_EN.get(type_id, "commercial product photography")
+    plat = sem.get("platform_override") or cfg["platform"]
+    platform_en = _resolve_platform_en(plat)
+    wants_human = _resolve_person(type_id, cfg["personal"], sem)
+    ps = cfg["personal"]
+    has_ref = cfg["has_reference"]
+    ratio = cfg["ratio"]
+
+    chunks: list[str] = []
+
+    # 1. 类型最强句首
+    chunks.append(_type_opening_en(cfg, sem, platform_en))
+
+    # 2. 构图与比例
+    comp_parts: list[str] = []
+    if bg_mode == "white":
+        comp_parts.append("centered product, complete silhouette")
+        comp_parts.append(tech.get("product_ratio", "product fills ≥85%"))
+        comp_parts.append(tech.get("min_px", "short edge ≥1000px"))
+        if ratio == "自适应尺寸":
+            comp_parts.append("match reference aspect ratio, no crop/stretch")
+        else:
+            fmt = RATIO_FORMAT_EN.get(ratio)
+            if fmt:
+                comp_parts.append(fmt)
+    elif bg_mode == "neutral":
+        comp_parts.append("centered product, light gray background, even margins")
+    else:
+        comp_parts.append(platform_en.get("composition", "centered composition"))
+        comp_parts.append(platform_en.get("subject_ratio", "subject prominent"))
+        if ratio != "自适应尺寸":
+            fmt = RATIO_FORMAT_EN.get(ratio)
+            if fmt:
+                comp_parts.append(fmt)
+        else:
+            comp_parts.append("match reference aspect ratio")
+
+    # 配置相关性：用户显式选择的角度/数量/距离等
+    if ps.get("角度数量"):
+        comp_parts.append(f"{_t(ps['角度数量'])}")
+    if ps.get("展示角度"):
+        comp_parts.append(f"view: {_t(ps['展示角度'])}")
+    if ps.get("拍摄角度"):
+        comp_parts.append(f"camera: {_t(ps['拍摄角度'])}")
+    if ps.get("拍摄距离"):
+        comp_parts.append(f"distance: {_t(ps['拍摄距离'])}")
+    if ps.get("摆放状态"):
+        comp_parts.append(f"placement: {_t(ps['摆放状态'])}")
+    if ps.get("构图方式"):
+        comp_parts.append(f"composition: {_t(ps['构图方式'])}")
+    if ps.get("排版呈现") or ps.get("表现形式") or ps.get("视觉呈现形式"):
+        comp_parts.append(f"layout: {_t(ps.get('排版呈现') or ps.get('表现形式') or ps.get('视觉呈现形式'))}")
+
+    chunks.append(", ".join(comp_parts) + ".")
+
+    # 3. 商品主体与卖点
+    subj_parts: list[str] = []
+    if has_ref:
+        subj_parts.append(_subject_fidelity_en(cfg))
+    display = ps.get("产品呈现")
+    if display:
+        if not wants_human and display in _PERSON_PRESENT_VALUES:
+            display = "平铺展示"
+        subj_parts.append(PRODUCT_PRESENT_VOCAB_EN.get(display, _t(display)))
+    if cfg["selling_points"]:
+        if copy["allow_text"]:
+            subj_parts.append(f"selling point: {cfg['selling_points']} ({_t(copy['copy_language'])})")
+        else:
+            subj_parts.append(f"highlight visually: {cfg['selling_points']}")
+    # 5 转化维度（仅输出 value，避免冗长）
+    for dim in ("价值聚焦", "视觉强化", "产品呈现", "氛围浓度", "价值暗示"):
+        v = ps.get(dim)
+        if not v:
+            continue
+        vocab = None
+        if dim == "价值聚焦":
+            vocab = VALUE_FOCUS_VOCAB_EN.get(v)
+        elif dim == "视觉强化":
+            vocab = STYLE_VOCAB_EN.get(v)
+        elif dim == "产品呈现":
+            vocab = PRODUCT_PRESENT_VOCAB_EN.get(v)
+        elif dim == "氛围浓度":
+            vocab = STYLE_VOCAB_EN.get(v)
+        elif dim == "价值暗示":
+            vocab = VALUE_HINT_VOCAB_EN.get(v)
+        if vocab:
+            subj_parts.append(vocab)
+    # 面料/工艺
+    if ps.get("面料质感"):
+        subj_parts.append(FABRIC_VOCAB_EN.get(ps["面料质感"], _t(ps["面料质感"])))
+    if ps.get("工艺细节"):
+        subj_parts.append(CRAFT_VOCAB_EN.get(ps["工艺细节"], _t(ps["工艺细节"])))
+    if not wants_human:
+        subj_parts.append("no people, no hands, no model")
+    if subj_parts:
+        chunks.append(" ".join([s for s in subj_parts if s]) + ".")
+
+    # 4. 人物
+    if wants_human:
+        person_parts: list[str] = []
+        market_subject = _market_subject_en(cfg, market_en)
+        if market_subject:
+            person_parts.append(market_subject)
+        person_details = _person_details_en(cfg)
+        if person_details:
+            person_parts.append(person_details)
+        for lbl in ("互动方式", "展示排版", "场景类型", "场景背景", "展示重点", "氛围营造"):
+            if ps.get(lbl):
+                tpl = SETTING_TEMPLATE_EN.get(lbl, "{lbl}: {v}. ")
+                person_parts.append(tpl.format(v=_t(ps[lbl])).strip())
+        if person_parts:
+            chunks.append(" ".join(person_parts))
+
+    # 5. 场景 / 背景
+    scene_parts: list[str] = []
+    if bg_mode == "white":
+        scene_parts.append(tech.get("bg", "pure white background (RGB 255,255,255)"))
+    elif bg_mode == "neutral":
+        scene_parts.append("light gray solid background, no clutter")
+    else:
+        if ps.get("背景场景"):
+            scene_parts.append(f"background: {_t(ps['背景场景'])}")
+        if market_en.get("background") and not scene_parts:
+            scene_parts.append(f"background: {market_en['background']}")
+        if ps.get("场景类型"):
+            scene_parts.append(f"scene: {_t(ps['场景类型'])}")
+        if market_en.get("avoid"):
+            scene_parts.append(f"avoid: {market_en['avoid']}")
+    if scene_parts:
+        chunks.append(", ".join(scene_parts) + ".")
+
+    # 6. 光影与色彩
+    light_parts: list[str] = []
+    if ps.get("产品光影") or ps.get("光影质感"):
+        light_parts.append(f"lighting: {_t(ps.get('产品光影') or ps.get('光影质感'))}")
+    if cfg["visual_style"]:
+        vs = (HUMAN_STYLE_VOCAB_EN if wants_human else STYLE_VOCAB_EN).get(cfg["visual_style"], _t(cfg["visual_style"]))
+        light_parts.append(vs)
+    if bg_mode == "neutral":
+        light_parts.append("neutral low saturation, no vivid color")
+    elif bg_mode == "white":
+        # 纯白底已由场景段给出 "pure white background (RGB 255,255,255)"，此处不再重复，
+        # 仅补一句无阴影，避免与场景段白底描述冗余。
+        light_parts.append("no cast shadow")
+    else:
+        if cfg["tone"]:
+            tone = STYLE_VOCAB_EN.get(cfg["tone"], _t(cfg["tone"]))
+            if market_en.get("palette"):
+                if has_ref:
+                    light_parts.append(f"background tone: {tone}; palette only for background, product color stays true to reference")
+                else:
+                    light_parts.append(f"tone: {tone}; palette: {market_en['palette']}")
+            else:
+                light_parts.append(f"tone: {tone}")
+    if light_parts:
+        chunks.append(", ".join(light_parts) + ".")
+
+    # 7. 相机/画质/风格
+    cam_parts: list[str] = [medium]
+    retouch = GLOBAL_RETROUCH_EN if wants_human else RETOUCH_NO_HUMAN_EN
+    cam_parts.append(f"{platform_en.get('resolution', '8K ultra HD, sharp, no distortion')}; {retouch}")
+    cam_parts.append(QUALITY_BOOSTERS_EN)
+    chunks.append(". ".join(cam_parts) + ".")
+
+    # 8. 文字约束
+    if copy["allow_text"]:
+        chunks.append(f"Text allowed only for layout copy in {_t(copy['copy_language'])}; no other text, logo, watermark or numbers.")
+    else:
+        chunks.append("No text, letters, numbers, logos, watermarks, brand names, prices, tags or annotations in the image.")
+
+    # 9. 负面提示词（精简为最高频核心词）
+    neg_core = [
+        "blurry", "out of focus", "heavy noise", "cluttered background", "messy shadows",
+        "oversaturated", "cartoon", "3D render feel", "watermark", "text", "logo", "numbers",
+        "letters", "dimension marks", "people", "model", "hands", "deformed", "plastic feel",
+        "wrong size", "out of proportion", "damaged edges", "messy stitching", "flash reflection",
+        "crushed shadows"
+    ]
+    if wants_human:
+        neg_core += ["deformed hands", "extra fingers", "distorted face", "incomplete limbs", "pale face"]
+    seen = set()
+    neg_uniq = [x for x in neg_core if not (x in seen or seen.add(x))]
+    chunks.append("Negative: " + ", ".join(neg_uniq) + ".")
+
+    # 清理并合并
+    text = " ".join(_dedupe([c.strip() for c in chunks if c.strip()]))
+    return " ".join(text.split())
+
+
+def build_prompt_en(project, item, model_name: str | None = None, effective_product_image: str | None = None) -> str:
+    """生成紧凑英文提示词，直接用于图片模型生成。"""
+    cfg = _resolve_config(project, item, effective_product_image=effective_product_image)
+    copy = _decide_copy_policy(cfg["type_id"], cfg["copy_language"])
+    market_en = _resolve_market_en(cfg["target_market"])
+    platform_en = _resolve_platform_en(cfg["platform"])
+    return _assemble_en(cfg, copy, market_en, platform_en)
+
+
+def build_prompt_bilingual(project, item, model_name: str | None = None, effective_product_image: str | None = None) -> dict:
+    """同时返回中文版（展示）与英文版（生成）提示词。"""
+    cfg = _resolve_config(project, item, effective_product_image=effective_product_image)
+    copy = _decide_copy_policy(cfg["type_id"], cfg["copy_language"])
+    market = _resolve_market(cfg["target_market"])
+    platform = _resolve_platform(cfg["platform"])
+    prompt_cn = _assemble(cfg, copy, market, platform)
+    _lint(prompt_cn, copy["allow_text"])
+
+    market_en = _resolve_market_en(cfg["target_market"])
+    platform_en = _resolve_platform_en(cfg["platform"])
+    prompt_en = _assemble_en(cfg, copy, market_en, platform_en)
+    return {"prompt": prompt_cn, "prompt_en": prompt_en}
+
+

@@ -499,8 +499,12 @@ class GalleryRecord(TimestampMixin, Base):
     result_filename: Mapped[str | None] = mapped_column(String(500), nullable=True)
     result_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
-    # 实际发送给模型的提示词（便于排查）
+    # 实际发送给模型的提示词（中文版，便于排查与展示）
     prompt: Mapped[str] = mapped_column(Text, default="")
+    # 实际用于图片模型生成的紧凑英文提示词
+    prompt_en: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
+    # 提示词来源：ai=由 Agnes 多模态大模型生成；template=降级到旧模板引擎
+    prompt_source: Mapped[str] = mapped_column(String(16), default="template", server_default="template")
     # 生成该图所用的 AI 提供商图片模型（确保所有配置都有记录）
     provider_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     provider_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
