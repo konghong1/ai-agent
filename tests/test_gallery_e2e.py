@@ -134,7 +134,7 @@ def main() -> int:
         check("生成有records", len(recs) >= 1, f"recs={len(recs)}")
         if recs:
             prompt = recs[0].get("prompt", "")
-            check("提示词含反文字指令", "不要出现任何文字" in prompt, f"prompt={prompt[:120]}")
+            check("提示词含反文字指令", "不出现任何文字" in prompt, f"prompt={prompt[:120]}")
     else:
         check("任务最终状态", False, "poll timeout")
 

@@ -629,22 +629,169 @@ def _save_generated_image(url: str) -> str | None:
     return fname
 
 
-def _ratio_to_size(ratio: str | None) -> str:
+# ── 比例 / 尺寸推断 ──
+
+# 前端可选比例 → 图片生成模型尺寸（短边 1024，长边按 64 整数倍）
+_RATIO_SIZE_MAP: dict[str, str] = {
+    "方图 1:1": "1024x1024",
+    "竖图 3:4": "768x1024",
+    "竖图 4:5": "832x1024",
+    "竖图 9:16": "576x1024",
+    "竖图 2:3": "704x1024",
+    "横图 16:9": "1024x576",
+    "横图 4:3": "1024x768",
+}
+
+# 比例名字 → 浮点比例值，用于自适应时匹配参考图最接近的比例
+_RATIO_VALUE_MAP: dict[str, float] = {
+    "方图 1:1": 1.0,
+    "竖图 3:4": 3 / 4,
+    "竖图 4:5": 4 / 5,
+    "竖图 9:16": 9 / 16,
+    "竖图 2:3": 2 / 3,
+    "横图 16:9": 16 / 9,
+    "横图 4:3": 4 / 3,
+}
+
+
+
+
+def _image_size_from_bytes(data: bytes) -> tuple[int, int] | None:
+    """不依赖 Pillow，从常见图片文件头解析宽高。
+
+    作为 ``_infer_size_from_reference`` 的兜底：Docker 环境有 Pillow，
+    但精简/测试环境缺失 PIL 时也能根据参考图真实比例推断生成尺寸，
+    避免「自适应尺寸」回退成模型默认 1:1 方图而拉伸原图。
+    """
+    if not data:
+        return None
+    # PNG: IHDR chunk (w,h are big-endian 4-byte each at offset 16)
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24:
+        try:
+            w = int.from_bytes(data[16:20], "big")
+            h = int.from_bytes(data[20:24], "big")
+            if w > 0 and h > 0:
+                return w, h
+        except Exception:
+            pass
+    # JPEG: SOF0/SOF2/SOF1 markers (0xFFC0/0xFFC2/0xFFC1)
+    if data.startswith(b"\xff\xd8"):
+        i = 2
+        while i + 9 < len(data):
+            marker = data[i]
+            if marker != 0xFF:
+                i += 1
+                continue
+            code = data[i + 1]
+            if code in (0xC0, 0xC1, 0xC2):
+                try:
+                    h = int.from_bytes(data[i + 5:i + 7], "big")
+                    w = int.from_bytes(data[i + 7:i + 9], "big")
+                    if w > 0 and h > 0:
+                        return w, h
+                except Exception:
+                    pass
+                break
+            if code in (0xD9,):
+                break
+            seg_len = int.from_bytes(data[i + 2:i + 4], "big")
+            i += 2 + seg_len
+    # GIF87a / GIF89a
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        if len(data) >= 10:
+            try:
+                w = int.from_bytes(data[6:8], "little")
+                h = int.from_bytes(data[8:10], "little")
+                if w > 0 and h > 0:
+                    return w, h
+            except Exception:
+                pass
+    # WebP: RIFF....WEBP then VP8/VP8L/VP8X
+    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP":
+        chunk = data[12:16]
+        if chunk == b"VP8 " and len(data) >= 30:
+            try:
+                w = int.from_bytes(data[26:28], "little")
+                h = int.from_bytes(data[28:30], "little")
+                if w > 0 and h > 0:
+                    return w, h
+            except Exception:
+                pass
+        elif chunk == b"VP8L" and len(data) >= 25:
+            try:
+                bits = int.from_bytes(data[21:25], "little")
+                w = (bits & 0x3FFF) + 1
+                h = ((bits >> 14) & 0x3FFF) + 1
+                if w > 0 and h > 0:
+                    return w, h
+            except Exception:
+                pass
+        elif chunk == b"VP8X" and len(data) >= 30:
+            try:
+                w = int.from_bytes(data[24:27], "little") + 1
+                h = int.from_bytes(data[27:30], "little") + 1
+                if w > 0 and h > 0:
+                    return w, h
+            except Exception:
+                pass
+    return None
+
+def _infer_size_from_reference(reference_filename: str | None) -> str | None:
+    """根据参考图实际宽高比，推断最接近的生成尺寸。
+
+    用于「自适应尺寸」模式：用户不指定比例时，让生成图比例跟随参考图，
+    避免模型默认 1024×1024 方图把竖版连衣裙压成扁胖方图。
+    读取失败或无参考图时返回 ``None``，回退到不指定 size（模型默认）。
+    """
+    if not reference_filename:
+        return None
+    p = resolve_file(reference_filename)
+    if not p:
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(p) as img:
+            w, h = img.size
+    except Exception:
+        # Pillow 缺失时读取文件头，仍要守住「自适应尺寸」的比例
+        try:
+            w, h = _image_size_from_bytes(p.read_bytes())
+        except Exception:
+            return None
+    if w <= 0 or h <= 0:
+        return None
+    image_ratio = w / h
+
+    # 找到 _RATIO_SIZE_MAP 中比例最接近的一项
+    best_label, best_diff = None, float("inf")
+    for label, ref_ratio in _RATIO_VALUE_MAP.items():
+        diff = abs(ref_ratio - image_ratio)
+        if diff < best_diff:
+            best_diff = diff
+            best_label = label
+    if best_label:
+        return _RATIO_SIZE_MAP[best_label]
+    return None
+
+
+def _ratio_to_size(ratio: str | None, reference_filename: str | None = None) -> str | None:
     """把前端选择的图片比例映射到图片生成模型可接受的尺寸字符串。
 
-    尺寸保持短边 1024，长边按比例取 64 整数倍，兼顾 SD 系列与 Agnes 等
-    OpenAI-compatible 图片模型的常见输入要求。未知/自适应时默认正方形。
+    - 显式比例（方图 / 竖图 / 横图）→ 对应尺寸（短边 1024，长边按比例取 64 整数倍，
+      兼顾 SD 系列与 Agnes 等 OpenAI-compatible 图片模型的常见输入要求）。
+    - 「自适应尺寸」（以及 None / ""）→ 优先根据参考图实际比例推断最接近尺寸；
+      无参考图或读取失败时返回 ``None``，交由模型使用其自身默认尺寸。
+      这样「自适应」才有实际意义：跟随原图比例，而不是任由模型默认出 1024×1024 方图。
     """
-    mapping = {
-        "方图 1:1": "1024x1024",
-        "竖图 3:4": "768x1024",
-        "竖图 4:5": "832x1024",
-        "竖图 9:16": "576x1024",
-        "竖图 2:3": "704x1024",
-        "横图 16:9": "1024x576",
-        "横图 4:3": "1024x768",
-    }
-    return mapping.get(ratio or "", "1024x1024")
+    if ratio and ratio != "自适应尺寸":
+        return _RATIO_SIZE_MAP.get(ratio, "1024x1024")
+    # 自适应：按参考图比例推断，避免模型默认方图导致扁胖
+    if reference_filename:
+        inferred = _infer_size_from_reference(reference_filename)
+        if inferred:
+            return inferred
+    return None
 
 
 def _real_generate(
@@ -821,13 +968,14 @@ def run_gallery_task(task_id: int) -> None:
             count = max(1, int(ios.get("count", 1) or 1))
             # 用户为该策划项选择的图片比例 → 生成模型尺寸
             ratio = ios.get("ratio") or "自适应尺寸"
-            size = _ratio_to_size(ratio)
+            # 每个策划项可单独指定 provider / 模型，否则回退到项目全局配置
             item_provider_id = ios.get("provider_id") or global_provider_id
             item_model = ios.get("model_name") or global_model
             # 商品主图：优先用本条目单独上传的「单独商品图」，否则回退到项目产品图[0]
             effective_product_image = item.product_image or (
                 proj.images[0].filename if proj.images else None
             )
+            size = _ratio_to_size(ratio, reference_filename=effective_product_image)
             prompt = _build_prompt(
                 proj, item, model_name=item_model,
                 effective_product_image=effective_product_image,

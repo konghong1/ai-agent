@@ -1287,7 +1287,7 @@ export default function EcommerceGallery() {
         title="发布到创作案例"
         width={680}
         className="g-modal publish-modal"
-        styles={{ body: { maxHeight: 'calc(85vh - 132px)', overflowY: 'auto', padding: '20px 24px' }, content: { maxHeight: '85vh' } }}
+        styles={{ body: { maxHeight: 'calc(85vh - 140px)', overflowY: 'auto' }, content: { maxHeight: '85vh' } }}
       >
         {publishTask && (
           <div className="publish-modal">
@@ -1305,7 +1305,7 @@ export default function EcommerceGallery() {
               />
             </div>
             <div className="pf-field">
-              <label>选择要发布的成图（默认已勾选真实成图，示例占位图不可选）</label>
+              <label className="pf-hint-label">选择要发布的成图（默认已勾选真实成图，示例占位图不可选）</label>
               <div className="pf-picks">
                 {publishTask.records.map((rec) => {
                   const real = !!rec.result_url && !rec.result_url.endsWith('.svg')

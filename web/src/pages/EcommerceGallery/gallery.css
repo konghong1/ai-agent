@@ -1650,37 +1650,127 @@
 }
 .gallery-page .btn-publish:hover { border-color: var(--gb-brand); color: var(--gb-brand); background: var(--gb-brand-weak); }
 
-/* 发布弹窗通过 antd Modal portal 渲染到 body，不使用 .gallery-page 前缀 */
-.publish-modal .ant-modal-content { max-height: 85vh; display: flex; flex-direction: column; }
-.publish-modal .ant-modal-body { flex: 1 1 auto; overflow-y: auto; }
-.publish-modal .pf-field { margin-bottom: 20px; }
-.publish-modal .pf-field > label { display: block; font-size: 13.5px; font-weight: 600; color: var(--gb-ink); margin-bottom: 8px; }
-.publish-modal .pf-picks { display: grid; grid-template-columns: repeat(auto-fill, 140px); gap: 12px; max-height: 320px; overflow-y: auto; padding: 2px; }
+/* ── 发布弹窗（通过 antd Modal portal 渲染到 body，不使用 .gallery-page 前缀） ── */
+
+/* 头部：与画廊设计语言统一 */
+.publish-modal .ant-modal-header {
+  padding: 18px 24px 14px !important;
+  background: var(--gb-surface) !important;
+  border-bottom: 1px solid var(--gb-line) !important;
+  margin-bottom: 0 !important;
+}
+.publish-modal .ant-modal-title {
+  font-family: var(--gb-font-display);
+  font-size: 17px; font-weight: 700; color: var(--gb-ink) !important;
+  line-height: 1.4; letter-spacing: -.01em;
+}
+.publish-modal .ant-modal-close {
+  top: 12px; right: 16px; width: 32px; height: 32px;
+  color: var(--gb-ink-soft); border-radius: 8px;
+  transition: color .15s var(--gb-ease), background-color .15s var(--gb-ease);
+}
+.publish-modal .ant-modal-close:hover { color: var(--gb-ink); background: var(--gb-surface-2); }
+
+/* 内容区 */
+.publish-modal .ant-modal-content { max-height: 85vh; display: flex; flex-direction: column; border-radius: var(--gb-r-xl); overflow: hidden; }
+.publish-modal .ant-modal-body { flex: 1 1 auto; overflow-y: auto; padding: 20px 24px !important; }
+
+/* 底部按钮区 */
+.publish-modal .ant-modal-footer {
+  padding: 12px 24px 16px !important;
+  border-top: 1px solid var(--gb-line);
+  background: var(--gb-surface);
+  margin-top: 0 !important;
+}
+.publish-modal .ant-modal-footer .ant-btn {
+  height: 38px; border-radius: 10px; font-size: 13.5px; font-weight: 500;
+  padding: 0 20px;
+}
+.publish-modal .ant-modal-footer .ant-btn-primary {
+  background: var(--gb-brand); border-color: var(--gb-brand);
+  box-shadow: var(--gb-sh-1);
+}
+.publish-modal .ant-modal-footer .ant-btn-primary:hover {
+  background: var(--gb-brand-strong); border-color: var(--gb-brand-strong);
+}
+.publish-modal .ant-modal-footer .ant-btn-default:hover {
+  border-color: var(--gb-line-strong); color: var(--gb-ink);
+}
+
+/* 表单字段 */
+.publish-modal .pf-field { margin-bottom: 18px; }
+.publish-modal .pf-field:last-child { margin-bottom: 0; }
+.publish-modal .pf-field > label {
+  display: block; font-size: 13px; font-weight: 600; color: var(--gb-ink);
+  margin-bottom: 8px; line-height: 1.5;
+}
+/* 长提示标签：降字重、加行高，保证完整可读 */
+.publish-modal .pf-field > label.pf-hint-label {
+  font-size: 12.5px; font-weight: 500; color: var(--gb-ink-soft);
+  line-height: 1.6; margin-bottom: 10px;
+}
+
+/* Input / Select 统一风格 */
+.publish-modal .pf-field .ant-input,
+.publish-modal .pf-field .ant-select .ant-select-selector {
+  border-radius: 10px; border-color: var(--gb-line);
+  font-size: 13.5px; color: var(--gb-ink);
+  transition: border-color .15s var(--gb-ease), box-shadow .15s var(--gb-ease);
+}
+.publish-modal .pf-field .ant-input:hover,
+.publish-modal .pf-field .ant-select:hover .ant-select-selector {
+  border-color: var(--gb-line-strong);
+}
+.publish-modal .pf-field .ant-input:focus,
+.publish-modal .pf-field .ant-input-focused,
+.publish-modal .pf-field .ant-select-focused .ant-select-selector {
+  border-color: var(--gb-brand) !important;
+  box-shadow: 0 0 0 3px var(--gb-brand-weak) !important;
+}
+
+/* 缩略图网格：响应式列宽，充分利用弹窗宽度 */
+.publish-modal .pf-picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px; max-height: 340px; overflow-y: auto; padding: 2px;
+}
+.publish-modal .pf-picks::-webkit-scrollbar { width: 5px; }
+.publish-modal .pf-picks::-webkit-scrollbar-thumb { background: var(--gb-line-strong); border-radius: 10px; }
+
 .publish-modal .pf-pick {
-  position: relative; width: 140px; height: 140px;
+  position: relative; aspect-ratio: 1; width: 100%;
   border-radius: var(--gb-r-md); overflow: hidden;
   border: 2px solid var(--gb-line); background: var(--gb-surface-2); cursor: pointer; padding: 0;
-  transition: border-color .15s var(--gb-ease), transform .15s var(--gb-ease);
+  transition: border-color .15s var(--gb-ease), transform .15s var(--gb-ease), box-shadow .15s var(--gb-ease);
 }
 .publish-modal .pf-pick img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
 .publish-modal .pf-pick.on { border-color: var(--gb-brand); box-shadow: 0 0 0 3px var(--gb-brand-weak); }
 .publish-modal .pf-pick:hover { transform: scale(1.02); }
 .publish-modal .pf-pick.disabled { cursor: not-allowed; opacity: .55; filter: grayscale(.6); }
+
+/* 勾选标记圆点 */
 .publish-modal .pf-pick::before {
   content: ''; position: absolute; top: 6px; left: 6px; z-index: 2;
-  width: 20px; height: 20px; border-radius: 50%; background: var(--gb-brand); color: #fff;
-  display: grid; place-items: center; font-size: 12px; font-weight: 700;
+  width: 22px; height: 22px; border-radius: 50%; background: var(--gb-brand); color: #fff;
+  display: grid; place-items: center; font-size: 13px; font-weight: 700;
+  transition: background .15s var(--gb-ease);
 }
 .publish-modal .pf-pick:not(.on)::before { content: ''; background: rgba(0,0,0,.35); }
 .publish-modal .pf-pick.on::before { content: '✓'; }
+
+/* 缩略图标题：允许 2 行换行，不再截断 */
 .publish-modal .pf-pick-title {
-  position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 6px;
-  font-size: 11px; color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.65)); text-align: left;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 6px 8px 5px;
+  font-size: 11.5px; line-height: 1.35; color: #fff;
+  background: linear-gradient(transparent, rgba(0,0,0,.75)); text-align: left;
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden; word-break: break-all;
 }
 .publish-modal .pf-pick-flag {
   position: absolute; top: 6px; right: 6px; font-size: 10px; color: #fff;
-  background: rgba(0,0,0,.55); padding: 1px 6px; border-radius: 999px; z-index: 2;
+  background: rgba(0,0,0,.55); padding: 2px 7px; border-radius: 999px; z-index: 2;
+  font-weight: 500; letter-spacing: .02em;
 }
 
 /* 可放大 / 可下载图片组件 */

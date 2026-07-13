@@ -74,9 +74,13 @@ class MediaService:
         payload: dict[str, Any] = {
             "model": model_name,
             "prompt": prompt,
-            "size": size,
             "n": n,
         }
+        # size 为 None / "" 时不发送该字段，交由模型使用自身默认尺寸
+        # （对应前端「自适应尺寸」：系统不越权替用户锁定具体尺寸）。
+        # 显式比例仍按上层映射结果原样发送。
+        if size:
+            payload["size"] = size
         if seed is not None:
             payload["seed"] = seed
         payload.update(kwargs)

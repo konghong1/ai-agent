@@ -39,6 +39,7 @@ def _make_item(
         note=note,
         product_image=product_image,
         reference_images=reference_images or [],
+        output_settings={},
     )
 
 
@@ -108,7 +109,7 @@ def test_selling_points_visual_not_on_image():
     prompt = build_prompt(project, item)
 
     assert sp in prompt, "卖点文本应出现在提示词中"
-    assert "核心卖点" in prompt and "仅用光" in prompt, "卖点应包裹为视觉体现指令"
+    assert "核心卖点" in prompt and "绝不转为图上文字" in prompt, "卖点应包裹为视觉体现指令"
     assert "画面文案需求" not in prompt, "卖点不得作为图上文字需求"
     print("[PASS] test_selling_points_visual_not_on_image")
 
@@ -185,11 +186,7 @@ def test_config_change_produces_different_prompt():
 
 
 def test_no_redundant_quality_line():
-    """关键回归：品质质感描述只出现一次，且「价值暗示=品质细节」不重复输出。
-
-    修复历史 bug：STYLE_VOCAB 中「品质细节」与「价值暗示」曾是相同字符串，
-    导致 M3 与 M4 重复输出同一句「面料垂坠肌理…」。
-    """
+    """关键回归：分桶结构下品质维度只出现一次，且 4 个 V8 维度词各落地一次、不重复。"""
     project = _make_project(
         {"target_market": "中东", "ecommerce_platform": "淘宝 / 天猫",
          "visual_style": "高级质感风", "tone_tendency": "高饱和色调"},
@@ -200,28 +197,72 @@ def test_no_redundant_quality_line():
         "氛围浓度": "轻度氛围", "价值暗示": "品质细节"})
     prompt = build_prompt(project, item)
 
-    # 品质质感统一描述只能出现一次（无人物/无服装品类 → 产品材质措辞）
-    assert prompt.count("产品价值仅通过产品材质肌理") == 1, \
-        "品质质感描述不应重复出现"
-    # 价值暗示=品质细节 不得再单独输出一遍（已由上面统一描述覆盖）
-    assert "价值暗示：" not in prompt, "价值暗示=品质细节 不应重复输出"
+    # 画质要求（分辨率+修图）只出现一次，不重复
+    assert prompt.count("画质要求：") == 1, "画质要求行不应重复出现"
+    # 4 个 V8 维度词各落地一次（分桶后互不重复）
+    assert prompt.count("价值聚焦：") == 1, "价值聚焦应落地且仅一次"
+    assert prompt.count("视觉强化：") == 1, "视觉强化应落地且仅一次"
+    assert prompt.count("氛围浓度：") == 1, "氛围浓度应落地且仅一次"
+    assert prompt.count("价值暗示：") == 1, "价值暗示应落地且仅一次"
     print("[PASS] test_no_redundant_quality_line")
 
 
 def test_missing_constraints_present():
-    """补齐中东/平台隐性约束后，提示词应含：遮盖肩颈、修图规范、单主色、站姿30°、服装品类。"""
+    """中东市场 + 人物信号：应补齐中东合规（遮盖肩颈）、平台构图（30°站姿）、
+    修图规范（色彩真实还原），且 V9 真实维度（价值聚焦）落地。"""
     project = _make_project(
         {"target_market": "中东", "ecommerce_platform": "淘宝 / 天猫",
          "visual_style": "高级质感风", "tone_tendency": "高饱和色调"})
-    item = _make_item("hero", personal_settings={"服装品类": "连衣裙", "人种肤色": "中东暖调"})
+    item = _make_item("hero", personal_settings={"人种肤色": "中东暖调", "价值聚焦": "品质"})
     prompt = build_prompt(project, item)
 
     assert "服装完整遮盖肩颈" in prompt, "应补齐中东合规：遮盖肩颈"
-    assert "面料色彩1:1真实还原" in prompt, "应补齐修图规范：色彩真实还原"
-    assert "任选其一作为服装主色" in prompt, "应补齐单主色规则"
+    assert "所展示商品色彩1:1真实还原" in prompt, "应补齐修图规范：色彩真实还原"
     assert "正面微侧约30°" in prompt, "应补齐具象站姿"
-    assert "服装品类：连衣裙" in prompt, "应注入服装品类"
+    assert "画面主体人物：" in prompt, "人物信号应注入人物主体描述"
+    assert "中东暖调" in prompt, "中东人种肤色应落地"
+    assert "价值聚焦：视觉重心聚焦面料质感与精细做工" in prompt, "价值聚焦=品质 应落地（分桶后语义映射）"
     print("[PASS] test_missing_constraints_present")
+
+
+def test_v9_real_settings_injected():
+    """V9 回归：SeeAny 真实设置项应 1:1 落地到提示词（语义模板驱动，非裸值）。"""
+    project = _make_project(market_config={"target_market": "北美", "ecommerce_platform": "亚马逊"})
+
+    # 商品主图：摆放状态 / 拍摄角度 / 有无模特
+    p_bg = build_prompt(project, _make_item("bg", personal_settings={
+        "摆放状态": "斜放", "拍摄角度": "俯视", "有无模特": "无模特平铺展示"}))
+    assert "产品摆放形态：斜放。" in p_bg, "摆放状态 应经语义模板注入"
+    assert "拍摄机位角度：俯视。" in p_bg, "拍摄角度 应经语义模板注入"
+    assert "无人物" in p_bg, "纯产品类型不得出现人物"
+
+    # 产品多角度：展示角度 / 角度数量 / 背景场景
+    p_angle = build_prompt(project, _make_item("angle", personal_settings={
+        "展示角度": "45度角", "角度数量": "三个角度（全面覆盖）", "背景场景": "纯白色"}))
+    assert "展示视角：45度角。" in p_angle, "展示角度 应落地"
+    assert "多视角数量：三个角度（全面覆盖）。" in p_angle, "角度数量 应落地"
+    assert "背景与场景：纯白色。" in p_angle, "背景场景 应落地"
+
+    # 场景图：场景类型 / 氛围营造
+    p_scene = build_prompt(project, _make_item("scene", personal_settings={
+        "场景类型": "居家空间", "氛围营造": "简约高级风"}))
+    assert "使用场景：居家空间。" in p_scene, "场景类型 应落地"
+    assert "画面氛围营造：简约高级风。" in p_scene, "氛围营造 应落地"
+
+    # 试穿试戴：人物信号 + 展示排版 / 场景类型
+    p_tryon = build_prompt(project, _make_item("tryon", personal_settings={
+        "人种肤色": "亚洲", "性别物种": "女性", "展示排版": "全身穿搭全景", "场景类型": "日常通勤场景"}))
+    assert "画面主体人物：" in p_tryon, "人物信号应注入人物主体描述"
+    assert "人物展示排版：全身穿搭全景。" in p_tryon, "展示排版 应落地"
+    assert "使用场景：日常通勤场景。" in p_tryon, "场景类型 应落地"
+
+    # 痛点图：痛点方向 / 对比方式
+    p_pain = build_prompt(project, _make_item("pain", personal_settings={
+        "痛点方向": "功能缺失痛点", "对比方式": "使用前后对比"}))
+    assert "营销痛点切入：功能缺失痛点。" in p_pain, "痛点方向 应落地"
+    assert "对比手法：使用前后对比。" in p_pain, "对比方式 应落地"
+
+    print("[PASS] test_v9_real_settings_injected")
 
 
 def test_product_type_has_no_human():
@@ -251,23 +292,26 @@ def test_human_type_with_fields():
     item = _make_item("hero", personal_settings={"人种肤色": "亚洲", "动作姿态": "自然站立"})
     prompt = build_prompt(project, item)
 
-    assert "主体人物要求" in prompt, "填写人物字段应注入人物要求"
+    assert "画面主体人物：" in prompt, "填写人物字段应注入人物主体描述"
     assert "无人物" not in prompt, "有人物字段时不得声明无人物"
     assert "亚洲" in prompt and "自然站立" in prompt, "人物个性化字段应落地"
     print("[PASS] test_human_type_with_fields")
 
 
 def test_palette_injected_for_any_tone():
-    """关键回归：市场调色板无条件注入，换市场即换配色（不再卡「高饱和」）。"""
-    # 北美市场本身非高饱和，但调色板也应随色调注入
+    """关键回归：场景类类型（hero）的市场调色板随色调无条件注入，换市场即换配色。
+
+    注意：纯白底类型（bg 等）背景已锁定纯白，不再注入彩色调色板——这是预期行为，
+    因此本测试改用场景类 hero 验证调色板注入逻辑。
+    """
     project = _make_project(
         market_config={"target_market": "北美", "ecommerce_platform": "淘宝 / 天猫",
                        "tone_tendency": "低饱和高级灰"},
     )
-    item = _make_item("bg")
+    item = _make_item("hero")
     prompt = build_prompt(project, item)
 
-    assert "配色参考" in prompt, "市场调色板应随色调无条件注入（出现「配色参考」标记）"
+    assert "配色参考" in prompt, "场景类市场调色板应随色调无条件注入（出现「配色参考」标记）"
     assert "明亮清晰" in prompt or "自然色系" in prompt, "应注入北美市场调色板文本"
     print("[PASS] test_palette_injected_for_any_tone")
 
@@ -307,7 +351,7 @@ def test_reference_fidelity_product():
     assert "拍摄角度" in prompt and "背景与场景" in prompt and "构图方式" in prompt, \
         "应明示允许角度/背景/构图变化"
     # 绝对禁止清单里也须含商品保真负向约束
-    assert "绝对禁止改变商品外观" in prompt, "M6 禁止清单须含商品保真约束"
+    assert "不得因忽略其上文字而改变商品外观" in prompt, "M6 禁止清单须含商品保真约束"
     print("[PASS] test_reference_fidelity_product")
 
 
@@ -343,7 +387,7 @@ def test_reference_color_not_recolored():
 
     # 配色被重定向为「背景配色」，且明确商品颜色以参考图为准
     assert "背景配色参考" in prompt, "有参考图时配色应改为仅作用于背景"
-    assert "商品颜色须严格以参考图为准" in prompt, "必须声明商品颜色以参考图为准"
+    assert "商品颜色严格以参考图为准" in prompt, "必须声明商品颜色以参考图为准"
     assert "不得套用" in prompt, "必须禁止把背景配色套用到商品"
     # 原来诱导重新染色的从句必须被摘掉
     assert "任选其一作为服装主色" not in prompt, "有参考图时必须摘掉「任选其一作为服装主色」诱导"
@@ -394,6 +438,7 @@ def _run_all() -> None:
     test_config_change_produces_different_prompt()
     test_no_redundant_quality_line()
     test_missing_constraints_present()
+    test_v9_real_settings_injected()
     test_product_type_has_no_human()
     test_human_type_with_fields()
     test_palette_injected_for_any_tone()
