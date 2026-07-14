@@ -8,4 +8,5 @@ agent.db
 web/node_modules/
 web/dist/
 node_modules/
-uploads /*
+uploads/*
+!uploads/.gitkeep
