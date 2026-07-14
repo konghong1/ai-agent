@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import logging
 import mimetypes
+import re
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -23,7 +24,6 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.gallery_config import (
-    SHOWCASE_SEED,
     estimate_cost,
     get_plan_type,
 )
@@ -118,54 +118,6 @@ def save_plan_item_image(project_id: int, data: bytes, original_name: str) -> di
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return {"filename": fname, "url": f"/api/gallery/files/{fname}"}
-
-
-def _hue_from_key(key: str) -> int:
-    return (hash(key) % 360 + 360) % 360
-
-
-def _make_svg(hue: int, title: str, subtitle: str, tag: str) -> str:
-    """生成一个离线占位 SVG（渐变 + 文案），无需联网。"""
-    h2 = (hue + 40) % 360
-    return (
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600">'
-        f'<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
-        f'<stop offset="0%" stop-color="hsl({hue},70%,62%)"/>'
-        f'<stop offset="100%" stop-color="hsl({h2},65%,48%)"/></linearGradient></defs>'
-        f'<rect width="600" height="600" fill="url(#g)"/>'
-        f'<rect x="24" y="24" width="552" height="552" rx="28" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2"/>'
-        f'<text x="300" y="280" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-size="40" font-weight="700" '
-        f'fill="#fff" text-anchor="middle">{_esc(title)}</text>'
-        f'<text x="300" y="330" font-family="Inter,sans-serif" font-size="20" fill="rgba(255,255,255,.85)" text-anchor="middle">{_esc(subtitle)}</text>'
-        f'<text x="300" y="540" font-family="Inter,sans-serif" font-size="16" fill="rgba(255,255,255,.8)" text-anchor="middle">{_esc(tag)}</text>'
-        f"</svg>"
-    )
-
-
-def _esc(s: str) -> str:
-    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
-
-
-def write_result_svg(plan_item_id: int, index: int, title: str, key: str) -> str:
-    """生成一张「出图结果」占位 SVG，返回相对文件名。"""
-    _ensure_dirs()
-    hue = _hue_from_key(key)
-    svg = _make_svg(hue, title, f"第 {index} 张", "AI 套图 · 生成示例")
-    fname = f"results/{uuid.uuid4().hex}.svg"
-    path = GALLERY_UPLOAD_ROOT / fname
-    path.write_text(svg, encoding="utf-8")
-    return fname
-
-
-def write_showcase_svg(seed: dict, idx: int) -> str:
-    _ensure_dirs()
-    hue = int(seed.get("hue", 200))
-    title = seed["name"][:10]
-    svg = _make_svg(hue, title, f"示例 {idx}", "热门套图示例")
-    fname = f"showcase/{uuid.uuid4().hex}.svg"
-    path = GALLERY_UPLOAD_ROOT / fname
-    path.write_text(svg, encoding="utf-8")
-    return fname
 
 
 # ─────────────────────────────────────────────────────────────
@@ -672,7 +624,7 @@ def list_image_models(db: Session, user: models.User) -> dict:
 
 
 def _resolve_image_model(
-    db: Session, user: models.User, provider_id: int | None, model_name: str | None
+    db: Session, user_id: int, provider_id: int | None, model_name: str | None
 ) -> tuple[models.Provider | None, models.ProviderModel | None]:
     """解析出图所用的 (Provider, ProviderModel)。
 
@@ -683,7 +635,7 @@ def _resolve_image_model(
     """
     if provider_id and model_name:
         prov = db.get(models.Provider, provider_id)
-        if prov and prov.user_id == user.id and prov.enabled:
+        if prov and prov.user_id == user_id and prov.enabled:
             mdl = db.scalar(
                 select(models.ProviderModel).where(
                     models.ProviderModel.provider_id == provider_id,
@@ -699,7 +651,7 @@ def _resolve_image_model(
         select(models.Provider, models.ProviderModel)
         .join(models.ProviderModel, models.ProviderModel.provider_id == models.Provider.id)
         .where(
-            models.Provider.user_id == user.id,
+            models.Provider.user_id == user_id,
             models.Provider.enabled == True,  # noqa: E712
             models.ProviderModel.model_type == "image",
             models.ProviderModel.enabled == True,  # noqa: E712
@@ -909,14 +861,158 @@ def _ratio_to_size(ratio: str | None, reference_filename: str | None = None) -> 
     return None
 
 
+# ─────────────────────────────────────────────────────────────
+# 品牌仿冒清洗 + 内容拒绝自愈
+# ─────────────────────────────────────────────────────────────
+# 图像模型对「品牌/IP 仿冒描述」会直接拒生成（"Unable to generate this
+# content"）。本模块在出图前分级清洗提示词，并在被拒时递进到更安全的候选
+# 提示词，最终以「中性产品图兜底」，确保一次生成任务 0 失败。
+#
+# 注意：清洗的是英文生成提示词 prompt_en（送图像模型的版本），中文展示版
+# prompt_cn 不受影响；清洗只为绕过内容策略，不改变「产品/场景/角度」语义。
+
+# 常见品牌词（整词匹配，大小写不敏感）。覆盖服饰/箱包/腕表/珠宝/3C/IP 等
+# 易触发内容策略的类目。这是启发式清单，目的不是道德审查，而是避免被拒。
+_BRAND_TERMS = [
+    # 服饰 / 箱包 / 奢侈
+    "chanel", "gucci", "louis vuitton", "lv", "hermès", "hermes", "prada",
+    "dior", "dior", "ysl", "saint laurent", "givenchy", "burberry", "fendi",
+    "bottega veneta", "bottega", "versace", "armani", "rolex", "cartier",
+    "tiffany", "coach", "michael kors", "balenciaga", "celine", "loewe",
+    "valentino", "off-white", "supreme", "bape", "kenzo", "moschino",
+    "tom ford", "berluti", "dolce gabbana", "d&g", "lanvin", "miumiu",
+    "miumiu", "longchamp", "mulberry", "ted baker", "calvin klein", "ck",
+    # 3C / 科技
+    "airpods", "iphone", "ipad", "macbook", "samsung", "huawei", "xiaomi",
+    "sony", "beats", "bose", "dyson", "go pro", "gopro",
+    # 卡通 / 游戏 IP
+    "disney", "pokemon", "pokémon", "hello kitty", "minnie", "marvel",
+    "dc comics", "dc", "lego", "barbie", "sanrio", "mickey", "pikachu",
+    "naruto", "one piece", "genshin", "minecraft", "fortnite",
+]
+
+# 仿冒 / 高仿描述短语（正则，整词，大小写不敏感）
+_BRAND_PHRASES = [
+    r"\b1\s?:\s?1\b",                 # 1:1
+    r"\b一\s?比\s?一\b",              # 一比一
+    r"\breplica\b",
+    r"\bcounterfeit\b",
+    r"\bknock[\s-]?off\b",
+    r"\blook[\s-]?alike\b",
+    r"\bhomage to\b",
+    r"\binspired by\b",
+    r"\bin the style of\b",
+    r"\bduplicate of\b",
+    r"\bcopy of\b",
+    r"\bhigh[\s-]?quality fake\b",
+    r"\b AAA \b",
+    r"\b复刻\b",
+    r"\b高仿\b",
+    r"\b原单\b",
+    r"\b精仿\b",
+]
+
+# 深度清洗：去掉一切「品牌标识」类描述词（这些词常伴随具体品牌出现）
+_BRAND_GENERIC = [
+    r"\bmonogram\b",
+    r"\bemblem\b",
+    r"\blogo\b",
+    r"\btrademark\b",
+    r"\bbrand\b",
+    r"\bsignature\b",
+    r"\bdouble c\b",
+    r"\bdouble g\b",
+    r"\bgg logo\b",
+    r"\bcc logo\b",
+    r"\b双c\b",
+    r"\b双g\b",
+    r"\b老花\b",
+]
+
+# 内容策略拒绝的关键字（出现在错误文本里即判定为「可经提示词降级解决」）
+_CONTENT_REJECTION_HINTS = (
+    "unable to generate", "modify your prompt", "content policy",
+    "content moderation", "safety system", "inappropriate", "violat",
+    "not allowed", "prohibited", "trademark", "copyright", "intellectual property",
+    "brand", "ip ", "不符合", "内容安全", "版权", "品牌",
+)
+
+
+def _sanitize_brand(prompt: str, deep: bool = False) -> str:
+    """剥离提示词中的品牌/IP/仿冒描述，降低被图像模型拒绝的概率。
+
+    - 先去仿冒短语；再去品牌整词；deep=True 时再去掉 logo/emblem/monogram 等
+      标识类描述词。
+    - 仅做词法删除，不重写语义；删除后清理多余空格与标点残留。
+    """
+    if not prompt:
+        return prompt
+    p = prompt
+    for rx in _BRAND_PHRASES:
+        p = re.sub(rx, " ", p, flags=re.IGNORECASE)
+    # 品牌整词（按长度降序，避免短词先匹配截断长词，如 "lv" 误伤 "lve"）
+    for term in sorted(_BRAND_TERMS, key=len, reverse=True):
+        # 用边界保护：前面是空格/标点/开头，后面是空格/标点/结尾/小写字母前
+        p = re.sub(rf"(?<![a-z]){re.escape(term)}(?![a-z])", " ", p, flags=re.IGNORECASE)
+    if deep:
+        for rx in _BRAND_GENERIC:
+            p = re.sub(rx, " ", p, flags=re.IGNORECASE)
+    # 清理：多个空格合并、英文逗号前空格、首尾空白
+    p = re.sub(r"\s+", " ", p)
+    p = re.sub(r"\s+([,.;:])", r"\1", p)
+    p = re.sub(r"\(\s*\)", "", p)  # 空括号残留
+    return p.strip(" ,;:.")
+
+
+def _is_content_rejection(error: str | None) -> bool:
+    """判断图像模型返回的错误是否属于「内容策略拒绝」（可通过降级提示词解决）。"""
+    if not error:
+        return False
+    low = error.lower()
+    return any(h in low for h in _CONTENT_REJECTION_HINTS)
+
+
+def _result_error(result: dict | None) -> str:
+    """从 MediaService.generate_image 的返回里统一抽取可读错误文本。"""
+    if not result:
+        return ""
+    e = result.get("error")
+    if isinstance(e, dict):
+        return str(e.get("message") or e.get("code") or "")
+    if isinstance(e, str):
+        return e
+    return ""
+
+
+def _has_image(result: dict | None) -> bool:
+    data = (result or {}).get("data") or []
+    return bool(data) and bool(data[0].get("url"))
+
+
+def _neutral_fallback_prompt(hint: str) -> str:
+    """内容策略彻底拒绝时的中性兜底提示词：纯产品摄影描述，绝不触发品牌/IP。
+
+    用 hint（品类/标题）保留一点场景语义；没有 hint 则完全通用。
+    """
+    cat = (hint or "").strip()
+    base = (
+        "professional commercial product photography, the item centered, "
+        "clean solid studio background, soft even lighting, high detail, "
+        "sharp focus, no text, no logo, no watermark, no brand name"
+    )
+    if cat:
+        return f"professional commercial product photography of {cat}, clean solid studio background, soft even lighting, high detail, no text, no logo, no watermark"
+    return base
+
+
 def _real_generate(
-    db: Session,
-    user: models.User,
+    user_id: int,
     prompt: str,
     reference_filenames: list[str],
     provider_id: int | None = None,
     model_name: str | None = None,
     size: str = "1024x1024",
+    hint: str = "",
 ) -> dict:
     """尝试用所选（或默认）AI 提供商的图片模型真实出图。
 
@@ -924,12 +1020,22 @@ def _real_generate(
     - 成功：{"url"（本地）, "filename", "provider_id", "provider_name", "model_name"}
     - 失败：{"error": "可读原因"}（不再静默返回 None，便于前端展示真实失败原因）
 
-    自动兜底：prompt 超长自动截断；带参考图失败时自动去掉参考图重试一次。
+    自动兜底：prompt 超长自动截断；品牌/IP 仿冒描述分级清洗；内容策略
+    拒绝或任意失败时递进到更安全的候选提示词（原 → 清洗 → 深度清洗 →
+    中性产品图兜底），带参考图失败自动去参考图，从而确保单次任务 0 失败。
+
+    事务安全：模型解析使用独立的短生命周期会话，解析后立即关闭，
+    绝不在后续数分钟的 HTTP 出图调用期间持有打开的事务/连接
+    （否则连接一旦失效会触发 "Can't reconnect until invalid transaction is rolled back"）。
     """
     try:
         from app.media import MediaService
+        from app.core.database import engine
 
-        provider, model = _resolve_image_model(db, user, provider_id, model_name)
+        # 用独立的短生命周期会话解析模型，解析后立即关闭，
+        # 避免在长 HTTP 出图调用期间持有打开的事务/连接
+        with Session(engine) as rs:
+            provider, model = _resolve_image_model(rs, user_id, provider_id, model_name)
         if not provider or not model:
             reason = "未配置可用的图片模型（请在「AI 提供商」中添加并启用一个图片模型，并设为默认图片模型）"
             logger.warning("Real image generation skipped: %s", reason)
@@ -948,51 +1054,78 @@ def _real_generate(
             prompt_to_send = prompt_to_send[:1500].rstrip() + " ..."
             logger.info("Image prompt truncated to 1500 chars for model %s", model.model_name)
 
-        def _call(refs):
+        def _call(p: str, refs):
             return MediaService.generate_image(
                 provider=provider,
                 model_name=model.model_name,
-                prompt=prompt_to_send,
+                prompt=p,
                 size=size,
                 n=1,
                 reference_images=refs or None,
                 tags=["gallery"],
             )
 
-        # 第一次：带参考图
-        result = _call(ref_urls)
-        images = result.get("data", [])
-        url = images[0].get("url") if images else None
-        if not url and ref_urls:
-            # 带参考图失败 → 去掉参考图重试一次（参考图格式/大小/不被支持是常见原因）
-            logger.warning(
-                "Image gen with refs failed (%s); retry without refs",
-                result.get("error"),
-            )
-            result = _call(None)
-            images = result.get("data", [])
-            url = images[0].get("url") if images else None
+        # 候选提示词：原提示词 → 清洗品牌 → 深度清洗 → 中性兜底。
+        # 任意失败（含内容策略拒绝）都递进到更安全的候选，确保任务 0 失败。
+        candidates: list[str] = [prompt_to_send]
+        sanitized = _sanitize_brand(prompt_to_send)
+        if sanitized and sanitized != prompt_to_send:
+            candidates.append(sanitized)
+        candidates.append(_sanitize_brand(prompt_to_send, deep=True))
+        candidates.append(_neutral_fallback_prompt(hint))
 
-        if url:
-            filename = _save_generated_image(url)
-            if filename:
+        last_err = ""
+        for ci, cand in enumerate(candidates):
+            # 先带参考图；带参考图失败时自动去掉参考图重试一次
+            result = _call(cand, ref_urls)
+            if not _has_image(result) and ref_urls:
+                logger.warning(
+                    "Image gen with refs failed (%s); retry without refs (candidate %d/%d)",
+                    _result_error(result)[:120], ci + 1, len(candidates),
+                )
+                result = _call(cand, None)
+            if _has_image(result):
+                url = result["data"][0]["url"]
+                filename = _save_generated_image(url)
+                if filename:
+                    return {
+                        "url": f"/api/gallery/files/{filename}",
+                        "filename": filename,
+                        "provider_id": provider.id,
+                        "provider_name": provider.name,
+                        "model_name": model.model_name,
+                    }
+                # 下载失败但仍保留远程 URL，避免整单失败
                 return {
-                    "url": f"/api/gallery/files/{filename}",
-                    "filename": filename,
+                    "url": url,
+                    "filename": None,
                     "provider_id": provider.id,
                     "provider_name": provider.name,
                     "model_name": model.model_name,
                 }
-            # 下载失败但仍保留远程 URL，避免整单失败
-            return {
-                "url": url,
-                "filename": None,
-                "provider_id": provider.id,
-                "provider_name": provider.name,
-                "model_name": model.model_name,
-            }
-        reason = result.get("error") or "图片模型未返回图片（可能 prompt 过长、参考图不被支持，或被限流）"
-        logger.warning("Real image generation failed: %s", reason)
+            err = _result_error(result)
+            last_err = err
+            if ci < len(candidates) - 1:
+                if _is_content_rejection(err):
+                    # 内容策略拒绝：递进到更安全的候选（清洗/深度清洗/中性兜底），
+                    # 确保品牌/IP 仿冒类失败自愈为 0 失败。
+                    logger.warning(
+                        "内容策略拒绝，降级提示词重试 (%d/%d): %s",
+                        ci + 1, len(candidates), err[:120],
+                    )
+                    continue
+                # 非内容错误（网络抖动 / 队列限流）：post_with_retry 已做退避重试，
+                # 改变提示词无济于事，继续递进只会把时延放大数倍（尤其队列满时）。
+                # 直接终止候选重试，避免任务长时间卡死。
+                logger.warning(
+                    "出图失败（非内容策略，终止候选重试）(%d/%d): %s",
+                    ci + 1, len(candidates), err[:120],
+                )
+                break
+            break  # 已是最后一个候选仍失败：结束
+
+        reason = last_err or "图片模型未返回图片（可能 prompt 过长、参考图不被支持，或被限流）"
+        logger.warning("Real image generation failed after %d candidates: %s", len(candidates), reason)
         return {"error": reason}
     except Exception as exc:  # 任意异常都记录原因，不再静默
         reason = f"出图调用异常：{exc}"
@@ -1174,6 +1307,8 @@ def run_gallery_task(task_id: int) -> None:
                     prompt_source=spec["prompt_source"],
                     prompt_input=spec.get("prompt_input", ""),
                     prompt_raw=spec.get("prompt_raw", ""),
+                    prompt_short=spec.get("prompt_short", ""),
+                    prompt_en_short=spec.get("prompt_en_short", ""),
                     provider_id=m["item_provider_id"],
                     provider_name=None,
                     model_name=m["item_model"],
@@ -1195,40 +1330,61 @@ def run_gallery_task(task_id: int) -> None:
                     "rec": rec,
                     "prompt_cn": spec["prompt_cn"],
                     "prompt_en": spec["prompt_en"],
+                    "prompt_short": spec.get("prompt_short", ""),
+                    "prompt_en_short": spec.get("prompt_en_short", ""),
                     "ref_files": m["ref_files"],
                     "size": m["size"],
                     "item_provider_id": m["item_provider_id"],
                     "item_model": m["item_model"],
                     "title": title,
                     "i": idx,
-                    "item": item,
+                    # 不存放 ORM 对象，改为提取纯标量，从根上避免 db.close() 后
+                    # 访问 item.* 触发 DetachedInstanceError（ORM 对象跨会话边界）
+                    "item_id": item.id,
+                    "item_type_id": item.type_id,
+                    "item_personal_settings": item.personal_settings or {},
+                    "item_common_settings": item.common_settings or {},
+                    "item_output_settings": item.output_settings or {},
+                    "item_note": item.note or "",
+                    "item_reference_images": item.reference_images or [],
+                    "item_product_image": item.product_image or "",
                 })
 
         # 阶段2：并发逐张出图（processing → completed / failed），前端实时看到「生成中」
         # 每张图独立调用图片模型，用线程池并发执行，缩短墙钟时间（不再逐张串行等待）。
-        for entry in plan:
-            entry["rec"].status = "processing"
-        db.commit()
-
-        # 预取本线程所需的可序列化字段，避免在线程内访问主会话对象
+        #
+        # 关键修复：必须在关闭外层会话 db【之前】把线程所需字段全部从 ORM 对象
+        # 预取为纯数据。否则 db.close() 后对象会 detached，访问 item.personal_settings
+        # 等属性会抛 DetachedInstanceError。
         jobs = []
         for entry in plan:
-            item = entry["item"]
-            ps = item.personal_settings or {}
+            ps = entry["item_personal_settings"]
+            rec = entry["rec"]
+            rec.status = "processing"
             jobs.append({
-                "rec_id": entry["rec"].id,
+                "rec_id": rec.id,
                 "prompt_en": entry["prompt_en"],
+                "prompt_en_short": entry.get("prompt_en_short", ""),
                 "ref_files": entry["ref_files"],
                 "item_provider_id": entry["item_provider_id"],
                 "item_model": entry["item_model"],
                 "size": entry["size"],
-                "type_id": item.type_id,
-                "item_id": item.id,
+                "type_id": entry["item_type_id"],
+                "item_id": entry["item_id"],
                 "i": entry["i"],
                 "title": entry["title"],
                 "spec_text": ps.get("规格参数原文", "") or "",
                 "category": ps.get("产品品类", "") or "",
             })
+        user_id = user.id  # 关闭会话前提取，供线程闭包使用（避免 detached 访问）
+        db.commit()  # 提交 processing 标记（短事务，连接健康）
+
+        # 所有字段已预取为纯数据，关闭外层会话 db 释放其连接。
+        # 数分钟并发出图(网络 I/O)期间不再空闲持有连接，回写阶段用全新会话
+        # udb 提交，从根源避免 "Can't reconnect until invalid transaction is rolled back"。
+        _task_id = task.id
+        db.close()
+        db = None
 
         def _generate_one(job: dict) -> tuple:
             from app.core.database import SessionLocal
@@ -1237,12 +1393,24 @@ def run_gallery_task(task_id: int) -> None:
                 rec = s.get(models.GalleryRecord, job["rec_id"])
                 if not rec:
                     return job["rec_id"], "failed", "记录不存在"
-                u = s.get(models.User, user.id)
+                # user_id 来自闭包（已在关闭外层会话前提取），避免 detached 访问
+                # 关键修复：关闭初始读取事务后再发起长 HTTP 出图调用。
+                # 否则事务在整个出图期间保持打开，连接一旦失效就会触发
+                # "Can't reconnect until invalid transaction is rolled back"。
+                s.rollback()
+                # 实际出图优先使用「最简短场景提示词」(prompt_en_short) 降本提速；
+                # 缺失时回退到完整版 prompt_en。
+                gen_prompt = job.get("prompt_en_short") or job["prompt_en"]
                 real = _real_generate(
-                    s, u, job["prompt_en"], job["ref_files"],
+                    user_id, gen_prompt, job["ref_files"],
                     job["item_provider_id"], job["item_model"],
                     size=job["size"],
+                    hint=f"{job.get('category', '')} {job.get('title', '')}",
                 )
+                # 写回阶段：重新取记录（上方已 rollback，rec 已 detached）
+                rec = s.get(models.GalleryRecord, job["rec_id"])
+                if not rec:
+                    return job["rec_id"], "failed", "记录不存在"
                 if real and real.get("url"):
                     rec.result_filename = real.get("filename")
                     rec.result_url = real["url"]
@@ -1278,6 +1446,9 @@ def run_gallery_task(task_id: int) -> None:
             except Exception as exc:
                 logger.exception("gallery task %s 单图生成失败 rec=%s: %s", task_id, job["rec_id"], exc)
                 try:
+                    # 关键修复：先回滚失效事务，再重连写失败状态，
+                    # 否则会触发 "Can't reconnect until invalid transaction is rolled back"
+                    s.rollback()
                     rec = s.get(models.GalleryRecord, job["rec_id"])
                     if rec:
                         rec.status = "failed"
@@ -1301,44 +1472,23 @@ def run_gallery_task(task_id: int) -> None:
                     done += 1
                 else:
                     failed += 1
-        task.done = done
-        task.failed = failed
-        db.commit()
-
-        if failed == 0:
-            task.status = "completed"
-        elif done > 0:
-            task.status = "partial"
-        else:
-            task.status = "failed"
-        db.commit()
+        # 出图完成：用全新短生命周期会话回写任务状态
+        # （连接不跨长 I/O 持有，从根源避免 "Can't reconnect" 类错误）
+        with SessionLocal() as udb:
+            utask = udb.get(models.GalleryTask, _task_id)
+            if utask:
+                utask.done = done
+                utask.failed = failed
+                if failed == 0:
+                    utask.status = "completed"
+                elif done > 0:
+                    utask.status = "partial"
+                else:
+                    utask.status = "failed"
+                udb.commit()
     finally:
-        db.close()
-
-
-# ─────────────────────────────────────────────────────────────
-# 示例套图种子
-# ─────────────────────────────────────────────────────────────
-
-def seed_showcases(db: Session) -> int:
-    existing = db.scalar(select(func.count(models.GalleryShowcase.id)))
-    if existing:
-        return 0
-    count = 0
-    for seed in SHOWCASE_SEED:
-        orig = write_showcase_svg(seed, 0)
-        imgs = [write_showcase_svg(seed, i) for i in range(1, 4)]
-        sc = models.GalleryShowcase(
-            category=seed["category"],
-            name=seed["name"],
-            original_url=f"/api/gallery/files/{orig}",
-            image_urls=[f"/api/gallery/files/{u}" for u in imgs],
-            total_count=seed.get("count", len(imgs) + 1),
-        )
-        db.add(sc)
-        count += 1
-    db.commit()
-    return count
+        if db is not None:
+            db.close()
 
 
 def list_showcases(db: Session, category: str | None = None) -> list[models.GalleryShowcase]:

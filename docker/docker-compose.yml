@@ -165,6 +165,11 @@ services:
 
       # ── Init ──
       INIT_DB_ON_STARTUP: "true"
+
+      # 禁止写入 .pyc 字节码缓存：源码通过 bind mount 覆盖镜像，若镜像自带
+      # 的 .pyc mtime 比源码新，Python 会信任陈旧字节码导致运行时类缺失字段
+      # （如 GalleryRecord.error）。禁用缓存后始终读取最新源码，避免此类坑。
+      PYTHONDONTWRITEBYTECODE: "1"
     depends_on:
       mysql:
         condition: service_healthy
@@ -218,6 +223,9 @@ services:
       GALLERY_PROMPT_VIEW: "1"
 
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
+
+      # 同 api：禁止 .pyc 缓存，避免 bind mount 源码被镜像陈旧字节码覆盖
+      PYTHONDONTWRITEBYTECODE: "1"
     depends_on:
       mysql:
         condition: service_healthy

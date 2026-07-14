@@ -336,21 +336,6 @@ PERSONAL_OPTIONS: dict[str, list[str]] = {
 }
 
 
-# ─────────────────────────────────────────────────────────────
-# 示例套图种子（热门套图示例）。图片在 seed 时由 Service 生成为本地 SVG。
-#   hue: 渐变主色相（0-360），用于生成占位图
-#   count: 该套图包含的图片总数（含原图），用于卡片「+N」角标
-# ─────────────────────────────────────────────────────────────
-
-SHOWCASE_SEED: list[dict] = [
-    {"category": "服装鞋帽", "name": "黑色蕾丝拼接皮质吊带连衣裙", "hue": 330, "count": 10},
-    {"category": "3C 数码", "name": "无线主动降噪蓝牙耳机 Pro", "hue": 210, "count": 13},
-    {"category": "箱包配饰", "name": "复古真皮通勤大容量托特包", "hue": 28, "count": 16},
-    {"category": "个护美妆", "name": "烟酰胺提亮修护精华液 30ml", "hue": 350, "count": 10},
-    {"category": "日用百货", "name": "北欧风极简陶瓷马克杯 400ml", "hue": 160, "count": 19},
-    {"category": "其他", "name": "婴儿硅胶安抚牙胶玩具", "hue": 45, "count": 11},
-]
-
 SHOWCASE_CATEGORIES: list[str] = ["全部", "服装鞋帽", "3C 数码", "箱包配饰", "个护美妆", "日用百货", "其他"]
 
 
@@ -406,7 +391,7 @@ def _load_store(db) -> dict | None:
     store = {r.config_key: r.config_value for r in rows}
     needed = {
         "plan_types", "type_personal", "common_options",
-        "market_options", "output_options", "showcase_categories", "showcase_seed",
+        "market_options", "output_options", "showcase_categories",
     }
     if not needed.issubset(store.keys()):
         return None
@@ -430,7 +415,6 @@ def seed_gallery_config(db) -> int:
         "market_options": MARKET_OPTIONS,
         "output_options": OUTPUT_OPTIONS,
         "showcase_categories": SHOWCASE_CATEGORIES,
-        "showcase_seed": SHOWCASE_SEED,
     }
     descs = {
         "plan_types": "18 种策划类型（含成本/时长/极速标记）",
@@ -439,7 +423,6 @@ def seed_gallery_config(db) -> int:
         "market_options": "市场配置下拉选项",
         "output_options": "输出配置下拉选项",
         "showcase_categories": "套图示例分类",
-        "showcase_seed": "套图示例种子",
     }
     added = 0
 

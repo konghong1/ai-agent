@@ -24,9 +24,11 @@ if _database_url.startswith("sqlite"):
     # SQLite needs check_same_thread=False for single-threaded apps.
     engine = create_engine(_database_url, connect_args={"check_same_thread": False})
 elif _database_url.startswith("mysql"):
-    engine = create_engine(_database_url, pool_pre_ping=True)
+    # pool_recycle 回收空闲过久的连接，避免 Docker 部署下连接被服务端/
+    # 防火墙断开后复用触发 "Can't reconnect until invalid transaction is rolled back"
+    engine = create_engine(_database_url, pool_pre_ping=True, pool_recycle=1800)
 elif _database_url.startswith("postgresql"):
-    engine = create_engine(_database_url, pool_pre_ping=True)
+    engine = create_engine(_database_url, pool_pre_ping=True, pool_recycle=1800)
 else:
     engine = create_engine(_database_url)
 
@@ -119,3 +121,20 @@ def _migrate_sqlite_columns() -> None:
                     ))
                     conn.commit()
                     logger.info(f"Added {col} column to gallery_records")
+        # gallery_records.prompt_short / prompt_en_short（最简短场景提示词，用于实际生成降本提速）
+        # 同样不加默认值（MySQL 不允许 TEXT 列带 DEFAULT），应用层用 or "" 兜底。
+        for col in ("prompt_short", "prompt_en_short"):
+            if col not in gr_cols:
+                with engine.connect() as conn:
+                    conn.execute(text(
+                        f"ALTER TABLE gallery_records ADD COLUMN {col} TEXT"
+                    ))
+                    conn.commit()
+                    logger.info(f"Added {col} column to gallery_records")
+        # gallery_records.error（失败原因留痕，便于直接查库定位而非翻日志）。
+        # 注意：TEXT 列在 MySQL 不允许带 DEFAULT，故不加默认值（列允许 NULL，应用层兜底）。
+        if "error" not in gr_cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE gallery_records ADD COLUMN error TEXT"))
+                conn.commit()
+                logger.info("Added error column to gallery_records")

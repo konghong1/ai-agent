@@ -107,12 +107,19 @@ _PROMPT_BATCH_SYSTEM = """你是一位顶尖的电商视觉创意总监与图像
 
 四、输出格式：纯 JSON 数组，不要任何额外解释。每个元素格式严格如下：
 [
-  {"item_index": 0, "prompt_cn": "严格按 8 维组织的中文提示词（多视角/多场景时逐格描述）", "prompt_en": "纯英文提示词（逗号分隔短语，无中文）"},
+  {
+    "item_index": 0,
+    "prompt_cn": "严格按 8 维组织的【完整】中文提示词（多视角/多场景时逐格描述）",
+    "prompt_en": "【完整】纯英文提示词（逗号分隔短语，无中文）",
+    "prompt_cn_short": "该方向最简短的中文场景提示词（仅保留主体+场景+关键风格/角度，长度约为完整版 1/3）",
+    "prompt_en_short": "该方向最简短的纯英文场景提示词（逗号分隔短语，无中文，实际送图像模型生成时使用）"
+  },
   ...
 ]
 5. 数组长度必须与输入方向数量一致；item_index 必须按输入顺序从 0 开始，不得错位。
-6. 每个 prompt_en 必须为纯英文，严禁任何中文字符（规格参数图的画面严禁文字/数字/表格，均由后端叠加；可含淡淡测量引导线，但不得带任何文字）。
-7. 整套提示词需保持同一产品的视觉一致性（颜色/版型/材质不变），但每个方向应根据其「类型 + 个性配置 + 补充说明 + 版式要求」突出不同侧重点。"""
+6. 每个 prompt_en / prompt_en_short 必须为纯英文，严禁任何中文字符（规格参数图的画面严禁文字/数字/表格，均由后端叠加；可含淡淡测量引导线，但不得带任何文字）。
+7. 整套提示词需保持同一产品的视觉一致性（颜色/版型/材质不变），但每个方向应根据其「类型 + 个性配置 + 补充说明 + 版式要求」突出不同侧重点。
+8. prompt_cn_short / prompt_en_short 是「最简短场景提示词」：用最少的词传达该场景最核心的视觉要素，必须让图像模型仍能生成符合该场景的结果，但不得冗长重复完整版内容。"""
 
 _FILL_SP_SYSTEM = """你是一位资深电商选品与文案专家。商家上传了一张【产品图】，请你看图理解这个产品，并输出结构化的卖点信息，帮助后续 AI 生成套图。
 
@@ -378,6 +385,23 @@ def _strip_cjk(s: str, type_id: str | None = None) -> str:
     return re.sub(r"[\u4e00-\u9fff]", "", s).strip()
 
 
+def _derive_short(text: str, max_phrases: int = 8) -> str:
+    """模型未返回 prompt_*_short 时的兜底：从完整提示词提炼最短场景版。
+
+    仅做轻量切分（按中/英文逗号、分号取前 N 个短语），保证主体+场景+关键
+    风格/角度仍在；不调用大模型，纯规则、零成本。用于让「最简短场景提示词」
+    功能始终生效（实际出图优先用 short 降本提速）。
+    """
+    if not text:
+        return ""
+    for sep in (",", "，"):
+        parts = [p.strip() for p in text.split(sep) if p.strip()]
+        if len(parts) > 1:
+            return sep.join(parts[:max_phrases]).strip()
+    # 无逗号分隔：按长度截断，避免把一整段塞进 short
+    return text.strip()[:200].strip()
+
+
 # ── 单图多视角 / 多场景 / 拼贴 / 分屏 版式检测 ───────────────
 # 命中下列关键词即视为「单图多格」版式，需要 AI 在单图内逐格描述不同场景/角度。
 _MULTI_CELL_KEYWORDS = [
@@ -599,12 +623,21 @@ def build_batch_user_config_text(project: Any, meta: list[dict]) -> str:
         mc = _detect_multi_cell(item)
         if mc:
             lines.append(f"   - 版式要求（单图多格）：{mc}")
-        lines.append(f"   - 要求：基于该类型和上述配置，写出贴合该方向的差异化提示词。")
 
+    # 不再对每个方向重复「写差异化提示词」这类笼统指令——整批作为一套系列套图
+    # 由结尾的【综合提示词要求】一次性统一说明（含「最简短场景提示词」要求）。
     lines.append(
-        "【输出要求】返回纯 JSON 数组，每个元素包含 item_index（从0开始）、prompt_cn（中文展示版）、prompt_en（英文生成版）。"
-        "prompt_en 必须纯英文、无中文；规格参数图的画面必须无文字/数字/表格（尺码表与标注由后端叠加），但可用淡淡测量引导线标出关键尺寸部位。"
-        "所有提示词需围绕同一款产品，保持整体风格统一，同时体现每个方向的侧重点。"
+        "【综合提示词要求】以下所有出图方向将作为同一款产品的系列套图一次性生成，"
+        "请整体把握、统一输出，不要再对每个方向重复「写差异化提示词」这类笼统指令：\n"
+        "1) 每个方向各输出一份【完整差异化提示词】：prompt_cn（中文展示版）、prompt_en（英文生成版），"
+        "按该方向的「类型 + 个性配置 + 补充说明 + 版式要求」写成贴合该方向、彼此不雷同的内容；\n"
+        "2) 每个方向额外输出一份【最简短场景提示词】：prompt_cn_short（中文）、prompt_en_short（纯英文，送图像模型），"
+        "只保留该场景最核心的视觉要素（主体 + 场景 + 关键风格/角度），长度压缩到完整版的约 1/3，"
+        "但仍须让图像模型生成符合该场景的结果；\n"
+        "3) 返回纯 JSON 数组，每个元素含 item_index（从0开始）、prompt_cn、prompt_en、prompt_cn_short、prompt_en_short；"
+        "prompt_cn_short 与 prompt_en_short 为必填字段，每个元素都必须包含，缺失视为不合格输出；"
+        "prompt_en 与 prompt_en_short 必须纯英文、无中文；规格参数图画面严禁文字/数字/表格（由后端叠加）。"
+        "整套提示词围绕同一款产品，整体风格统一、各方向侧重点明确。"
     )
     return "\n\n".join(lines)
 
@@ -662,12 +695,30 @@ def generate_prompts_batch_mode_1(
                     type_id=getattr(m["item"], "type_id", None),
                 ).strip()
                 if cn and en:
+                    cn_short = str(entry.get("prompt_cn_short", "") or "").strip()
+                    if not cn_short:
+                        # 模型未返回最短中文版 → 从完整中文提示词规则提炼兜底
+                        cn_short = _derive_short(cn, max_phrases=6)
+                    en_short = _strip_cjk(
+                        str(entry.get("prompt_en_short", "") or ""),
+                        type_id=getattr(m["item"], "type_id", None),
+                    ).strip()
+                    if not en_short:
+                        # 模型未返回最短英文版 → 从完整英文提示词规则提炼兜底
+                        en_short = _strip_cjk(
+                            _derive_short(en, max_phrases=8),
+                            type_id=getattr(m["item"], "type_id", None),
+                        ).strip()
                     results[m["item"].id] = {
                         "prompt": cn,
                         "prompt_en": en,
                         "prompt_source": "ai",
                         "prompt_input": user_text,
                         "prompt_raw": raw,
+                        # 最简短场景提示词：实际出图时优先使用 prompt_en_short（降本提速），
+                        # 完整版 prompt_en 仍保留用于前端展示与溯源。
+                        "prompt_short": cn_short,
+                        "prompt_en_short": en_short,
                     }
         if len(results) == len(meta):
             break

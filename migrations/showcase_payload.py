@@ -13,23 +13,30 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
-from sqlalchemy import create_engine, inspect, text
+# 确保无论从哪个工作目录执行都能 import app（docker exec 跑脚本时只把
+# 脚本所在目录加入 sys.path，不会包含项目根）。
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from sqlalchemy import inspect, text
 
 
 def main() -> None:
-    # 复用 app 的数据库 URL（sqlite:///./agent.db 或 mysql...）
+    # 复用 app 运行时真正连接的 engine（sqlite 本地 / mysql Docker），
+    # 不要用 normalize_db_url() 自建 engine —— 后者会解析到 .env 的 SQLite，
+    # 而 Docker 运行库是 MySQL，导致「删了 0 行」却以为清理完成。
     try:
-        from app.db_url import normalize_db_url
+        from app.core.database import engine
 
-        db_url = normalize_db_url()
-    except Exception:
-        db_url = "sqlite:///./agent.db"
-
-    engine = create_engine(db_url, future=True)
-    insp = inspect(engine)
-    dialect = engine.dialect.name
+        insp = inspect(engine)
+        dialect = engine.dialect.name
+    except Exception as e:
+        print(f"[migrate] 无法加载 app engine: {e}", file=sys.stderr)
+        sys.exit(1)
 
     with engine.begin() as conn:
         cols = insp.get_columns("gallery_showcases")
@@ -42,9 +49,16 @@ def main() -> None:
         else:
             print("[migrate] payload 列已存在，跳过加列")
 
-        # 清理 seed 注入的 SVG 假数据（original_url 以 .svg 结尾），保留真实发布
+        # 清理 seed 注入的 SVG 假数据。
+        # 注意：种子行的 original_url 形如 /api/gallery/files/showcase/<hex>
+        # （无 .svg 后缀，只有 image_urls 里才是 .svg），因此必须同时按
+        # '%/showcase/%' 命中；真实发布的 original_url 在 projects/ 或 results/ 下，
+        # 绝不会落在 showcase/ 目录，故可按 original_url 精准区分、不误删真实数据。
         res = conn.execute(
-            text("DELETE FROM gallery_showcases WHERE original_url LIKE '%.svg'")
+            text(
+                "DELETE FROM gallery_showcases "
+                "WHERE original_url LIKE '%.svg' OR original_url LIKE '%/showcase/%'"
+            )
         )
         deleted = res.rowcount if res.rowcount is not None else 0
         print(f"[migrate] 已删除假数据(seed SVG) 行数: {deleted}")

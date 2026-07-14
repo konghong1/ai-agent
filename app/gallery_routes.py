@@ -6,13 +6,15 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
-from app.deps import get_current_user
+from app.core.database import get_db, SessionLocal
+from app.deps import get_current_user, get_current_user_sse
 from app import models
 from app.gallery_config import GALLERY_FEATURES, serialize_options, serialize_types
 from app.gallery_service import (
@@ -404,6 +406,73 @@ def get_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return GalleryTaskRead.model_validate(task)
+
+
+@router.get("/tasks/stream")
+def stream_tasks(
+    current_user: models.User = Depends(get_current_user_sse),
+) -> StreamingResponse:
+    """SSE 任务进度推送：替代前端轮询。
+
+    单次连接内持续推送当前用户「进行中」任务的实时进度（done/total/status），
+    并在任务终态（completed/partial/failed）时各推送一次最终快照，随后结束流。
+    每轮用独立 ``SessionLocal`` 查询，不在长连接期间持有数据库事务/连接。
+
+    鉴权：复用 ``get_current_user_sse``（Authorization 头或 ``?token=`` 查询参数），
+    以兼容浏览器 EventSource 无法自定义请求头的限制。
+    """
+    uid = current_user.id
+
+    def event_gen():
+        announced_terminal: set[int] = set()
+        streaming_ids: set[int] = set()
+        # 最多推送 ~15 分钟（900 * 1s），超过则强制结束，避免僵尸连接
+        for _ in range(900):
+            with SessionLocal() as db:
+                active = db.scalars(
+                    select(models.GalleryTask).where(
+                        models.GalleryTask.user_id == uid,
+                        models.GalleryTask.status.in_(["pending", "running"]),
+                    )
+                ).all()
+                for t in active:
+                    streaming_ids.add(t.id)
+                # 推送进行中任务（每轮都推，前端据此刷新进度）
+                for t in active:
+                    snap = GalleryTaskRead.model_validate(t).model_dump_json()
+                    yield f"data: {snap}\n\n"
+                # 推送刚结束的任务（每任务仅一次）
+                if streaming_ids:
+                    term = db.scalars(
+                        select(models.GalleryTask).where(
+                            models.GalleryTask.id.in_(list(streaming_ids)),
+                            models.GalleryTask.status.in_(
+                                ["completed", "partial", "failed"]
+                            ),
+                        )
+                    ).all()
+                    for t in term:
+                        if t.id not in announced_terminal:
+                            announced_terminal.add(t.id)
+                            snap = GalleryTaskRead.model_validate(t).model_dump_json()
+                            yield f"data: {snap}\n\n"
+                    streaming_ids -= announced_terminal
+            # keep-alive 注释，避免代理/浏览器空闲断开
+            yield ": keep-alive\n\n"
+            if not streaming_ids:
+                # 所有任务已结束，推送完毕，正常结束流
+                break
+            time.sleep(1)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 关闭 nginx 缓冲，确保实时推送
+        },
+    )
 
 
 @router.patch("/tasks/{task_id}", response_model=GalleryTaskRead)

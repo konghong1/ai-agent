@@ -15,6 +15,7 @@
 - **Pydantic 响应 schema 新增列必须可空** `X | None = None`（ALTER 加的列存量 NULL）。
 - **🔥 MySQL 迁移 TEXT 列禁带默认值**: `ADD COLUMN x TEXT DEFAULT ''` 在 MySQL8 报 1101，致 api 崩溃 restart loop。规则：TEXT 列 ALTER 与 `mapped_column` 都**不得**写 `DEFAULT ''`/`server_default`，列允许 NULL，应用层 `default=""` 或读取 `or ""` 兜底。VARCHAR 可带默认值。改完必在 Docker 验证迁移。
 - **Docker 前端白屏 = nginx sendfile bug**: `docker/nginx.conf` 的 `server` 块加 `sendfile off;`（因 `../web/dist` 是 Windows bind mount，sendfile 向外部发 0 字节体）。`docker restart ai-agent-web` 生效。
+- **🔥 绝不在 FastAPI startup 事件里做会阻塞/可能失败的网络调用**（pip 安装、外部 HTTP）。曾因 `_ensure_pillow()` 同步 `subprocess.run(pip install)` 阻塞启动，且容器内默认 `http_proxy=127.0.0.1:33210` 不可达导致 pip 永远连不上 PyPI → uvicorn 绑不上端口 → 后端整挂、用户数据加载不出。规则：自愈必须在**后台 daemon 线程**，且 subprocess env 必须**剥离 `*_proxy`** 走直连（容器内直连 PyPI 可达）。旧镜像无 Pillow，`force-recreate` 会丢，应择机 `docker compose build` 烤进镜像。
 
 ## 出网代理韧性（app/http_client.py）
 - Docker 注入 `HTTPS_PROXY=host.docker.internal:33210`，可能不可达；`ensure_proxy_strategy()` 探测不可达则走直连；`request/download_with_fallback()` 每次带直连兜底。设 `DISABLE_PROXY_AUTOFALLBACK=1` 可保留强制代理。图片生成超时 300s / 视频提交 120s / 轮询 60s / 下载 120s。

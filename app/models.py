@@ -510,6 +510,11 @@ class GalleryRecord(TimestampMixin, Base):
     prompt_input: Mapped[str] = mapped_column(Text, default="")
     # 提示词溯源：大模型原始返回文本（解析前的 JSON 字符串）；模板降级路径为空串
     prompt_raw: Mapped[str] = mapped_column(Text, default="")
+    # 最简短场景提示词（由 AI 批量提示词引擎额外产出）：中文展示版 / 纯英文生成版。
+    # 实际出图优先使用 prompt_en_short 降本提速；完整版 prompt_en 保留用于展示与溯源。
+    # 注意：MySQL 不允许 TEXT 列带 server_default，故只用 nullable、不加默认值。
+    prompt_short: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompt_en_short: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 生成该图所用的 AI 提供商图片模型（确保所有配置都有记录）
     provider_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     provider_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -576,7 +581,7 @@ class GalleryConfig(TimestampMixin, Base):
     或需要可运营编辑，配置就「消失」。本表把这份固定配置落库，成为唯一可恢复的来源：
 
     - ``config_key`` 唯一，如 ``plan_types`` / ``type_personal`` / ``common_options`` /
-      ``market_options`` / ``output_options`` / ``showcase_categories`` / ``showcase_seed``
+      ``market_options`` / ``output_options`` / ``showcase_categories``
     - ``config_value`` 存对应 Python 常量的 JSON 序列化值
     - 启动时由 ``seed_gallery_config`` 幂等写入；运行时优先从本表读取，缺失时回退代码常量
     """

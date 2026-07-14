@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { message, Modal, Spin, Input, Select, Image } from 'antd'
 import {
   getTypes, getDraft, getTemplates,
-  getImageModels, getTasks, getTask, updateTask, updateRecord, getShowcases, publishShowcase,
+  getImageModels, getTasks, updateTask, updateRecord, getShowcases, publishShowcase,
   uploadImages, deleteImage, updateProject,
   createPlanItem, updatePlanItem, deletePlanItem,
   generate, createTemplate, deleteTemplate, applyTemplate, updateTemplate,
   aiWriteSellingPoints,
 } from '@/services/gallery'
+import { getToken } from '@/services/auth'
 import type {
   GalleryType, GalleryOptions, GalleryProject,
   GalleryRecord, GalleryTemplate, GalleryPlanItem,
@@ -280,6 +281,8 @@ export default function EcommerceGallery() {
   const contentRef = useRef<HTMLDivElement>(null)
   // 任务轮询用 ref：避免每次轮询都重建定时器
   const tasksRef = useRef<GalleryTask[]>(tasks)
+  // SSE 连接引用：用服务端推送替代前端轮询任务进度
+  const esRef = useRef<EventSource | null>(null)
 
   const refreshProject = useCallback(async () => {
     const p = await getDraft()
@@ -310,21 +313,53 @@ export default function EcommerceGallery() {
 
   useEffect(() => { loadAll() }, [loadAll])
 
-  // 每次渲染同步最新任务列表到 ref，供轮询定时器读取（定时器只创建一次）
+  // 每次渲染同步最新任务列表到 ref，供 SSE 重连判断读取
   tasksRef.current = tasks
-  // 后台任务轮询：每 1.5s 拉取进行中任务的最新进度（done/total/records）
-  useEffect(() => {
-    const timer = setInterval(async () => {
-      const active = tasksRef.current.filter((t) => t.status === 'pending' || t.status === 'running')
-      if (active.length === 0) return
-      const updates = await Promise.all(active.map((t) => getTask(t.id).catch(() => null)))
-      const map = new Map<number, GalleryTask>()
-      updates.forEach((u) => { if (u) map.set(u.id, u) })
-      if (map.size === 0) return
-      setTasks((prev) => prev.map((t) => (map.has(t.id) ? map.get(t.id)! : t)))
-    }, 1500)
-    return () => clearInterval(timer)
+
+  // 用 SSE 服务端推送替代前端轮询：打开一条 /api/gallery/tasks/stream 长连接，
+  // 后端实时推送进行中任务进度与终态快照，前端据此刷新任务列表。
+  const connectTaskStream = useCallback(() => {
+    if (esRef.current) return
+    const token = getToken()
+    const url = token
+      ? `/api/gallery/tasks/stream?token=${encodeURIComponent(token)}`
+      : `/api/gallery/tasks/stream`
+    const es = new EventSource(url)
+    esRef.current = es
+    es.onmessage = (ev) => {
+      try {
+        const u: GalleryTask = JSON.parse(ev.data)
+        if (!u || typeof u.id !== 'number') return
+        setTasks((prev) => {
+          const exists = prev.some((t) => t.id === u.id)
+          return exists ? prev.map((t) => (t.id === u.id ? u : t)) : [u, ...prev]
+        })
+      } catch {
+        /* 忽略非 JSON 心跳/注释帧 */
+      }
+    }
+    es.onerror = () => {
+      // 连接关闭（含服务端推送完毕正常结束）：关闭并视情况重连
+      es.close()
+      esRef.current = null
+      const hasActive = tasksRef.current.some(
+        (t) => t.status === 'pending' || t.status === 'running',
+      )
+      if (hasActive) {
+        // 仍有进行中任务但连接中断，3s 后自动重连
+        window.setTimeout(() => connectTaskStream(), 3000)
+      }
+    }
   }, [])
+
+  // 挂载即建立推送连接（空闲时服务端会自动结束流，生成任务时再重连）
+  useEffect(() => {
+    connectTaskStream()
+    return () => {
+      esRef.current?.close()
+      esRef.current = null
+    }
+  }, [connectTaskStream])
 
   // ── 上传产品图 ──
   const handleFiles = async (fileList: FileList | null) => {
@@ -531,8 +566,11 @@ export default function EcommerceGallery() {
     try {
       const task = await generate(project.id)
       setTasks((prev) => [task, ...prev])
+      // 确保 SSE 进度推送已建立（空闲流可能已被服务端关闭，生成时重连）
+      connectTaskStream()
       message.success('已提交生成任务，正在后台创作中')
       // 跳转到「创作结果」区域顶部，突出最新任务卡片
+      setAreaTab('results')
       contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (e) {
       /* 已提示 */
