@@ -505,6 +505,11 @@ class GalleryRecord(TimestampMixin, Base):
     prompt_en: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
     # 提示词来源：ai=由 Agnes 多模态大模型生成；template=降级到旧模板引擎
     prompt_source: Mapped[str] = mapped_column(String(16), default="template", server_default="template")
+    # 提示词溯源：喂给大模型生成提示词的「完整意图描述」（用户配置 + 参考图说明，非最终提示词）
+    # 注意：MySQL 不允许 TEXT 列带 server_default，故只用 Python 层 default 兜底
+    prompt_input: Mapped[str] = mapped_column(Text, default="")
+    # 提示词溯源：大模型原始返回文本（解析前的 JSON 字符串）；模板降级路径为空串
+    prompt_raw: Mapped[str] = mapped_column(Text, default="")
     # 生成该图所用的 AI 提供商图片模型（确保所有配置都有记录）
     provider_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     provider_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -557,6 +562,10 @@ class GalleryShowcase(TimestampMixin, Base):
     original_url: Mapped[str] = mapped_column(String(1000), default="")
     image_urls: Mapped[list] = mapped_column(SA_JSON, default=list)
     total_count: Mapped[int] = mapped_column(Integer, default=0)
+    # 发布时携带的源任务参数（用于「生成同款」回填）：
+    # { plan_items:[plan_item_snapshot...], market_config, output_config, selling_points }
+    # 仅存储配置，不存储源项目的落盘文件（product_image 等在当前项目无法解析）。
+    payload: Mapped[dict] = mapped_column(SA_JSON, default=dict)
 
 
 class GalleryConfig(TimestampMixin, Base):

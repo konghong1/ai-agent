@@ -283,20 +283,27 @@ export default function TypeSettingsModal({
                 {type.personal.map((f) => (
                   <div className="pf-row" key={f.label}>
                     <label>{f.label}</label>
-                    {f.options && f.options.length > 0 ? (
-                      <SingleTagSelect
-                        value={personal[f.label] || undefined}
-                        placeholder={f.placeholder || '请选择，或直接输入'}
-                        options={f.options.map((o) => ({ label: o, value: o }))}
-                        onChange={(v) => setPersonal((p) => ({ ...p, [f.label]: v }))}
-                      />
-                    ) : (
-                      <Input
-                        value={personal[f.label] || ''}
-                        placeholder={f.placeholder || '请选择，或直接输入'}
-                        onChange={(e) => setPersonal((p) => ({ ...p, [f.label]: e.target.value }))}
-                      />
-                    )}
+                  {f.options && f.options.length > 0 ? (
+                    <SingleTagSelect
+                      value={personal[f.label] || undefined}
+                      placeholder={f.placeholder || '请选择，或直接输入'}
+                      options={f.options.map((o) => ({ label: o, value: o }))}
+                      onChange={(v) => setPersonal((p) => ({ ...p, [f.label]: v }))}
+                    />
+                  ) : f.label === '规格参数原文' ? (
+                    <Input.TextArea
+                      rows={3}
+                      value={personal[f.label] || ''}
+                      placeholder={f.placeholder || '请粘贴具体规格/尺码数据'}
+                      onChange={(e) => setPersonal((p) => ({ ...p, [f.label]: e.target.value }))}
+                    />
+                  ) : (
+                    <Input
+                      value={personal[f.label] || ''}
+                      placeholder={f.placeholder || '请选择，或直接输入'}
+                      onChange={(e) => setPersonal((p) => ({ ...p, [f.label]: e.target.value }))}
+                    />
+                  )}
                   </div>
                 ))}
               </div>

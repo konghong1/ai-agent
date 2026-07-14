@@ -605,6 +605,9 @@ class GalleryRecordRead(BaseModel):
     prompt: str
     prompt_en: str | None = None
     prompt_source: str = "template"
+    # 提示词溯源：喂给模型的输入描述 与 模型原始返回（AI 路径才有）
+    prompt_input: str | None = None
+    prompt_raw: str | None = None
     provider_id: int | None = None
     provider_name: str | None = None
     model_name: str | None = None
@@ -649,6 +652,8 @@ class GalleryShowcaseRead(BaseModel):
     original_url: str
     image_urls: list = Field(default_factory=list)
     total_count: int
+    # 发布时携带的源任务参数（用于「生成同款」回填）
+    payload: dict = Field(default_factory=dict)
 
     model_config = ConfigDict(from_attributes=True)
 

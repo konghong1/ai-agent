@@ -97,10 +97,17 @@ function PreviewableImage({ src, alt, className }: { src: string; alt?: string; 
 
 // 查看单张图片的生成提示词（中英双语）。入口仅在后端 features.show_prompt 开启、且该图
 // 确实带有 prompt 时由调用方渲染（见任务卡片与作品详情）。
-function PromptBadge({ prompt, prompt_en, promptSource }: { prompt: string; prompt_en?: string | null; promptSource?: string }) {
+function PromptBadge({ prompt, prompt_en, promptSource, promptInput, promptRaw }: {
+  prompt: string
+  prompt_en?: string | null
+  promptSource?: string
+  promptInput?: string | null
+  promptRaw?: string | null
+}) {
   const [open, setOpen] = useState(false)
   const [lang, setLang] = useState<'cn' | 'en'>('cn')
   const [copied, setCopied] = useState(false)
+  const [showTrace, setShowTrace] = useState(false)
   const isAi = promptSource === 'ai'
   const activePrompt = lang === 'en' && prompt_en ? prompt_en : prompt
   const copy = async () => {
@@ -141,6 +148,30 @@ function PromptBadge({ prompt, prompt_en, promptSource }: { prompt: string; prom
           </div>
         </div>
         <div className="prompt-modal-body">
+          {isAi && (promptInput || promptRaw) ? (
+            <div className="prompt-trace">
+              <button className="prompt-trace-toggle" type="button" onClick={() => setShowTrace(v => !v)}>
+                <span className={`prompt-trace-caret${showTrace ? ' open' : ''}`}>▸</span>
+                提示词溯源（你告诉 AI 的配置 → AI 原始返回）
+              </button>
+              {showTrace && (
+                <div className="prompt-trace-body">
+                  {promptInput ? (
+                    <div className="trace-block">
+                      <div className="trace-label">① 喂给 AI 的输入（用户配置 + 参考图说明）</div>
+                      <pre className="trace-text">{promptInput}</pre>
+                    </div>
+                  ) : null}
+                  {promptRaw ? (
+                    <div className="trace-block">
+                      <div className="trace-label">② AI 原始返回（解析前）</div>
+                      <pre className="trace-text">{promptRaw}</pre>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          ) : null}
           <div className="prompt-lang-tabs">
             <button
               className={lang === 'cn' ? 'active' : ''}
@@ -589,41 +620,46 @@ export default function EcommerceGallery() {
     } catch (e) { /* 已提示 */ }
   }
 
-  // ── 一键做同款：把当前详情套图的生成配置回填到左侧 ──
-  const handleSameStyle = async () => {
-    if (!project || !detailGroup || detailGroup.length === 0) return
-    setLoading(true)
+  // 把一批 plan_item 快照(配置) + 可选全局配置 回填到当前项目左侧配置面板
+  const applySnapshotsToProject = async ({
+    snapshots,
+    globalOutput,
+    marketConfig,
+    sellingPoints,
+  }: {
+    snapshots: NonNullable<GalleryRecord['plan_item_snapshot']>[]
+    globalOutput?: Record<string, any>
+    marketConfig?: Record<string, string>
+    sellingPoints?: string
+  }): Promise<boolean> => {
+    if (!project) return false
     try {
-      // 收集所有有快照的 record，并按 type_id 去重（保留同类型最后一条）
-      const snapshots = detailGroup
-        .map((r) => (r.plan_item_snapshot ? { ...r.plan_item_snapshot } : null))
-        .filter(Boolean) as GalleryRecord['plan_item_snapshot'][]
-
-      if (snapshots.length === 0) {
-        message.warning('该套图没有保存生成配置，无法做同款')
-        setDetailGroup(null)
-        return
-      }
-
-      const byType = new Map<string, NonNullable<GalleryRecord['plan_item_snapshot']>>()
-      snapshots.forEach((s) => {
-        if (s) byType.set(s.type_id || 'unknown', s)
-      })
-
-      // 1. 把全局输出配置带回：取第一张图快照中的 output_settings
-      const first = snapshots[0]
-      if (first?.output_settings) {
-        const oc = { ...project.output_config, ...first.output_settings }
+      // 1. 全局输出配置（项目级）：取源任务的 output_config 合并
+      if (globalOutput && Object.keys(globalOutput).length > 0) {
+        const oc = { ...project.output_config, ...globalOutput }
         await updateProjectSafe(project.id, { output_config: oc })
         setProject((prev) => (prev ? { ...prev, output_config: oc } : prev))
       }
+      // 1b. 市场配置
+      if (marketConfig && Object.keys(marketConfig).length > 0) {
+        await updateProjectSafe(project.id, { market_config: marketConfig })
+        setProject((prev) => (prev ? { ...prev, market_config: marketConfig } : prev))
+      }
+      // 1c. 核心卖点
+      if (sellingPoints) {
+        await updateProjectSafe(project.id, { selling_points: sellingPoints })
+        setProject((prev) => (prev ? { ...prev, selling_points: sellingPoints } : prev))
+      }
 
-      // 2. 逐个类型：已存在则更新，不存在则创建
+      // 2. 逐个类型：已存在则更新，不存在则创建（按 type_id 去重）
+      const byType = new Map<string, NonNullable<GalleryRecord['plan_item_snapshot']>>()
+      snapshots.forEach((s) => {
+        if (s && s.type_id && s.type_id !== 'unknown') byType.set(s.type_id, s)
+      })
       for (const [typeId, snapshot] of byType) {
-        if (typeId === 'unknown') continue
         const existing = project.plan_items.find((i) => i.type_id === typeId)
-        // 注意：有意不回填 snapshot.product_image —— 它指向「源项目」的落盘文件，
-        // 在当前（同款）项目中无法解析。留空可让生成时正确回退到本项目的产品图[0]。
+        // 有意不回填 snapshot.product_image：它指向「源项目」的落盘文件，
+        // 在当前（同款）项目中无法解析，留空可回退到本项目产品图[0]。
         const payload = {
           personal_settings: snapshot.personal_settings || {},
           common_settings: snapshot.common_settings || {},
@@ -637,12 +673,58 @@ export default function EcommerceGallery() {
           await createPlanItem(project.id, { type_id: typeId, ...payload })
         }
       }
-
       await refreshProject()
-      setDetailGroup(null)
-      message.success('同款配置已带入左侧，可直接点击「立即生成」')
+      return true
     } catch (e) {
-      message.error('带入同款配置失败，请重试')
+      return false
+    }
+  }
+
+  // ── 一键做同款（任务结果详情）：把当前详情套图的生成配置回填到左侧 ──
+  const handleSameStyle = async () => {
+    if (!project || !detailGroup || detailGroup.length === 0) return
+    setLoading(true)
+    try {
+      const snapshots = detailGroup
+        .map((r) => (r.plan_item_snapshot ? { ...r.plan_item_snapshot } : null))
+        .filter(Boolean) as NonNullable<GalleryRecord['plan_item_snapshot']>[]
+
+      if (snapshots.length === 0) {
+        message.warning('该套图没有保存生成配置，无法做同款')
+        setDetailGroup(null)
+        return
+      }
+      // 全局输出取第一张图快照里的 output_settings（与旧逻辑一致）
+      const ok = await applySnapshotsToProject({ snapshots, globalOutput: snapshots[0]?.output_settings })
+      setDetailGroup(null)
+      if (ok) message.success('同款配置已带入左侧，可直接点击「立即生成」')
+      else message.error('带入同款配置失败，请重试')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── 创作案例「生成同款」：把案例携带的源任务参数回填到左侧 ──
+  const handleSameStyleFromShowcase = async (sc: GalleryShowcase | null) => {
+    if (!project || !sc) return
+    const payload = sc.payload
+    const snapshots = (payload?.plan_items || []) as NonNullable<GalleryRecord['plan_item_snapshot']>[]
+    if (snapshots.length === 0) {
+      message.warning('该案例没有保存生成配置，无法做同款')
+      setShowcaseDetail(null)
+      return
+    }
+    setLoading(true)
+    try {
+      const ok = await applySnapshotsToProject({
+        snapshots,
+        globalOutput: payload?.output_config,
+        marketConfig: payload?.market_config,
+        sellingPoints: payload?.selling_points,
+      })
+      setShowcaseDetail(null)
+      if (ok) message.success('同款配置已带入左侧，可直接点击「立即生成」')
+      else message.error('带入同款配置失败，请重试')
     } finally {
       setLoading(false)
     }
@@ -1123,12 +1205,13 @@ export default function EcommerceGallery() {
                             ) : isFailed ? (
                               <div className="cell-failed">
                                 <span className="cell-failed-text">生成失败</span>
+                                {rec.error && <span className="cell-failed-err" title={rec.error}>{rec.error}</span>}
                               </div>
                             ) : (
                               <img src={placeholderImg(rec.title || '作品')} alt={rec.title || ''} />
                             )}
                             {rec.title && <div className="cell-caption" title={rec.title}>{rec.title}</div>}
-                            {features.show_prompt && rec.prompt && <PromptBadge prompt={rec.prompt} prompt_en={rec.prompt_en} promptSource={rec.prompt_source} />}
+                            {features.show_prompt && rec.prompt && <PromptBadge prompt={rec.prompt} prompt_en={rec.prompt_en} promptSource={rec.prompt_source} promptInput={rec.prompt_input} promptRaw={rec.prompt_raw} />}
                           </div>
                         )
                       })}
@@ -1201,7 +1284,7 @@ export default function EcommerceGallery() {
                             <p className="case-name">{sc.name}</p>
                             <div className="case-actions">
                               <button className="btn btn-secondary" onClick={() => setShowcaseDetail(sc)}>查看详情</button>
-                              <button className="btn btn-primary" onClick={openDrawer}>生成同款</button>
+                              <button className="btn btn-primary" onClick={() => handleSameStyleFromShowcase(sc)}>生成同款</button>
                             </div>
                           </div>
                         </article>
@@ -1321,11 +1404,6 @@ export default function EcommerceGallery() {
                             </svg>
                           </button>
                         )}
-                        {features.show_prompt && r.prompt && (
-                          <span className="detail-prompt-badge">
-                            <PromptBadge prompt={r.prompt} prompt_en={r.prompt_en} promptSource={r.prompt_source} />
-                          </span>
-                        )}
                       </div>
                     </div>
                   ))}
@@ -1436,7 +1514,7 @@ export default function EcommerceGallery() {
               </div>
             </div>
             <div className="detail-actions">
-              <button className="btn btn-primary" onClick={() => { setShowcaseDetail(null); openDrawer() }}>🎨 生成同款</button>
+              <button className="btn btn-primary" onClick={() => handleSameStyleFromShowcase(showcaseDetail)}>🎨 生成同款</button>
               <button className="btn btn-secondary" onClick={() => setShowcaseDetail(null)}>关闭</button>
             </div>
           </div>

@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from app.gallery_config import (
     MARKET_PROFILES,
     PLATFORM_PROFILES,
@@ -128,6 +130,34 @@ _ZERO_TEXT_MARKERS = ("整张画面不出现任何文字", "不出现任何文�
 _ALLOW_COPY_MARKERS = ("仅允许按类型需求放置",)
 
 
+# ── 单图多视角 / 多场景 / 拼贴 / 分屏 版式检测（与 AI 引擎口径一致） ──
+_MULTI_CELL_KEYWORDS = [
+    "拼接", "拼贴", "宫格", "分屏", "多场景", "多视角", "多角度", "多细节",
+    "组合", "collage", "grid", "九宫格", "四宫格", "田字格", "左右对比", "上下对比",
+    "主场景配辅", "产品主体+多场景", "产品不同状态", "不同时间季节",
+    "同一人物不同场景", "不同人物同一场景", "多个细节", "局部细节拼接",
+    "两个角度", "三个角度", "四个及以上角度", "环绕", "多面旋转",
+]
+_MULTI_CELL_RE = re.compile("|".join(re.escape(k) for k in _MULTI_CELL_KEYWORDS), re.IGNORECASE)
+
+
+def _detect_multi_cell_type(cfg: dict) -> str | None:
+    """检测配置是否为「单图多格」版式，返回 'angle' / 'scene' / None。
+
+    与 AI 引擎 ``gallery_prompt_ai._detect_multi_cell`` 判定口径一致，
+    保证降级路径与 AI 路径对多视角/多场景的指令风格统一。
+    """
+    type_id = cfg.get("type_id")
+    ps = cfg.get("personal") or {}
+    haystack = " ".join(str(v) for v in ps.values())
+    is_angle = type_id == "angle"
+    if not (is_angle or _MULTI_CELL_RE.search(haystack)):
+        return None
+    if is_angle or ("角度" in haystack or "视角" in haystack or "拼贴" in haystack or "环绕" in haystack):
+        return "angle"
+    return "scene"
+
+
 # ─────────────────────────────────────────────────────────────
 # 档案解析
 # ─────────────────────────────────────────────────────────────
@@ -196,7 +226,11 @@ def _decide_copy_policy(type_id: str, copy_language: str | None) -> dict:
 
     允许文字的类型（海报 / 卖点图）按类型需求放置少量版面文案；
     其余类型一律零文字，卖点仅以视觉元素体现。
+    规格参数图采用「纯视觉图 + 后端文字叠加」，画面严禁任何文字，
+    因此强制 allow_text=False（中文尺码表/标注由后端叠加层渲染）。
     """
+    if type_id == "spec":
+        return {"allow_text": False, "copy_language": copy_language or "英语"}
     return {
         "allow_text": type_id in COPY_ALLOWED_TYPES,
         "copy_language": copy_language or "英语",
@@ -266,7 +300,7 @@ def _subject_fidelity_block(cfg: dict) -> str:
     wants_human = _wants_human(cfg["type_id"], cfg["personal"])
     if wants_human:
         return (
-            "【主体一致性 + 颜色锁定】参考图即本图要展示的商品：模特所穿着 / 手持 / "
+            "参考图即本图要展示的商品：模特所穿着 / 手持 / "
             "展示的商品必须与参考图该商品逐处一致——版型、轮廓、颜色、材质、图案纹理、"
             "logo 与标识、结构比例均不可改变。商品颜色严格以参考图为准，本提示词中所有"
             "关于「色调 / 配色 / 色系」的描述仅作用于背景与场景氛围，绝不改变商品本体"
@@ -274,7 +308,7 @@ def _subject_fidelity_block(cfg: dict) -> str:
             "改变所展示的商品本身，也不得用其他近似款替代。"
         )
     return (
-        "【主体一致性 + 颜色锁定】参考图即本图要展示的商品本体：画面主体必须严格以"
+        "参考图即本图要展示的商品本体：画面主体必须严格以"
         "参考图商品为准，外观、版型、轮廓、颜色、材质、图案纹理、logo 与标识、"
         "结构比例逐处一致，不得改变、重新设计或用其他款替换。商品颜色严格以参考图"
         "为准——本提示词中所有关于「色调 / 配色 / 色系」的描述仅作用于背景与场景"
@@ -298,23 +332,16 @@ def _dedupe(lines: list[str]) -> list[str]:
 
 
 def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
-    """视觉分桶组装（V12）：严格对齐电商 8 大创作维度。
+    """视觉分桶组装（V13 精简）：按电商 8 大创作维度，输出连续流动、无分桶标题的精炼提示词。
 
-    #   不同类型由 TYPE_SEMANTICS 的 lead 标识其最侧重维度（商品图→主体、模特→人物、场景→场景、海报→商业元素）：
-      【画面基础定位】用途/版式 + 比例 + 景别视角 + 构图
-      【核心商品主体】参考图一致性 + 品类/材质/颜色/细节卖点
-      【人物/模特】   （仅人物类型）特征/穿搭/动作/身形氛围
-      【场景环境】    白底 / 中性 / 实景 + 道具
-      【光影】
-      【色彩调性】
-      【画风·相机·画质】画质参数 + 相机镜头 + 渲染媒介 + 品质渲染词
-      【附加商业元素】（仅海报/卖点类）
-      【正向增强与约束】
-      【负面提示词】（商品瑕疵 / 人像崩坏 / 画面问题 三维度）
+    维度顺序（仅保留与本次配置相关的维度，无关省略）：
+      画面基础定位 → 主体（参考图一致性） → 人物（仅人物类型） → 场景环境
+      → 色彩调性 → 画风/相机/画质 → 附加商业元素
+    末尾补：正向增强约束（零/允许文字锚点，供 Linter 校验） + 负面约束单行。
 
-    - 86 个 SeeAny 配置项经 BUCKET_ROUTING 路由进 8 个分桶，提示词随用户选择实时变化。
-    - 每类型由 TYPE_SEMANTICS 的 bg_mode / person / lead 控制侧重点与必备段落，
-      颜色锁定 / 文字禁止等强约束只出现一次；背景/平台/人物矛盾被消解。
+    - 86 个配置项经 BUCKET_ROUTING 路由进 8 个分桶，提示词随用户选择实时变化。
+    - 强约束（颜色锁定 / 文字禁止 / 参考图一致性）只出现一次；矛盾被消解。
+    - 不再输出【分桶标题】，破除模板腔，8 维内容直接空格拼接为流动段落。
     - 白底类比例跟随 output_settings.ratio（RATIO_FORMAT），「自适应尺寸」按参考图比例，
       不再写死 1:1，也不任由模型默认出方形图。
     """
@@ -334,7 +361,7 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
     buckets: dict[str, list[str]] = {k: [] for k in BUCKET_ORDER}
 
     # ── 【画面基础定位】用途/版式 + 比例 + 景别视角 + 构图 ──
-    found: list[str] = [f"为电商商品生成一张高质量的【{title}】主视觉图。"]
+    found: list[str] = [f"电商{title}核心展示："]
     if plat:
         found.append(f"适用电商平台：{plat}。")
     if cfg["target_market"]:
@@ -503,51 +530,88 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
     # 路由循环已把特写部位/对焦方式/视角等 CAMERA 标签追加入 buckets["CAMERA"]
     buckets["CAMERA"] = cam + buckets["CAMERA"]
 
-    # ── 组装块（8 大维度 + 正向/负向，按 BUCKET_ORDER 顺序；空桶自动跳过）──
-    blocks: list[tuple[str, list[str]]] = []
+    # ── 组装为精炼流动提示词（按 8 维顺序拼接，去分桶标题，破除模板腔）──
+    # 维度顺序：画面基础定位 → 主体 → 人物 → 场景 → 色彩 → 画质 → 附加商业元素
+    lines: list[str] = []
     for key in BUCKET_ORDER:
-        lines = buckets.get(key, [])
-        if lines:
-            blocks.append((BUCKET_TITLE[key], lines))
+        for ln in _dedupe(buckets.get(key, [])):
+            if ln and ln.strip():
+                lines.append(ln)
 
-    # ── 正向增强 + 正向约束（统一收尾，全部为正向词） ──
-    positive_tail: list[str] = [QUALITY_BOOSTERS]
+    # 规格参数图：纯视觉图 + 后端文字叠加（画面严禁任何文字）
+    if type_id == "spec":
+        is_apparel = ps.get("产品品类") == "服饰穿戴产品"
+        spec_parts: list[str] = [f"画面类型为「{title}」信息图（纯视觉，画面不出现任何文字）："]
+        spec_parts.append(
+            "产品主体置于左侧、约占画面 60% 宽，与参考图严格一致、不改变外观；"
+        )
+        spec_parts.append(
+            "右侧预留一块干净的浅灰空白面板区，不要画任何东西（尺码表由后端文字叠加渲染）；"
+        )
+        if is_apparel:
+            spec_parts.append(
+                "产品保持干净，不在画面绘制任何测量引导线/箭头/尺寸数值（尺寸标注线由后端统一精确叠加，确保尺寸准确不乱码）；"
+            )
+            spec_parts.append("可附带淡淡的儿童人体剪影作为穿着比例参考（同样无文字）；")
+        else:
+            spec_parts.append(
+                "产品保持干净，不在画面绘制任何测量引导线/箭头/尺寸数值（尺寸标注线由后端统一精确叠加）；可附带无文字的物体比例参照；"
+            )
+        spec_parts.append("整体为电商详情页信息图风格，浅灰纯色背景，排版干净、无杂乱装饰；")
+        spec_parts.append("再次强调：画面中绝对不要出现任何文字、数字、字母或表格，否则会乱码。")
+        lines.append(" ".join(spec_parts))
+
+    # 用户补充说明（出图规划项里自由填写的额外方向，作为补充约束注入提示词）
+    # 规格参数图的补充说明改由后端叠加层渲染，不进图像提示词（避免画面出现中文）
+    note = (cfg.get("note") or "").strip()
+    if note and type_id != "spec":
+        lines.append(f"补充说明：{note}")
+
+    # 单图多视角/多场景：在单图内逐格描述不同场景/角度（拼贴/分屏/宫格版式）
+    mc = _detect_multi_cell_type(cfg)
+    if mc == "angle":
+        lines.append(
+            "整图采用产品多角度拼贴版式：在单张画面内按网格或环绕排列产品的多个视角"
+            "（如正面/侧面/背面/45°/俯视/细节特写），为每一格写明该视角的主体、细节、"
+            "构图与光影，产品外观跨格严格一致、仅视角与光影变化，格间以细线或留白分隔。"
+        )
+    elif mc == "scene":
+        lines.append(
+            "整图采用多场景拼接版式：在单张画面内按网格（如四宫格/九宫格/左右分屏/上下分屏）"
+            "拼接多个使用场景，为每一格写明该场景的环境、主体状态、构图视角与光影质感，"
+            "各格场景明显不同、产品外观跨格一致，格间以细线或留白分隔，整图光影统一。"
+        )
+
+    # 正向增强 + 约束（精简，全部为正向词；保留零/允许文字锚点供 Linter 校验）保留零/允许文字锚点供 Linter 校验）
     if copy["allow_text"]:
-        positive_tail.append(
-            f"文字约束：仅允许按类型需求放置少量精心设计的版面文案"
-            f"（语种：{copy['copy_language']}）；除此之外严禁任何其他文字、"
-            f"字母、数字、LOGO、水印或标签。"
+        lines.append(
+            f"仅允许按类型需求放置少量精心设计的版面文案（语种：{copy['copy_language']}），"
+            f"其余严禁任何文字、字母、数字、LOGO、水印或标签。"
         )
     else:
-        positive_tail.append(
-            "文字约束：整张画面不出现任何文字、字母、数字、LOGO、水印、"
-            "品牌名、价格、促销标语或标签；不将本提示词的需求、卖点、参数"
-            "以文字形式呈现在画面中。"
-            "(no text, no letters, no numbers, no digits, no watermark, no logo, no typography, "
-            "no annotations, no measurement marks, no dimension lines, no size labels, "
-            "no arrows, no callouts, no garbled text, no price tags, no brand names)"
+        lines.append(
+            "整张画面不出现任何文字、字母、数字、LOGO、水印、品牌名、价格或标签；"
+            "不将需求、卖点、参数以文字形式呈现（no text, no watermark, no logo）。"
         )
     if has_ref:
-        positive_tail.append(
-            "参考图上的水印 / 价格签 / 背景文字 / 无关标签 / 尺寸标注 / 测量线 / 标注箭头 / "
-            "尺码信息 / 技术图纸线条请全部忽略，不要以任何形式复制到生成图；"
-            "但参考图中的商品本体须严格还原，不得因忽略其上文字而改变商品外观。"
-            "绝对禁止改变商品颜色 / 图案 / 版型 / logo，禁止用其他近似产品"
-            "替代参考图商品——商品颜色始终以参考图为唯一标准。"
+        lines.append(
+            "参考图上的水印/价格签/背景文字/尺寸标注/测量线/标注箭头请全部忽略不复制，"
+            "但商品本体须严格还原，不得因忽略其上文字而改变商品外观；"
+            "绝对禁止改变商品颜色/图案/版型/logo，禁止用其他近似产品替代参考图商品，"
+            "商品颜色始终以参考图为唯一标准。"
         )
-    positive_tail.append("构图完整、主体突出、细节清晰、商业级质感，符合电商平台规范与大众审美。")
-    blocks.append(("【正向增强与约束】", positive_tail))
+    lines.append("构图完整、主体突出、细节清晰、商业级质感，符合电商平台规范。")
 
-    # ── 负面提示词（独立成块，按三维度组织：商品瑕疵 / 人像崩坏 / 画面问题）──
-    neg_blocks: list[str] = []
+    # 负面约束（压缩为一行，保留三维度关键词：商品瑕疵 / 人像崩坏 / 画面问题）
+    neg_items: list[str] = []
     for dim, items in NEGATIVE_BASE.items():
-        items = list(items)
+        its = list(items)
         if dim == "人像崩坏" and not wants_human:
-            items += ["人物", "模特", "人物剪影", "手部出镜"]
-        neg_blocks.append(f"{dim}：{'、'.join(items)}。")
-    blocks.append(("【负面提示词】", neg_blocks))
+            its += ["人物", "模特", "人物剪影", "手部出镜"]
+        neg_items += its
+    lines.append("避免：" + "、".join(neg_items) + "。")
 
-    return _join_blocks(blocks)
+    return " ".join(lines).strip()
 
 def _join_blocks(blocks: list[tuple[str, list[str]]]) -> str:
     """将分段块拼接为最终提示词：段内去重、段间空行分隔，提升模型解析清晰度。"""
@@ -844,6 +908,51 @@ def _assemble_en(cfg: dict, copy: dict, market_en: dict, platform_en: dict) -> s
     cam_parts.append(f"{platform_en.get('resolution', '8K ultra HD, sharp, no distortion')}; {retouch}")
     cam_parts.append(QUALITY_BOOSTERS_EN)
     chunks.append(". ".join(cam_parts) + ".")
+
+    # Spec chart: clean text-free visual + back-end text overlay (NO text in image)
+    if type_id == "spec":
+        is_apparel = ps.get("产品品类") == "服饰穿戴产品"
+        spec_en: list[str] = ["specification size chart infographic, TEXT-FREE visual only:"]
+        spec_en.append(
+            "product on the left occupying about 60% width, identical to reference, no alteration;"
+        )
+        spec_en.append(
+            "leave a clean light-gray empty panel area on the right for a back-end size chart overlay, draw nothing there;"
+        )
+        if is_apparel:
+            spec_en.append(
+                "NO measurement guide lines/arrows or dimension numbers in the image (measurement lines are added by the back-end overlay precisely, to avoid garbled text);"
+            )
+            spec_en.append("faint children silhouette as wearing scale reference, also text-free;")
+        else:
+            spec_en.append(
+                "NO measurement guide lines/arrows or dimension numbers in the image (measurement lines are added by the back-end overlay); optional text-free scale reference object;"
+            )
+        spec_en.append(
+            "clean e-commerce infographic style, light gray solid background, no clutter;"
+        )
+        spec_en.append(
+            "CRITICAL: absolutely no text, numbers, letters or table in the image (text is added by back-end overlay to avoid garbled characters)."
+        )
+        chunks.append(" ".join(spec_en))
+
+    # 用户补充说明（规格参数图的补充说明改由后端叠加层渲染，不进英文图像提示词）
+    note = (cfg.get("note") or "").strip()
+    if note and type_id != "spec":
+        chunks.append(f"supplementary note: {note}")
+
+    # Single-image multi-angle / multi-scene collage: describe each panel distinctly
+    mc = _detect_multi_cell_type(cfg)
+    if mc == "angle":
+        chunks.append(
+            "multi-angle collage, each panel a distinct view "
+            "(front/side/back/45/top/detail), product identical across panels, thin separators."
+        )
+    elif mc == "scene":
+        chunks.append(
+            "multi-scene collage, each panel a distinct usage scenario "
+            "(grid/4-grid/9-grid/split), product identical across panels, thin separators, unified lighting."
+        )
 
     # 8. 文字约束
     if copy["allow_text"]:

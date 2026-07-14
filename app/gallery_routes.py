@@ -41,7 +41,6 @@ from app.gallery_service import (
     resolve_file,
     save_plan_item_image,
     save_template,
-    seed_showcases,
     update_plan_item,
     update_project,
     update_template,
@@ -116,6 +115,7 @@ def get_showcases(
             "original_url": s.original_url,
             "image_urls": s.image_urls,
             "total_count": s.total_count,
+            "payload": s.payload or {},
         }
         for s in items
     ]

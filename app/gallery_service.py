@@ -14,6 +14,7 @@ import base64
 import logging
 import mimetypes
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -477,19 +478,152 @@ def _build_prompt(
 ) -> dict:
     """组装图片生成提示词（中英双语）。
 
-    重构后：优先由 Agnes 2.0 Flash 多模态大模型，根据「用户配置 + 卖点 + 参考图」
-    动态生成贴合产品的提示词（prompt_source="ai"）；AI 不可达 / 解析失败时自动
-    降级到旧模板引擎（prompt_source="template"），保证系统不挂。
+    路由规则（对应产品诉求）：
+    - 自定义子任务（PLAN_TYPES 中 custom=True）：用户自由填写需求，**不走 AI 改写**，
+      直接用原文（personal_settings["自定义需求"] 或 note），prompt_source="custom"。
+    - 推荐类型（下拉选择的方向）：优先由 Agnes 2.0 Flash 多模态大模型，根据
+      「用户配置 + 卖点 + 参考图」动态生成贴合产品的提示词（prompt_source="ai"）；
+      AI 不可达 / 解析失败时自动降级到模板引擎（prompt_source="template"）。
 
-    返回 {prompt: 中文版展示提示词, prompt_en: 英文版生成提示词, prompt_source: str}。
-    英文版直接用于图片模型生成；中文版保留给前端展示与排查。
+    返回 {prompt: 中文版展示提示词, prompt_en: 英文版生成提示词, prompt_source: str,
+          prompt_input: 喂给大模型的输入(溯源), prompt_raw: 大模型原始返回(溯源)}。
     """
+    from app.gallery_config import get_plan_type
+
+    t = get_plan_type(item.type_id) if item.type_id else None
+    # 自定义子任务：用户原文直出，不调 AI、不改写、不翻译
+    if t and t.get("custom"):
+        return _build_custom_prompt(item)
+
     from app.gallery_prompt_ai import generate_prompt_via_ai
 
     return generate_prompt_via_ai(
         project, item, model_name=model_name,
         effective_product_image=effective_product_image, ratio=ratio,
     )
+
+
+def _build_custom_prompt(item: models.GalleryPlanItem) -> dict:
+    """自定义子任务：直接用用户填写的原始需求文本。
+
+    不调用 AI、不翻译、不改写 —— 用户写什么就用什么（prompt_en 同样用原文，
+    因为「不走 AI 改写」是用户的明确意图）。
+    """
+    ps = dict(item.personal_settings or {})
+    custom_text = (ps.get("自定义需求") or "").strip() or (getattr(item, "note", "") or "").strip()
+    if not custom_text:
+        custom_text = "按用户需求自由生成商品图"
+    return {
+        "prompt": custom_text,
+        "prompt_en": custom_text,  # 用户原文直出，不走 AI 翻译/改写
+        "prompt_source": "custom",
+        "prompt_input": f"【自定义子任务】用户原始需求（不走 AI 改写）：\n{custom_text}",
+        "prompt_raw": "",
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# 批量提示词生成策略（按环境变量 AI_PROMPT_BATCH_MODE 切换）
+# ─────────────────────────────────────────────────────────────
+
+def _build_prompts_for_plan(
+    project: models.GalleryProject,
+    items_meta: list[dict],
+    model_name: str | None = None,
+) -> dict[int, dict]:
+    """按批量策略为整个规划生成所有提示词。
+
+    策略由环境变量 AI_PROMPT_BATCH_MODE 控制：
+      - 1（默认）：方案 A，单次 AI 批量调用，把所有非自定义项一次性生成。
+      - 2：方案 B，非自定义项并发并行调用（每 item 独立 AI 调用）。
+    自定义子任务始终不走 AI 改写，直接透传原文。
+    任一策略失败/缺失的项都会兜底到单条 _build_prompt。
+    """
+    from app.gallery_prompt_ai import _get_batch_mode, generate_prompts_batch_mode_1
+
+    mode = _get_batch_mode()
+    results: dict[int, dict] = {}
+
+    non_custom = [m for m in items_meta if not m["is_custom"]]
+    for m in items_meta:
+        if m["is_custom"]:
+            results[m["item"].id] = _build_custom_prompt(m["item"])
+
+    if mode == 1:
+        if non_custom:
+            batch_results = generate_prompts_batch_mode_1(project, non_custom, model_name=model_name)
+            results.update(batch_results)
+    elif mode == 2:
+        if non_custom:
+            parallel_results = _build_prompts_parallel(project, non_custom)
+            results.update(parallel_results)
+    else:
+        # 兜底：串行单条
+        for m in non_custom:
+            if m["item"].id not in results:
+                results[m["item"].id] = _build_prompt(
+                    project, m["item"], model_name=m["item_model"],
+                    effective_product_image=m["effective_product_image"], ratio=m["ratio"],
+                )
+
+    # 兜底：任何缺失的项再走单条 _build_prompt（并发执行，避免串行调用被限流拖慢）
+    missing = [
+        m for m in items_meta
+        if m["item"].id not in results or not results[m["item"].id].get("prompt_en")
+    ]
+    if missing:
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futs = {
+                ex.submit(
+                    _build_prompt, project, m["item"],
+                    model_name=m["item_model"],
+                    effective_product_image=m["effective_product_image"], ratio=m["ratio"],
+                ): m
+                for m in missing
+            }
+            for f in as_completed(futs):
+                m = futs[f]
+                try:
+                    results[m["item"].id] = f.result()
+                except Exception as exc:
+                    logger.exception("兜底生成提示词失败 item_id=%s: %s", m["item"].id, exc)
+    return results
+
+
+def _build_prompts_parallel(project: models.GalleryProject, items_meta: list[dict]) -> dict[int, dict]:
+    """方案 B：并发并行地为每个非自定义策划项生成提示词。
+
+    使用线程池并行执行 _build_prompt，单个失败不影响其他。
+    """
+    results: dict[int, dict] = {}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        futures = {}
+        for m in items_meta:
+            fut = ex.submit(
+                _build_prompt,
+                project,
+                m["item"],
+                model_name=m["item_model"],
+                effective_product_image=m["effective_product_image"],
+                ratio=m["ratio"],
+            )
+            futures[fut] = m
+
+        for fut in as_completed(futures):
+            m = futures[fut]
+            try:
+                results[m["item"].id] = fut.result()
+            except Exception as exc:
+                logger.exception("并行生成提示词失败 item_id=%s: %s", m["item"].id, exc)
+                # 失败项串行兜底
+                results[m["item"].id] = _build_prompt(
+                    project,
+                    m["item"],
+                    model_name=m["item_model"],
+                    effective_product_image=m["effective_product_image"],
+                    ratio=m["ratio"],
+                )
+    return results
 
 
 def list_image_models(db: Session, user: models.User) -> dict:
@@ -783,18 +917,23 @@ def _real_generate(
     provider_id: int | None = None,
     model_name: str | None = None,
     size: str = "1024x1024",
-) -> dict | None:
+) -> dict:
     """尝试用所选（或默认）AI 提供商的图片模型真实出图。
 
-    成功时把远程图片下载到本地，返回 {"url"（本地）, "filename", "provider_id",
-    "provider_name", "model_name"} 或 None（降级到离线 SVG）。
+    返回结构：
+    - 成功：{"url"（本地）, "filename", "provider_id", "provider_name", "model_name"}
+    - 失败：{"error": "可读原因"}（不再静默返回 None，便于前端展示真实失败原因）
+
+    自动兜底：prompt 超长自动截断；带参考图失败时自动去掉参考图重试一次。
     """
     try:
         from app.media import MediaService
 
         provider, model = _resolve_image_model(db, user, provider_id, model_name)
         if not provider or not model:
-            return None
+            reason = "未配置可用的图片模型（请在「AI 提供商」中添加并启用一个图片模型，并设为默认图片模型）"
+            logger.warning("Real image generation skipped: %s", reason)
+            return {"error": reason}
         # 参考图/商品图必须内联为 base64 data URL（上游拉不到本地地址）
         ref_urls: list[str] = []
         for f in reference_filenames:
@@ -803,17 +942,37 @@ def _real_generate(
             du = _gallery_file_data_url(f)
             if du:
                 ref_urls.append(du)
-        result = MediaService.generate_image(
-            provider=provider,
-            model_name=model.model_name,
-            prompt=prompt,
-            size=size,
-            n=1,
-            reference_images=ref_urls or None,
-            tags=["gallery"],
-        )
+        # prompt 超长截断，避免部分图片模型拒绝或截断输出
+        prompt_to_send = (prompt or "").strip()
+        if len(prompt_to_send) > 1500:
+            prompt_to_send = prompt_to_send[:1500].rstrip() + " ..."
+            logger.info("Image prompt truncated to 1500 chars for model %s", model.model_name)
+
+        def _call(refs):
+            return MediaService.generate_image(
+                provider=provider,
+                model_name=model.model_name,
+                prompt=prompt_to_send,
+                size=size,
+                n=1,
+                reference_images=refs or None,
+                tags=["gallery"],
+            )
+
+        # 第一次：带参考图
+        result = _call(ref_urls)
         images = result.get("data", [])
         url = images[0].get("url") if images else None
+        if not url and ref_urls:
+            # 带参考图失败 → 去掉参考图重试一次（参考图格式/大小/不被支持是常见原因）
+            logger.warning(
+                "Image gen with refs failed (%s); retry without refs",
+                result.get("error"),
+            )
+            result = _call(None)
+            images = result.get("data", [])
+            url = images[0].get("url") if images else None
+
         if url:
             filename = _save_generated_image(url)
             if filename:
@@ -832,9 +991,13 @@ def _real_generate(
                 "provider_name": provider.name,
                 "model_name": model.model_name,
             }
-    except Exception as exc:  # 任意异常都降级到离线模拟
-        logger.warning("Real image generation failed, fallback to simulation: %s", exc)
-    return None
+        reason = result.get("error") or "图片模型未返回图片（可能 prompt 过长、参考图不被支持，或被限流）"
+        logger.warning("Real image generation failed: %s", reason)
+        return {"error": reason}
+    except Exception as exc:  # 任意异常都记录原因，不再静默
+        reason = f"出图调用异常：{exc}"
+        logger.warning("Real image generation failed: %s", reason)
+        return {"error": reason}
 
 
 def generate(db: Session, user: models.User, project_id: int) -> models.GalleryTask:
@@ -940,38 +1103,62 @@ def run_gallery_task(task_id: int) -> None:
         global_provider_id = oc.get("provider_id")
         global_model = oc.get("model_name")
 
-        # 阶段1：预建全部 record（pending），前端轮询即可看到每张图的状态与提示词
-        plan: list[dict] = []
+        # 阶段0：收集所有策划项的运行时元数据
+        items_meta: list[dict] = []
         for item in proj.plan_items:
             t = get_plan_type(item.type_id)
             title = t["title"] if t else item.type_id
             ios = item.output_settings or {}
-            # 用户为该策划项选择的图片比例 → 生成模型尺寸
             ratio = ios.get("ratio") or "自适应尺寸"
-            # 每个策划项可单独指定 provider / 模型，否则回退到项目全局配置
             item_provider_id = ios.get("provider_id") or global_provider_id
             item_model = ios.get("model_name") or global_model
-            # 商品主图：优先用本条目单独上传的「单独商品图」，否则回退到项目产品图[0]
             effective_product_image = item.product_image or (
                 proj.images[0].filename if proj.images else None
             )
             size = _ratio_to_size(ratio, reference_filename=effective_product_image)
-            # 参考图列表：单独商品图作为主参考排首位，其余 reference_images 追加（去重）
             ref_files: list[str] = []
             if effective_product_image:
                 ref_files.append(effective_product_image)
             ref_files.extend(
                 f for f in (item.reference_images or []) if f and f != effective_product_image
             )
-
-            # 构建本策划项要生成的「每张图」提示词清单（entries_spec）。
-            # 每个策划项按 output_settings.count 生成对应张数（默认 1）；同一策划项共用一份提示词。
             count = max(1, int(ios.get("count", 1) or 1))
-            pd = _build_prompt(
-                proj, item, model_name=item_model,
-                effective_product_image=effective_product_image, ratio=ratio,
-            )
-            entries_spec = [{"prompt_cn": pd["prompt"], "prompt_en": pd["prompt_en"], "prompt_source": pd.get("prompt_source", "template")}] * count
+            is_custom = bool(t and t.get("custom"))
+            items_meta.append({
+                "item": item,
+                "title": title,
+                "ratio": ratio,
+                "item_provider_id": item_provider_id,
+                "item_model": item_model,
+                "effective_product_image": effective_product_image,
+                "size": size,
+                "ref_files": ref_files,
+                "count": count,
+                "is_custom": is_custom,
+            })
+
+        # 阶段1：按策略批量生成所有提示词（默认方案1：单次批量调用）
+        prompts_by_item = _build_prompts_for_plan(proj, items_meta, model_name=global_model)
+
+        # 阶段1.5：预建全部 record（pending），前端轮询即可看到每张图的状态与提示词
+        plan: list[dict] = []
+        for m in items_meta:
+            item = m["item"]
+            title = m["title"]
+            pd = prompts_by_item.get(item.id)
+            if not pd:
+                # 极端兜底：任意项没有提示词时回退单条
+                pd = _build_prompt(
+                    proj, item, model_name=m["item_model"],
+                    effective_product_image=m["effective_product_image"], ratio=m["ratio"],
+                )
+            entries_spec = [{
+                "prompt_cn": pd["prompt"],
+                "prompt_en": pd["prompt_en"],
+                "prompt_source": pd.get("prompt_source", "template"),
+                "prompt_input": pd.get("prompt_input", ""),
+                "prompt_raw": pd.get("prompt_raw", ""),
+            }] * m["count"]
 
             for idx, spec in enumerate(entries_spec, start=1):
                 rec_title = f"{title} #{idx}"
@@ -985,9 +1172,11 @@ def run_gallery_task(task_id: int) -> None:
                     prompt=spec["prompt_cn"],
                     prompt_en=spec["prompt_en"],
                     prompt_source=spec["prompt_source"],
-                    provider_id=item_provider_id,
+                    prompt_input=spec.get("prompt_input", ""),
+                    prompt_raw=spec.get("prompt_raw", ""),
+                    provider_id=m["item_provider_id"],
                     provider_name=None,
-                    model_name=item_model,
+                    model_name=m["item_model"],
                     task_id=task.id,
                     plan_item_snapshot={
                         "type_id": item.type_id,
@@ -1006,53 +1195,115 @@ def run_gallery_task(task_id: int) -> None:
                     "rec": rec,
                     "prompt_cn": spec["prompt_cn"],
                     "prompt_en": spec["prompt_en"],
-                    "ref_files": ref_files,
-                    "size": size,
-                    "item_provider_id": item_provider_id,
-                    "item_model": item_model,
+                    "ref_files": m["ref_files"],
+                    "size": m["size"],
+                    "item_provider_id": m["item_provider_id"],
+                    "item_model": m["item_model"],
                     "title": title,
                     "i": idx,
                     "item": item,
                 })
 
-        # 阶段2：逐张处理（processing → completed / failed），前端实时看到「生成中」
-        done = 0
-        failed = 0
+        # 阶段2：并发逐张出图（processing → completed / failed），前端实时看到「生成中」
+        # 每张图独立调用图片模型，用线程池并发执行，缩短墙钟时间（不再逐张串行等待）。
         for entry in plan:
-            rec = entry["rec"]
+            entry["rec"].status = "processing"
+        db.commit()
+
+        # 预取本线程所需的可序列化字段，避免在线程内访问主会话对象
+        jobs = []
+        for entry in plan:
+            item = entry["item"]
+            ps = item.personal_settings or {}
+            jobs.append({
+                "rec_id": entry["rec"].id,
+                "prompt_en": entry["prompt_en"],
+                "ref_files": entry["ref_files"],
+                "item_provider_id": entry["item_provider_id"],
+                "item_model": entry["item_model"],
+                "size": entry["size"],
+                "type_id": item.type_id,
+                "item_id": item.id,
+                "i": entry["i"],
+                "title": entry["title"],
+                "spec_text": ps.get("规格参数原文", "") or "",
+                "category": ps.get("产品品类", "") or "",
+            })
+
+        def _generate_one(job: dict) -> tuple:
+            from app.core.database import SessionLocal
+            s = SessionLocal()
             try:
-                rec.status = "processing"
-                db.commit()
+                rec = s.get(models.GalleryRecord, job["rec_id"])
+                if not rec:
+                    return job["rec_id"], "failed", "记录不存在"
+                u = s.get(models.User, user.id)
                 real = _real_generate(
-                    db, user, entry["prompt_en"], entry["ref_files"],
-                    entry["item_provider_id"], entry["item_model"],
-                    size=entry["size"],
+                    s, u, job["prompt_en"], job["ref_files"],
+                    job["item_provider_id"], job["item_model"],
+                    size=job["size"],
                 )
-                if real:
+                if real and real.get("url"):
                     rec.result_filename = real.get("filename")
                     rec.result_url = real["url"]
                     rec.provider_id = real["provider_id"]
                     rec.provider_name = real["provider_name"]
                     rec.model_name = real["model_name"]
-                else:
-                    result_filename = write_result_svg(
-                        entry["item"].id, entry["i"], entry["title"],
-                        f"{entry['item'].type_id}-{entry['i']}",
-                    )
-                    rec.result_filename = result_filename
-                    rec.result_url = f"/api/gallery/files/{result_filename}"
-                    rec.provider_name = None
-                rec.status = "completed"
-                done += 1
-            except Exception as exc:
+                    # 规格参数图：生成后叠加尺码表/标注（纯视觉图 + 后端文字叠加，消除乱码）
+                    if job["type_id"] == "spec" and real.get("filename"):
+                        from app.spec_overlay import overlay_spec
+                        local = resolve_file(real["filename"])
+                        if local:
+                            # 注意：note 只进 AI 提示词指导构图，绝不画在图上
+                            over_name = overlay_spec(
+                                str(local),
+                                spec_text=job["spec_text"],
+                                note="",
+                                title=job["title"],
+                                category=job["category"],
+                            )
+                            if over_name:
+                                rec.result_filename = over_name
+                                rec.result_url = f"/api/gallery/files/{over_name}"
+                    rec.status = "completed"
+                    s.commit()
+                    return job["rec_id"], "completed", None
+                # 真实出图失败：记录可读原因，标记为失败（不再静默给占位图）
+                reason = (real or {}).get("error") or "出图失败（未返回图片）"
                 rec.status = "failed"
                 rec.result_url = None
-                failed += 1
-                logger.exception("gallery task %s 单图生成失败: %s", task_id, exc)
-            db.commit()
-            task.done = done
-            task.failed = failed
-            db.commit()
+                rec.error = reason[:500]
+                s.commit()
+                return job["rec_id"], "failed", reason
+            except Exception as exc:
+                logger.exception("gallery task %s 单图生成失败 rec=%s: %s", task_id, job["rec_id"], exc)
+                try:
+                    rec = s.get(models.GalleryRecord, job["rec_id"])
+                    if rec:
+                        rec.status = "failed"
+                        rec.result_url = None
+                        rec.error = str(exc)[:500]
+                        s.commit()
+                except Exception:
+                    pass
+                return job["rec_id"], "failed", str(exc)
+            finally:
+                s.close()
+
+        done = 0
+        failed = 0
+        max_workers = min(4, max(1, len(jobs)))
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futs = [ex.submit(_generate_one, j) for j in jobs]
+            for f in as_completed(futs):
+                _rid, _st, _err = f.result()
+                if _st == "completed":
+                    done += 1
+                else:
+                    failed += 1
+        task.done = done
+        task.failed = failed
+        db.commit()
 
         if failed == 0:
             task.status = "completed"
@@ -1132,12 +1383,28 @@ def publish_showcase(db: Session, user: models.User, *, name: str, category: str
     if not original_url:
         original_url = image_urls[0]
 
+    # 携带源任务参数，供日后「生成同款」一键回填：
+    # - 每个 record 的 plan_item_snapshot（类型级 personal/common/output/note/参考图）
+    # - 项目级 market_config / output_config / selling_points
+    plan_item_snapshots: list[dict] = []
+    for r in recs:
+        if r.plan_item_snapshot and isinstance(r.plan_item_snapshot, dict):
+            plan_item_snapshots.append(r.plan_item_snapshot)
+
+    payload: dict = {
+        "plan_items": plan_item_snapshots,
+        "market_config": (proj.market_config or {}) if proj else {},
+        "output_config": (proj.output_config or {}) if proj else {},
+        "selling_points": (proj.selling_points or "") if proj else "",
+    }
+
     sc = models.GalleryShowcase(
         category=category or "其他",
         name=name.strip() or "我的电商套图",
         original_url=original_url,
         image_urls=image_urls,
         total_count=len(image_urls) + 1,
+        payload=payload,
     )
     db.add(sc)
     db.commit()

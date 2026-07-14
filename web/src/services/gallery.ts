@@ -82,9 +82,13 @@ export interface GalleryRecord {
   result_filename: string | null
   result_url: string | null
   status: string
+  error?: string | null
   prompt: string
   prompt_en: string | null
   prompt_source?: string
+  // 提示词溯源：喂给 AI 的输入描述 / 模型原始返回（AI 路径才有）
+  prompt_input?: string | null
+  prompt_raw?: string | null
   provider_id: number | null
   provider_name: string | null
   model_name: string | null
@@ -109,6 +113,21 @@ export interface GalleryShowcase {
   original_url: string
   image_urls: string[]
   total_count: number
+  // 发布时携带的源任务参数（用于「生成同款」回填）
+  payload?: {
+    plan_items?: Array<{
+      type_id: string
+      personal_settings?: Record<string, string>
+      common_settings?: Record<string, string>
+      output_settings?: Record<string, any>
+      note?: string
+      reference_images?: string[]
+      product_image?: string
+    }>
+    market_config?: Record<string, string>
+    output_config?: Record<string, any>
+    selling_points?: string
+  } | null
 }
 
 export interface GalleryTemplate {

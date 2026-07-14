@@ -242,9 +242,15 @@ class MediaService:
             # Agnes AI returns the video URL in "remixed_from_video_id"
             # or "video_url"; prefer the URL-looking field.
             if "video_url" not in data:
-                for candidate in ("remixed_from_video_id", "output", "url"):
-                    if data.get(candidate):
-                        data["video_url"] = data[candidate]
+                meta = data.get("metadata") or {}
+                for candidate in (
+                    data.get("remixed_from_video_id"),
+                    data.get("output"),
+                    data.get("url"),
+                    meta.get("url"),
+                ):
+                    if candidate:
+                        data["video_url"] = candidate
                         break
 
             # ── Persist completed video to object storage (MinIO) ──
@@ -257,6 +263,7 @@ class MediaService:
                     data.get("video_url")
                     or data.get("output")
                     or data.get("url")
+                    or (data.get("metadata") or {}).get("url")
                     or ""
                 )
                 # Only download real http(s) URLs (skip bare video IDs).

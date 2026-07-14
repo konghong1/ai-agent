@@ -94,8 +94,9 @@ def _migrate_sqlite_columns() -> None:
         # gallery_records.prompt_en（英文版生成提示词）
         if "prompt_en" not in gr_cols:
             with engine.connect() as conn:
+                # 注意：MySQL 不允许 TEXT/BLOB 列带 DEFAULT，故此处不加默认值（SQLite 同样兼容）
                 conn.execute(text(
-                    "ALTER TABLE gallery_records ADD COLUMN prompt_en TEXT DEFAULT ''"
+                    "ALTER TABLE gallery_records ADD COLUMN prompt_en TEXT"
                 ))
                 conn.commit()
                 logger.info("Added prompt_en column to gallery_records")
@@ -107,3 +108,14 @@ def _migrate_sqlite_columns() -> None:
                 ))
                 conn.commit()
                 logger.info("Added prompt_source column to gallery_records")
+        # gallery_records.prompt_input / prompt_raw（提示词溯源：喂给模型的输入 & 模型原始输出）
+        # 用 inspect 结果判断，SQLite 与 MySQL 通用（MySQL 重复 ADD COLUMN 会报错，故先检查）。
+        # 注意：MySQL 不允许 TEXT/BLOB 列带 DEFAULT，故此处一律不加默认值（列允许 NULL，应用层用 or "" 兜底）。
+        for col in ("prompt_input", "prompt_raw"):
+            if col not in gr_cols:
+                with engine.connect() as conn:
+                    conn.execute(text(
+                        f"ALTER TABLE gallery_records ADD COLUMN {col} TEXT"
+                    ))
+                    conn.commit()
+                    logger.info(f"Added {col} column to gallery_records")

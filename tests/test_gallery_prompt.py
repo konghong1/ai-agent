@@ -139,6 +139,29 @@ def test_linter_catches_contradiction():
     print("[PASS] test_linter_catches_contradiction")
 
 
+def test_assemble_multi_cell_angle():
+    """模板引擎：angle 多视角拼贴应在中文提示词注入逐格指令。"""
+    project = _make_project(market_config={}, selling_points="")
+    item = _make_item(
+        "angle",
+        personal_settings={"展示角度": "多角度拼接", "角度数量": "四个及以上角度（完整呈现）"},
+    )
+    prompt = build_prompt(project, item)
+    assert "多角度拼贴" in prompt, "应注入产品多角度拼贴版式指令"
+    assert "每一格" in prompt, "应要求逐格描述视角/细节"
+    print("[PASS] test_assemble_multi_cell_angle")
+
+
+def test_assemble_multi_cell_scene():
+    """模板引擎：scene 多场景拼接应在中英文提示词注入逐格场景指令。"""
+    project = _make_project(market_config={}, selling_points="")
+    item = _make_item("scene", personal_settings={"排版呈现": "四宫格场景拼接"})
+    pd = build_prompt_bilingual(project, item)
+    assert "多场景拼接" in pd["prompt"], "中文应注入多场景拼接版式指令"
+    assert "multi-scene collage" in pd["prompt_en"], "英文应注入多场景拼接指令"
+    print("[PASS] test_assemble_multi_cell_scene")
+
+
 def test_config_change_produces_different_prompt():
     """关键回归：配置选择不同时，生成的提示词必须明显不同。
 
@@ -410,6 +433,77 @@ def test_no_reference_no_fidelity_block():
     print("[PASS] test_no_reference_no_fidelity_block")
 
 
+def test_spec_apparel_size_chart():
+    """规格参数图（服饰）采用「纯视觉图 + 后端文字叠加」：画面无文字，右预留面板。"""
+    project = _make_project(
+        market_config={"target_market": "全球", "ecommerce_platform": "淘宝 / 天猫"},
+    )
+    item = _make_item(
+        "spec",
+        personal_settings={
+            "产品品类": "服饰穿戴产品",
+            "参数类型": "尺寸重量参数",
+            "呈现形式": "尺寸示意图 含比例参考",
+            "规格参数原文": "110码 衣长62 胸围72 腰围66；120码 衣长67 胸围76 腰围70",
+        },
+        product_image="prod.png",
+    )
+    prompt = build_prompt(project, item)
+
+    assert "画面类型为「规格参数图」信息图" in prompt, "应明确画面类型为规格参数图"
+    assert "右侧预留" in prompt and "空白面板" in prompt, "必须要求右侧预留空白面板（供后端叠加尺码表）"
+    assert "人体剪影" in prompt, "必须含比例参考剪影"
+    assert "绝对不要出现任何文字" in prompt or "严禁" in prompt, "必须强调画面严禁文字（避免乱码）"
+    assert "衣长、裙长、袖长、胸围" not in prompt, "中文测量标注不应写进图像提示词（交由后端叠加）"
+    assert "整张画面不出现任何文字" in prompt, "规格参数图应强制零文字（文字由后端叠加）"
+    print("[PASS] test_spec_apparel_size_chart")
+
+
+def test_spec_non_apparel():
+    """规格参数图（非服饰）同样为纯视觉图，画面无文字，真实数据由后端叠加。"""
+    project = _make_project(
+        market_config={"target_market": "全球", "ecommerce_platform": "亚马逊"},
+    )
+    item = _make_item(
+        "spec",
+        personal_settings={
+            "产品品类": "数码电子产品",
+            "参数类型": "核心性能参数",
+            "规格参数原文": "重量 200g；尺寸 10x5x2cm；续航 30h",
+        },
+        product_image="prod.png",
+    )
+    prompt = build_prompt(project, item)
+
+    assert "右侧预留" in prompt and "空白面板" in prompt, "非服饰 spec 也必须预留空白面板"
+    assert "绝对不要出现任何文字" in prompt or "严禁" in prompt, "必须强调画面严禁文字"
+    assert "整张画面不出现任何文字" in prompt, "规格参数图应强制零文字"
+    print("[PASS] test_spec_non_apparel")
+
+
+def test_spec_en_text_free():
+    """规格参数图英文版必须是纯英文、不含中文（中文尺码表由后端叠加层渲染）。"""
+    project = _make_project(
+        market_config={"target_market": "全球", "ecommerce_platform": "淘宝 / 天猫"},
+    )
+    item = _make_item(
+        "spec",
+        personal_settings={
+            "产品品类": "服饰穿戴产品",
+            "规格参数原文": "110码 衣长62 胸围72",
+        },
+        product_image="prod.png",
+    )
+    d = build_prompt_bilingual(project, item)
+    en = d["prompt_en"]
+
+    leaks = _CJK_RE.findall(en)
+    assert not leaks, f"spec 英文版不应含中文（乱码风险）：{set(leaks)} | {en[:120]}"
+    assert "text-free" in en or "no text" in en, "英文版应明确画面无文字"
+    assert "empty panel" in en or "back-end" in en, "英文版应描述右侧预留面板供后端叠加"
+    print("[PASS] test_spec_en_text_free")
+
+
 _CJK_RE = __import__("re").compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]")
 
 
@@ -430,15 +524,19 @@ def test_bilingual_returns_both_versions():
 
 
 def test_bilingual_en_has_no_system_chinese():
-    """英文版不得泄漏系统生成的中文（用户 selling_points 用纯英文以隔离用户内容）。"""
+    """英文版不得泄漏系统生成的中文（用户 selling_points 用纯英文以隔离用户内容）。
+
+    规格参数图也不例外：该类型画面严禁文字，中文尺码表由后端叠加层渲染，
+    因此英文版同样必须纯英文（单独由 test_spec_en_text_free 覆盖）。
+    """
     project = _make_project(
         market_config={"target_market": "北美", "ecommerce_platform": "淘宝 / 天猫",
                        "visual_style": "高级质感风"},
         selling_points="lightweight, waterproof",
     )
-    # 覆盖多个推荐类型，确保各类型英文版均无系统中文
+    # 覆盖除 spec 外的推荐类型，确保各类型英文版均无系统中文泄漏
     for t in ["bg", "amz", "detail", "angle", "hero", "usp", "pain", "scene",
-              "detail2", "tryon", "model", "design", "cmp", "ship", "spec",
+              "detail2", "tryon", "model", "design", "cmp", "ship",
               "pkg", "buyer", "promo"]:
         item = _make_item(t,
                           personal_settings={"氛围浓度": "轻度氛围", "视觉强化": "色彩冲击",
@@ -551,6 +649,9 @@ def _run_all() -> None:
     test_bilingual_en_has_no_system_chinese()
     test_bilingual_en_is_compact_and_config_relevant()
     test_angle_type_is_single_image_multi_angle()
+    test_spec_apparel_size_chart()
+    test_spec_non_apparel()
+    test_spec_en_allows_chinese_labels()
     print("\nALL TESTS PASSED ✅")
 
 
