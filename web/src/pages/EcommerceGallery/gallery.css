@@ -506,32 +506,8 @@
   display: flex; flex-direction: column; gap: 1px;
   flex: 1; min-width: 0;
 }
-.gallery-page .pr-top {
-  display: flex; align-items: center; gap: 8px;
-  flex-wrap: wrap; /* 标题过长时标签换到下一行，避免重叠 */
-  min-height: 22px;
-}
-.gallery-page .pr-num {
-  font-size: 12px; font-weight: 700; color: var(--g-ink-faint);
-  font-family: var(--g-font-display);
-  min-width: 16px; text-align: center; flex-shrink: 0;
-  opacity: .55; user-select: none;
-}
-.gallery-page .pr-name {
-  font-size: 14px; font-weight: 600; color: var(--g-ink);
-  line-height: 1.35; letter-spacing: -.01em;
-  flex: 1 1 auto; /* 占满剩余空间，但 min-width:auto 不会被压到换行 */
-  min-width: auto;
-  white-space: nowrap; overflow: visible;
-}
-.gallery-page .pr-tag {
-  font-size: 10.5px; font-weight: 600; color: var(--g-ai-purple);
-  background: transparent; border: 1px solid var(--g-ai-purple);
-  padding: 1px 8px; border-radius: 999px; white-space: nowrap;
-  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
-  margin-left: auto; /* 推到右侧 */
-}
-.gallery-page .pr-tag.custom { color: var(--g-brand); background: transparent; border-color: var(--g-brand); }
+/* 注意：.pr-top / .pr-name / .pr-tag 的样式统一由 src/styles/gallery-design-system.css 管控，
+   本文件不再重复定义，避免双文件冲突导致修改不生效。 */
 
 .gallery-page .pr-meta {
   display: flex; flex-wrap: wrap; gap: 0;
@@ -1369,7 +1345,7 @@
 .gallery-page .task-cell .pv-img .ant-image-img,
 .gallery-page .task-cell .pv-img img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; }
 .gallery-page .task-cell img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; }
-.gallery-page .task-cell.skeleton { position: relative; }
+.gallery-page .task-cell.skeleton { position: relative; aspect-ratio: 3 / 4; min-height: 0; }
 .gallery-page .task-cell .cell-media img, .gallery-page .task-cell .cell-media .cell-img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; display: block; }
 .gallery-page .task-cell .cell-footer {
   flex: 0 0 auto; padding: 7px 8px 9px; border-top: 1px solid var(--g-line);
@@ -1513,16 +1489,22 @@
   border-radius: var(--g-r-md, 8px); cursor: pointer; box-sizing: border-box;
   padding: 0 10px; border: 1px solid transparent;
   transition: all .18s var(--g-ease);
-  white-space: nowrap; overflow: hidden;
+  white-space: nowrap;
+  overflow: hidden; /* 恢复：防止子元素撑破容器 */
 }
 .gallery-page .task-cell .cell-actions-row > * > svg,
 .gallery-page .task-cell .cell-actions-row > * > span { flex-shrink: 0; }
 
-/* 提示词按钮 */
+/* 提示词按钮 —— 在操作行内与重作按钮同尺寸同风格，仅颜色不同 */
 .gallery-page .task-cell .cell-actions-row .prompt-badge {
-  color: var(--g-ai-purple); background: var(--g-ai-purple-light);
-  border-color: rgba(124, 58, 237, 0.35); border-radius: var(--g-r-md, 8px);
-  box-shadow: none; flex: 1 1 0;
+  color: var(--g-ai-purple) !important; background: var(--g-ai-purple-light) !important;
+  border-color: rgba(124, 58, 237, 0.35) !important; border-radius: var(--g-r-md, 8px) !important;
+  box-shadow: none !important;
+  flex: 1 1 0;
+  /* 覆盖基础 .prompt-badge 的胶囊样式（padding:5px 11px; border-radius:999px） */
+  padding: 0 10px !important;
+  height: 34px !important;
+  overflow: hidden;
 }
 .gallery-page .task-cell .cell-actions-row .prompt-badge.is-disabled {
   opacity: .55; cursor: not-allowed;
@@ -1533,8 +1515,9 @@
   transform: translateY(-1px);
 }
 
-/* 重作按钮 */
+/* 重作按钮 —— 操作行内等分宽度，覆盖基础 width:100% */
 .gallery-page .task-cell .cell-actions-row .cell-redo-btn {
+  flex: 1 1 0; width: auto;
   background: var(--g-surface-2); border: 1px solid var(--g-line); color: var(--g-ink);
 }
 .gallery-page .task-cell .cell-actions-row .cell-redo-btn:hover {

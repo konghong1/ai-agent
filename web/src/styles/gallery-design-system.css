@@ -187,7 +187,7 @@
   flex: 1; min-width: 0;
 }
 
-/* 第1行：序号 + 名称 + 标签 */
+/* 第1行：序号 + 名称 + 标签（正常流，标签不覆盖名称） */
 .pr-top {
   display: flex; align-items: center; gap: 8px;
   line-height: 1.35;
@@ -199,14 +199,18 @@
 }
 .pr-name {
   font-size: 14.5px; font-weight: 650; color: var(--ice-text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  letter-spacing: -.01em; flex: 1; min-width: 0; line-height: 1.35;
+  white-space: nowrap;
+  letter-spacing: -.01em; line-height: 1.35;
+  /* 名称完整展示：盒子=文字宽度，永不收缩、永不溢出被标签盖住 */
+  flex: 0 0 auto; min-width: auto;
+  overflow: visible;
 }
 .pr-tag {
   font-size: 11px; padding: 2px 10px; border-radius: 9999px;
   font-weight: 600; white-space: nowrap; flex-shrink: 0;
   display: inline-flex; align-items: center; gap: 3px;
-  margin-left: auto; /* 推到行末 */
+  /* 正常流：紧跟名称右侧，不覆盖、不强制靠右 */
+  margin-left: 16px;
 }
 .pr-tag.fast { background: var(--g-ai-purple-light); color: var(--g-ai-purple); border: 1px solid color-mix(in srgb, var(--g-ai-purple) 35%, transparent); }
 .pr-tag.custom { background: var(--ice-bg-secondary); color: var(--ice-text-secondary); border: 1px solid var(--ice-border); }

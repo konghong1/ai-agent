@@ -164,7 +164,6 @@ function PromptBadge({ prompt, prompt_en, promptSource, promptInput, promptRaw }
           <path d="M12 2L13.8 9.2L21 11L13.8 12.8L12 20L10.2 12.8L3 11L10.2 9.2L12 2Z" />
         </svg>
         提示词
-        {isAi && <span className="prompt-badge-ai">AI</span>}
       </button>
       <Modal
         open={open}
@@ -370,7 +369,14 @@ export default function EcommerceGallery() {
   // 用 SSE 服务端推送替代前端轮询：打开一条 /api/gallery/tasks/stream 长连接，
   // 后端实时推送进行中任务进度与终态快照，前端据此刷新任务列表。
   const connectTaskStream = useCallback(() => {
-    if (esRef.current) return
+    // 仅当连接已建立（OPEN=1）或正在建立（CONNECTING=0）时跳过；
+    // CLOSED(2) 或 CLOSING(3) 视为无效，需先关闭再重建
+    if (esRef.current && (esRef.current.readyState === EventSource.OPEN || esRef.current.readyState === EventSource.CONNECTING)) return
+    // 关闭残留的已断开/关闭中连接
+    if (esRef.current) {
+      esRef.current.close()
+      esRef.current = null
+    }
     const token = getToken()
     const url = token
       ? `/api/gallery/tasks/stream?token=${encodeURIComponent(token)}`
@@ -622,9 +628,14 @@ export default function EcommerceGallery() {
       message.success('已提交生成任务，正在后台创作中')
       // 跳转到「创作结果」区域顶部，突出最新任务卡片
       setAreaTab('results')
-      contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+      // 延迟滚动：等待 React 将新任务卡片渲染到 DOM 后再滚动到顶部
+      requestAnimationFrame(() => {
+        contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+      })
     } catch (e) {
-      /* 已提示 */
+      console.error('[gallery] generate failed:', e)
+      // request.ts 已弹错误 toast；这里额外加一条，确保用户能看到反馈
+      message.error('生成任务提交失败，请稍后重试或查看控制台')
     } finally {
       setSubmitting(false)
     }
@@ -1259,9 +1270,10 @@ export default function EcommerceGallery() {
             </div>
           ) : (
             <div className="task-list">
-              {tasks.map((task) => {
+              {tasks.filter(t => t && typeof t.id === 'number').map((task) => {
                 const running = task.status === 'pending' || task.status === 'running'
                 const pct = task.total > 0 ? Math.round((task.done / task.total) * 100) : (running ? 0 : 100)
+                const records = Array.isArray(task.records) ? task.records : []
                 return (
                   <article className={`task-card status-${task.status}`} key={task.id} id={`task-${task.id}`}>
                     <div className="task-head">
@@ -1309,7 +1321,7 @@ export default function EcommerceGallery() {
                       </div>
                     </div>
                     <div className="task-grid">
-                      {task.records.map((rec, i) => {
+                      {records.map((rec, i) => {
                         const isBusy = rec.status === 'pending' || rec.status === 'processing'
                         const isFailed = rec.status === 'failed'
                         const showReal = rec.status === 'completed' && !!rec.result_url && isRealImage(rec.result_url)
@@ -1371,17 +1383,17 @@ export default function EcommerceGallery() {
                           </div>
                         )
                       })}
-                      {Array.from({ length: Math.max(0, task.total - task.records.length) }).map((_, i) => (
+                      {Array.from({ length: Math.max(0, task.total - records.length) }).map((_, i) => (
                         <div className={`task-cell ${running ? 'skeleton' : ''}`} key={`sk-${i}`} />
                       ))}
                     </div>
-                    {task.records.length > 0 && (
+                    {records.length > 0 && (
                       <div className="task-actions">
-                        <button className="btn btn-secondary" onClick={() => setDetailGroup(task.records)}>查看详情</button>
-                        <button className="btn btn-primary" onClick={() => setDetailGroup(task.records)}>🎨 一键做同款</button>
+                        <button className="btn btn-secondary" onClick={() => setDetailGroup(records)}>查看详情</button>
+                        <button className="btn btn-primary" onClick={() => setDetailGroup(records)}>🎨 一键做同款</button>
                       </div>
                     )}
-                    {task.records.some((r) => r.result_url && !r.result_url.endsWith('.svg')) && (
+                    {records.some((r) => r.result_url && !r.result_url.endsWith('.svg')) && (
                       <button className="btn btn-publish" onClick={() => handleOpenPublish(task)}>📤 发布到创作案例</button>
                     )}
                   </article>

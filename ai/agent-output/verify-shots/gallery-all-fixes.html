@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电商套图修复验证</title>
+<style>
+  :root {
+    --g-ink: #1a1a2e;
+    --g-ink-faint: #999;
+    --g-ink-muted: #888;
+    --g-ai-purple: #7c3aed;
+    --g-ai-purple-2: #a855f7;
+    --g-ai-purple-light: rgba(124, 58, 237, 0.12);
+    --g-brand: #e63946;
+    --g-brand-weak: rgba(230, 57, 70, 0.1);
+    --g-surface: #ffffff;
+    --g-surface-2: #f8f9fa;
+    --g-line: #eee;
+    --g-line-strong: #ddd;
+    --g-r-md: 8px;
+    --g-r-sm: 6px;
+    --g-font-display: monospace;
+    --g-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f0f0f5; padding: 40px; margin: 0; }
+  h1 { font-size: 20px; color: var(--g-ink); }
+  h2 { font-size: 15px; color: var(--g-ink); margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 2px solid var(--g-line); }
+  .desc { font-size: 13px; color: #666; margin-bottom: 16px; line-height: 1.6; }
+
+  /* ===== PlanRow：标签绝对定位方案 ===== */
+  .plan-row {
+    position: relative; display: flex; align-items: center; gap: 0;
+    padding: 9px 12px; background: var(--g-surface);
+    border: 1px solid var(--g-line); border-radius: 10px;
+    overflow: hidden; max-width: 480px; margin-bottom: 8px;
+  }
+  .plan-row::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; background: var(--g-ai-purple); border-radius: 0 2px 2px 0; }
+  .plan-row.custom::before { background: var(--g-brand); }
+  .pr-body { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+  .pr-top { display: flex; align-items: center; gap: 8px; min-height: 22px; position: relative; }
+  .pr-num { font-size: 12px; font-weight: 700; color: var(--g-ink-faint); min-width: 16px; text-align: center; flex-shrink: 0; opacity: .55; }
+  /* ★ 名称完整显示，无截断 */
+  .pr-name { font-size: 14px; font-weight: 600; color: var(--g-ink); flex: 1 1 auto; padding-right: 60px; }
+  /* ★ 标签绝对定位悬浮 */
+  .pr-tag { font-size: 10.5px; font-weight: 600; color: var(--g-ai-purple); background: transparent; border: 1px solid var(--g-ai-purple); padding: 1px 8px; border-radius: 999px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
+  .pr-tag.custom { color: var(--g-brand); border-color: var(--g-brand); }
+  .pr-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; font-size: 12px; color: #666; }
+  .pr-meta b { color: var(--g-ink); }
+
+  /* ===== 任务卡片操作行：提示词 + 重作 同尺寸 ===== */
+  .task-cell { width: 160px; min-width: 160px; max-width: 160px; border: 1px solid var(--g-line); border-radius: var(--g-r-md); overflow: hidden; background: var(--g-surface-2); display: flex; flex-direction: column; }
+  .cell-media { position: relative; width: 100%; aspect-ratio: 3/4; background: linear-gradient(135deg, #f5f5f5, #e0e0e0); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #aaa; }
+  .cell-footer { flex: 0 0 auto; padding: 7px 8px 9px; border-top: 1px solid var(--g-line); display: flex; flex-direction: column; gap: 6px; background: var(--g-surface); }
+  /* ★ 操作行子元素统一样式 */
+  .cell-actions-row { display: flex; align-items: stretch; gap: 8px; width: 100%; margin-top: 10px; }
+  .cell-actions-row > * { flex: 1 1 0; min-width: 0; height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; font-weight: 600; line-height: 1; border-radius: var(--g-r-md); cursor: pointer; box-sizing: border-box; padding: 0 10px; border: 1px solid transparent; transition: all .18s; white-space: nowrap; overflow: hidden; }
+  /* ★ 提示词按钮覆盖基础样式，与重作同尺寸 */
+  .cell-actions-row .prompt-badge { color: var(--g-ai-purple); background: var(--g-ai-purple-light); border-color: rgba(124, 58, 237, 0.35); flex: 0 1 auto; padding: 0 10px; height: 34px; }
+  .cell-actions-row .prompt-badge:hover { background: rgba(124, 58, 237, 0.22); border-color: rgba(124, 58, 237, 0.55); }
+  .cell-actions-row .cell-redo-btn { background: var(--g-surface-2); border: 1px solid var(--g-line); color: var(--g-ink); }
+  .cell-actions-row .cell-redo-btn:hover { border-color: var(--g-brand); color: var(--g-brand); background: var(--g-brand-weak); }
+  .prompt-badge-icon { flex-shrink: 0; }
+
+  .grid { display: flex; gap: 16px; flex-wrap: wrap; }
+  .status { font-size: 11px; padding: 2px 6px; border-radius: 4px; margin-left: 8px; }
+  .status.ok { background: #dcfce7; color: #16a34a; }
+  .status.bad { background: #fee2e2; color: #dc2626; }
+</style>
+</head>
+<body>
+
+<h1>电商套图 UI 修复验证</h1>
+
+<h2>① PlanRow：名称完整 + 标签右侧悬浮 <span class="status ok">已修复</span></h2>
+<div class="desc">标准：名称必须完整（无省略号/截断）；「自定义」标签在标题同行右侧；标签不挤压标题。</div>
+
+<div class="plan-row custom">
+  <div class="pr-body">
+    <div class="pr-top">
+      <span class="pr-num">1.</span>
+      <span class="pr-name">产品多角度</span>
+      <span class="pr-tag custom">自定义</span>
+    </div>
+    <div class="pr-meta"><span>🖼数量 <b>1</b></span><span>⬜比例 <b>3:4</b></span></div>
+  </div>
+</div>
+
+<div class="plan-row">
+  <div class="pr-body">
+    <div class="pr-top">
+      <span class="pr-num">2.</span>
+      <span class="pr-name">主图场景图</span>
+      <span class="pr-tag">极速出图</span>
+    </div>
+    <div class="pr-meta"><span>🖼数量 <b>3</b></span><span>⬜比例 <b>1:1</b></span></div>
+  </div>
+</div>
+
+<div class="plan-row custom">
+  <div class="pr-body">
+    <div class="pr-top">
+      <span class="pr-num">3.</span>
+      <span class="pr-name">产品细节特写与功能卖点展示图（超长名称测试）</span>
+      <span class="pr-tag custom">自定义</span>
+    </div>
+    <div class="pr-meta"><span>🖼数量 <b>1</b></span><span>⬜比例 <b>3:4</b></span></div>
+  </div>
+</div>
+
+<h2>② 任务卡片：提示词 + 重作 同尺寸 <span class="status ok">已修复</span></h2>
+<div class="desc">标准：两个按钮高度一致（34px）；提示词按钮不是大胶囊；圆角正常（8px）。</div>
+
+<div class="grid">
+  <div class="task-cell">
+    <div class="cell-media">生成图</div>
+    <div class="cell-footer">
+      <div class="cell-actions-row">
+        <button class="prompt-badge">
+          <svg class="prompt-badge-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L13.8 9.2L21 11L13.8 12.8L12 20L10.2 12.8L3 11L10.2 9.2L12 2Z"/></svg>
+          提示词
+        </button>
+        <button class="cell-redo-btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+          重作
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="task-cell">
+    <div class="cell-media">生成图（AI）</div>
+    <div class="cell-footer">
+      <div class="cell-actions-row">
+        <button class="prompt-badge">
+          <svg class="prompt-badge-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L13.8 9.2L21 11L13.8 12.8L12 20L10.2 12.8L3 11L10.2 9.2L12 2Z"/></svg>
+          提示词
+          <span style="font-size:9px;font-weight:800;color:#fff;background:linear-gradient(135deg,#7c3aed,#a855f7);border-radius:999px;padding:2px 5px;margin-left:2px;">AI</span>
+        </button>
+        <button class="cell-redo-btn">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+          重作
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 自动检测 PlanRow 名称是否被截断
+document.querySelectorAll('.pr-name').forEach(el => {
+  const isTruncated = el.scrollWidth > el.clientWidth + 1;
+  el.insertAdjacentHTML('afterend',
+    `<span class="status ${isTruncated ? 'bad' : 'ok'}">${isTruncated ? '❌截断' : '✓完整'}</span>`
+  );
+});
+// 自动检测操作按钮圆角是否过大（>16px 视为异常胶囊）
+document.querySelectorAll('.cell-actions-row > *').forEach(el => {
+  const r = parseFloat(getComputedStyle(el).borderTopLeftRadius);
+  el.insertAdjacentHTML('beforeend',
+    `<span class="status ${r > 16 ? 'bad' : 'ok'}" style="margin-left:4px">${r <= 16 ? '✓圆角正常' : '❌圆角'+r+'px'}</span>`
+  );
+});
+</script>
+
+</body>
+</html>

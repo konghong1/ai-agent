@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PlanRow 布局验证</title>
+<style>
+  :root {
+    --g-ink: #1a1a2e;
+    --g-ink-faint: #999;
+    --g-ai-purple: #7c3aed;
+    --g-brand: #e63946;
+    --g-surface: #ffffff;
+    --g-surface-2: #f8f9fa;
+    --g-line: #eee;
+    --g-r-md: 8px;
+    --g-font-display: monospace;
+    --g-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f0f0f5; padding: 40px; margin: 0; }
+  h2 { font-size: 16px; color: var(--g-ink); margin-bottom: 16px; }
+  .note { font-size: 13px; color: #666; margin-bottom: 24px; line-height: 1.6; }
+
+  /* === 核心修改后的样式（与 gallery.css 同步）=== */
+  .plan-row {
+    position: relative;
+    display: flex; align-items: center; gap: 0;
+    padding: 9px 12px;
+    background: var(--g-surface);
+    border: 1px solid var(--g-line);
+    border-radius: 10px;
+    box-shadow: none;
+    overflow: hidden;
+    transition: background .15s var(--g-ease), border-color .15s var(--g-ease);
+    max-width: 480px;
+    margin-bottom: 8px;
+  }
+  .plan-row::before {
+    content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px;
+    background: var(--g-ai-purple); border-radius: 0 2px 2px 0;
+  }
+  .plan-row.custom::before { background: var(--g-brand); }
+
+  .pr-body {
+    display: flex; flex-direction: column; gap: 1px;
+    flex: 1; min-width: 0;
+  }
+  /* ★ 修改点1：pr-top 加 position:relative */
+  .pr-top {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 22px;
+    position: relative;
+  }
+  .pr-num {
+    font-size: 12px; font-weight: 700; color: var(--g-ink-faint);
+    font-family: var(--g-font-display);
+    min-width: 16px; text-align: center; flex-shrink: 0;
+    opacity: .55; user-select: none;
+  }
+  /* ★ 修改点2：pr-name 去掉 min-width:0 和 overflow:hidden，加 padding-right 给标签留空 */
+  .pr-name {
+    font-size: 14px; font-weight: 600; color: var(--g-ink);
+    line-height: 1.35; letter-spacing: -.01em;
+    flex: 1 1 auto;
+    padding-right: 60px;
+  }
+  /* ★ 修改点3：pr-tag 改为绝对定位悬浮 */
+  .pr-tag {
+    font-size: 10.5px; font-weight: 600; color: var(--g-ai-purple);
+    background: transparent; border: 1px solid var(--g-ai-purple);
+    padding: 1px 8px; border-radius: 999px; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .pr-tag.custom { color: var(--g-brand); border-color: var(--g-brand); }
+
+  .pr-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .pr-chip { font-size: 12px; color: #666; }
+  .pr-chip b { color: var(--g-ink); }
+  .pr-actions { display: flex; align-items: center; gap: 6px; margin-left: 8px; flex-shrink: 0; }
+  .pr-btn-icon { cursor: pointer; opacity: 0.45; }
+  .pr-set-btn { font-size: 12px; cursor: pointer; color: #888; }
+
+  .pass { color: #16a34a; font-weight: 700; }
+  .fail { color: #dc2626; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<h2>PlanRow 布局验证 —— 标签绝对定位方案</h2>
+<div class="note">
+  验证标准：<br>
+  ✓ 名称「产品多角度」必须<strong>完整显示</strong>（不可出现省略号或截断）<br>
+  ✓ 「自定义」标签必须在标题同行<strong>靠右悬浮</strong><br>
+  ✓ 标签不得影响名称展示
+</div>
+
+<!-- 用例1：自定义类型 + 长名称 -->
+<div class="plan-row custom">
+  <div class="pr-body">
+    <div class="pr-top">
+      <span class="pr-num">1.</span>
+      <span class="pr-name">产品多角度</span>
+      <span class="pr-tag custom">自定义</span>
+    </div>
+    <div class="pr-meta">
+      <span class="pr-chip">🖼数量 <b>1</b></span>
+      <span class="pr-chip">⬜比例 <b>自适应尺寸</b></span>
+      <span class="pr-chip">📐分辨率 <b>1K</b></span>
+    </div>
+  </div>
+  <div class="pr-actions">
+    <button class="pr-btn-icon" title="复制">📋</button>
+    <button class="pr-btn-icon" title="删除">🗑️</button>
+    <button class="pr-set-btn">设置 ▸</button>
+  </div>
+</div>
+
+<!-- 用例2：极速出图类型 -->
+<div class="plan-row">
+  <div class="pr-body">
+    <div class="pr-top">
+      <span class="pr-num">2.</span>
+      <span class="pr-name">主图场景图</span>
+      <span class="pr-tag">极速出图</span>
+    </div>
+    <div class="pr-meta">
+      <span class="pr-chip">🖼数量 <b>3</b></span>
+      <span class="pr-chip">⬜比例 <b>1:1</b></span>
+      <span class="pr-chip">🤖模型 <b>agnes-image-2.1-flash</b></span>
+    </div>
+  </div>
+  <div class="pr-actions">
+    <button class="pr-btn-icon" title="复制">📋</button>
+    <button class="pr-btn-icon" title="删除">🗑️</button>
+    <button class="pr-set-btn">设置 ▸</button>
+  </div>
+</div>
+
+<!-- 用例3：更长的名称 -->
+<div class="plan-row custom">
+  <div class="pr-body">
+    <div class="pr-top">
+      <span class="pr-num">3.</span>
+      <span class="pr-name">产品细节特写与功能卖点展示图</span>
+      <span class="pr-tag custom">自定义</span>
+    </div>
+    <div class="pr-meta">
+      <span class="pr-chip">🖼数量 <b>1</b></span>
+      <span class="pr-chip">⬜比例 <b>3:4</b></span>
+    </div>
+  </div>
+  <div class="pr-actions">
+    <button class="pr-btn-icon" title="复制">📋</button>
+    <button class="pr-btn-icon" title="删除">🗑️</button>
+  </div>
+</div>
+
+<script>
+// 自动检测名称是否被截断
+document.querySelectorAll('.pr-name').forEach(el => {
+  const isTruncated = el.scrollWidth > el.clientWidth + 1;
+  el.style.background = isTruncated ? '#fee' : 'transparent';
+  el.insertAdjacentHTML('afterend',
+    `<small style="font-size:11px;color:${isTruncated ? '#dc2626' : '#16a34a'};margin-left:4px;">
+      ${isTruncated ? '❌ 截断 (scrollWidth=' + el.scrollWidth + ', clientWidth=' + el.clientWidth + ')' : '✓ 完整'}
+    </small>`
+  );
+});
+</script>
+
+</body>
+</html>

@@ -23,6 +23,16 @@
 ## 用户协作偏好（重要）
 - **不凭空臆想需求**：反对自作主张加「兜底/共享/自动降级」等跨用户逻辑；需求不清先问。
 - **数据隔离硬约束**：每用户只能用自己配置的资源，绝不借用他人。
+- **🔥 前端 UI 修改必须浏览器预览验证后才能回复**：绝不能仅靠构建成功就说"已修复"。改完 CSS/组件后必须实际打开页面确认视觉效果符合预期再回复用户。
+- **🔥 出图规划列表(PlanRow) 布局硬约束（用户明确要求）**：
+  - **类型名称必须完整展示**，不可截断/省略号（如"产品多角度"不可显示为"产品多..."）。
+  - 「自定义」/「极速出图」等标签必须**在标题同行右侧**展示。
+  - 标签**不得影响名称展示**——名称优先占满可用空间，标签靠右但不挤压标题文字。
+- **🔴 CSS 双文件陷阱（2026-07-15 教训）**：电商套图 UI 的 `.pr-*` / `.plan-row` / `.prompt-badge` 等样式同时定义在两处：
+  - `web/src/styles/gallery-design-system.css` — **App.tsx 全局导入（真正生效）**
+  - `web/src/pages/EcommerceGallery/gallery.css` — 页面级导入（被 design-system 覆盖或冲突）
+  **规则：改 PlanRow / 提示词按钮等组件样式时，只改 `gallery-design-system.css`；gallery.css 不再重复定义 `.pr-top/.pr-name/.pr-tag`。**
+  改完必须 `rm -rf node_modules/.vite dist && npm run build` + `docker compose restart web` + Chrome 无头截图验证产物。
 - 改后端后提醒用户**重启 FastAPI + 刷新浏览器(Ctrl+F5)**；Docker 栈改后端 `docker restart ai-agent-api`（bind mount 免 rebuild）。
 
 ## 电商套图 · 提示词引擎

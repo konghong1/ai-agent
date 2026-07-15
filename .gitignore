@@ -10,3 +10,4 @@ web/dist/
 node_modules/
 uploads/*
 !uploads/.gitkeep
+ai/*
