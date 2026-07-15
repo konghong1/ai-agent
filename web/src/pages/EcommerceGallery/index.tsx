@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react
 import { message, Modal, Spin, Input, Select, Image } from 'antd'
 import {
   getTypes, getDraft, getTemplates,
-  getImageModels, getTasks, updateTask, updateRecord, getShowcases, publishShowcase,
+  getImageModels, getTasks, updateTask, updateRecord, regenerateRecord, getShowcases, publishShowcase,
   uploadImages, deleteImage, updateProject,
   createPlanItem, updatePlanItem, deletePlanItem,
   generate, createTemplate, deleteTemplate, applyTemplate, updateTemplate,
@@ -17,6 +17,7 @@ import type {
 import PlannerDrawer from './PlannerDrawer'
 import SaveTemplateModal from './SaveTemplateModal'
 import TypeSettingsModal from './TypeSettingsModal'
+import RedoModal from './RedoModal'
 import { PlanRow } from '@/components/gallery'
 import './gallery.css'
 
@@ -42,9 +43,17 @@ function placeholderImg(label: string): string {
 // 可点击放大 + 可下载的图片组件。
 // 真实成图用 antd <Image>（点击原生放大预览）；悬停叠加下载按钮，
 // 下载时通过 fetch 取 blob 再触发本地保存，避免跨域导致 a.download 失效。
-function PreviewableImage({ src, alt, className }: { src: string; alt?: string; className?: string }) {
+function PreviewableImage({ src, alt, className, onError, onRetry, erroredLabel }: {
+  src: string
+  alt?: string
+  className?: string
+  onError?: () => void
+  onRetry?: () => void
+  erroredLabel?: string
+}) {
   const [hover, setHover] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [errored, setErrored] = useState(false)
   const filename = (() => {
     try {
       const u = new URL(src, window.location.origin)
@@ -76,13 +85,41 @@ function PreviewableImage({ src, alt, className }: { src: string; alt?: string; 
       setBusy(false)
     }
   }
+  // 加载失败（远程失效 / 跨域 / 本地缺失）：优雅降级为提示卡，替代浏览器破图图标
+  if (errored) {
+    return (
+      <div className={`pv-img pv-errored ${className ?? ''}`}>
+        <div className="pv-err-inner">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M3 15l5-5 4 4" /><path d="M14 14l2-2 5 5" />
+            <line x1="3.5" y1="3.5" x2="20.5" y2="20.5" opacity=".45" />
+          </svg>
+          <span className="pv-err-text">{erroredLabel || '图片加载失败'}</span>
+          {onRetry && (
+            <button
+              className="pv-err-retry"
+              onClick={(e) => { e.stopPropagation(); e.preventDefault(); onRetry() }}
+            >重新生成</button>
+          )}
+        </div>
+      </div>
+    )
+  }
   return (
     <div
       className={`pv-img ${hover ? 'on' : ''}`}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <Image src={src} alt={alt} preview={{ mask: false }} className={className} />
+      <Image
+        src={src}
+        alt={alt}
+        preview={{ mask: false }}
+        className={className}
+        fallback="data:image/svg+xml;utf8,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='1'%20height='1'%3E%3C/svg%3E"
+        onError={() => { setErrored(true); onError?.() }}
+      />
       <button className={`pv-dl ${busy ? 'busy' : ''}`} title="下载图片" onClick={handleDownload}>
         {busy ? (
           <span className="pv-dl-spinner" />
@@ -247,6 +284,11 @@ export default function EcommerceGallery() {
 
   // 创作结果：每次「立即生成」对应一个后台任务，列表按时间倒序
   const [tasks, setTasks] = useState<GalleryTask[]>([])
+  // 单图「重作」：按 record id 记录提示词 / 进行中；交互改为弹框编辑
+  type RedoState = { prompt: string; loading: boolean }
+  const [redo, setRedo] = useState<Record<number, RedoState>>({})
+  const redoOf = (id: number): RedoState => redo[id] || { prompt: '', loading: false }
+  const [redoModalRecord, setRedoModalRecord] = useState<number | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [detailGroup, setDetailGroup] = useState<GalleryRecord[] | null>(null)
   const [loading, setLoading] = useState(true)
@@ -292,20 +334,29 @@ export default function EcommerceGallery() {
 
   const loadAll = useCallback(async () => {
     setLoading(true)
+    // 配置类接口（类型/草稿/模板/模型/案例）用 allSettled 隔离：
+    // 任意一项临时失败都不应阻断历史创作任务的加载，否则会表现为「历史数据全没了」。
+    const r = await Promise.allSettled([
+      getTypes(), getDraft(), getTemplates(), getImageModels(), getShowcases(),
+    ])
+    const [rt, rp, rtpl, rim, rsc] = r
+    if (rt.status === 'fulfilled') {
+      setTypes(rt.value.types)
+      setOptions(rt.value.options)
+      setFeatures(rt.value.features ?? {})
+    } else {
+      console.warn('[gallery] 类型配置加载失败，已降级', rt.reason)
+    }
+    if (rp.status === 'fulfilled') setProject(rp.value)
+    else console.warn('[gallery] 草稿加载失败，已降级', rp.reason)
+    if (rtpl.status === 'fulfilled') setTemplates(rtpl.value)
+    if (rim.status === 'fulfilled') setImageModels(rim.value)
+    if (rsc.status === 'fulfilled') setShowcases(rsc.value)
+    // 历史创作任务：独立加载，任何配置类失败都不影响历史展示；失败时明确提示而非静默空白
     try {
-      const [t, p, tpl, im, sc] = await Promise.all([
-        getTypes(), getDraft(), getTemplates(), getImageModels(), getShowcases(),
-      ])
-      setTypes(t.types)
-      setOptions(t.options)
-      setFeatures(t.features ?? {})
-      setProject(p)
-      setTemplates(tpl)
-      setImageModels(im)
-      setShowcases(sc)
       setTasks(await getTasks())
     } catch (e) {
-      /* request 已统一提示 */
+      message.error('历史创作任务加载失败，请刷新页面重试')
     } finally {
       setLoading(false)
     }
@@ -754,17 +805,52 @@ export default function EcommerceGallery() {
     }
     setLoading(true)
     try {
-      const ok = await applySnapshotsToProject({
-        snapshots,
-        globalOutput: payload?.output_config,
-        marketConfig: payload?.market_config,
-        sellingPoints: payload?.selling_points,
-      })
+      // 只把「发布时勾选的图片」对应的各类型设置（personal/common/output/note/参考图）
+      // 还原到左侧配置；不覆盖当前项目的全局 output_config / market_config / 核心卖点，
+      // 避免把源项目的全部设置强行反显。
+      const ok = await applySnapshotsToProject({ snapshots })
       setShowcaseDetail(null)
       if (ok) message.success('同款配置已带入左侧，可直接点击「立即生成」')
       else message.error('带入同款配置失败，请重试')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // ── 单图「重作」：弹框编辑中文提示词，提交后后台重新出图 ──
+  const openRedo = (rec: GalleryRecord) => {
+    setRedo((prev) => ({ ...prev, [rec.id]: { prompt: rec.prompt || '', loading: false } }))
+    setRedoModalRecord(rec.id)
+  }
+  const closeRedo = () => {
+    setRedoModalRecord(null)
+  }
+  // 轮询该 record 直到终态（后端在后台线程出图，SSE 已结束不会推送）
+  const pollRecord = useCallback(async (recordId: number, taskId: number) => {
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 2500))
+      let latest: GalleryTask[] = []
+      try { latest = await getTasks() } catch { continue }
+      const t = latest.find((x) => x.id === taskId)
+      const rc = t?.records.find((r) => r.id === recordId)
+      setTasks((prev) => prev.map((p) => (p.id === taskId && t ? t : p)))
+      if (rc && (rc.status === 'completed' || rc.status === 'failed')) break
+    }
+    setRedo((prev) => { const c = { ...prev }; if (c[recordId]) c[recordId] = { ...c[recordId], loading: false }; return c })
+  }, [setTasks])
+
+  const doRedo = async (rec: GalleryRecord, taskId: number) => {
+    const st = redoOf(rec.id)
+    if (st.loading) return
+    setRedo((prev) => ({ ...prev, [rec.id]: { ...st, loading: true } }))
+    setRedoModalRecord(null)
+    try {
+      await regenerateRecord(rec.id, st.prompt.trim() || undefined)
+      message.success('已提交重作，正在重新生成…')
+      pollRecord(rec.id, taskId)
+    } catch (e) {
+      setRedo((prev) => ({ ...prev, [rec.id]: { ...st, loading: false } }))
+      message.error('重作失败，请重试')
     }
   }
 
@@ -1095,6 +1181,7 @@ export default function EcommerceGallery() {
                           count={Number(item.output_settings?.count) || 1}
                           ratio={item.output_settings?.ratio || (isFast ? '自动' : '3:4')}
                           resolution={item.output_settings?.resolution || '1K'}
+                          model={project?.output_config?.model_label || undefined}
                           onCopy={() => handleCopyItem(item)}
                           onDelete={() => handleDeleteItem(item.id)}
                           onSettings={isCustom ? undefined : () => openSettings(item.type_id)}
@@ -1231,25 +1318,56 @@ export default function EcommerceGallery() {
                             className={`task-cell ${isBusy ? 'is-busy' : ''} ${isFailed ? 'is-failed' : ''}`}
                             key={rec.id ?? i}
                           >
-                            {showReal ? (
-                              <PreviewableImage src={rec.result_url!} alt={rec.title || ''} className="cell-img" />
-                            ) : isBusy ? (
-                              <div className="cell-busy">
-                                <span className="cell-spinner" />
-                                <span className="cell-busy-text">
-                                  {rec.status === 'processing' ? `生成中 · 第 ${i + 1} 张` : '排队中'}
-                                </span>
+                            {/* 图片媒体区：保持 3:4，干净无浮层（提示词查看已移到底部操作区） */}
+                            <div className="cell-media">
+                              {showReal ? (
+                                <PreviewableImage
+                                  src={rec.result_url!}
+                                  alt={rec.title || ''}
+                                  className="cell-img"
+                                  erroredLabel="图片无法加载"
+                                  onRetry={() => openRedo(rec)}
+                                />
+                              ) : isBusy ? (
+                                <div className="cell-busy">
+                                  <span className="cell-spinner" />
+                                  <span className="cell-busy-text">
+                                    {rec.status === 'processing' ? `生成中 · 第 ${i + 1} 张` : '排队中'}
+                                  </span>
+                                </div>
+                              ) : isFailed ? (
+                                <div className="cell-failed">
+                                  <span className="cell-failed-text">生成失败</span>
+                                  {rec.error && <span className="cell-failed-err" title={rec.error}>{rec.error}</span>}
+                                </div>
+                              ) : (
+                                <img src={placeholderImg(rec.title || '作品')} alt={rec.title || ''} />
+                              )}
+                              {rec.title && <div className="cell-caption" title={rec.title}>{rec.title}</div>}
+                            </div>
+                            {/* 单图底部操作区：提示词查看 + 重作 弹框编辑 */}
+                            <div className="cell-footer">
+                              <div className="cell-actions-row">
+                                {features.show_prompt && (
+                                  rec.prompt ? (
+                                    <PromptBadge prompt={rec.prompt} prompt_en={rec.prompt_en} promptSource={rec.prompt_source} promptInput={rec.prompt_input} promptRaw={rec.prompt_raw} />
+                                  ) : (
+                                    <button className="prompt-badge is-disabled" disabled title="暂无提示词">
+                                      <svg className="prompt-badge-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 2L13.8 9.2L21 11L13.8 12.8L12 20L10.2 12.8L3 11L10.2 9.2L12 2Z" />
+                                      </svg>
+                                      提示词
+                                    </button>
+                                  )
+                                )}
+                                <button className="cell-redo-btn" onClick={() => openRedo(rec)}>
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" />
+                                  </svg>
+                                  重作
+                                </button>
                               </div>
-                            ) : isFailed ? (
-                              <div className="cell-failed">
-                                <span className="cell-failed-text">生成失败</span>
-                                {rec.error && <span className="cell-failed-err" title={rec.error}>{rec.error}</span>}
-                              </div>
-                            ) : (
-                              <img src={placeholderImg(rec.title || '作品')} alt={rec.title || ''} />
-                            )}
-                            {rec.title && <div className="cell-caption" title={rec.title}>{rec.title}</div>}
-                            {features.show_prompt && rec.prompt && <PromptBadge prompt={rec.prompt} prompt_en={rec.prompt_en} promptSource={rec.prompt_source} promptInput={rec.prompt_input} promptRaw={rec.prompt_raw} />}
+                            </div>
                           </div>
                         )
                       })}
@@ -1311,11 +1429,11 @@ export default function EcommerceGallery() {
                       return (
                         <article className="case-card" key={sc.id}>
                           <div className="case-strip">
-                            <div className="cell orig"><img src={strip[0] && isRealImage(strip[0]) ? strip[0] : placeholderImg(sc.name)} alt="" /><span className="badge-orig">原图</span></div>
+                            <div className="cell orig"><img src={strip[0] && isRealImage(strip[0]) ? strip[0] : placeholderImg(sc.name)} alt="" onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg(sc.name) }} /><span className="badge-orig">原图</span></div>
                             {strip.slice(1, 3).map((u, i) => (
-                              <div className="cell" key={i}><img src={u && isRealImage(u) ? u : placeholderImg('')} alt="" /></div>
+                              <div className="cell" key={i}><img src={u && isRealImage(u) ? u : placeholderImg('')} alt="" onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg('') }} /></div>
                             ))}
-                            <div className={`cell ${sc.total_count > 4 ? 'more' : ''}`} data-n={Math.max(0, sc.total_count - 4)}><img src={strip[3] && isRealImage(strip[3]) ? strip[3] : placeholderImg('')} alt="" /></div>
+                            <div className={`cell ${sc.total_count > 4 ? 'more' : ''}`} data-n={Math.max(0, sc.total_count - 4)}><img src={strip[3] && isRealImage(strip[3]) ? strip[3] : placeholderImg('')} alt="" onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg('') }} /></div>
                           </div>
                           <div className="case-body">
                             <div className="case-meta"><span className="cat-dot" /><span className="cat">{sc.category}</span></div>
@@ -1558,6 +1676,40 @@ export default function EcommerceGallery() {
           </div>
         )}
       </Modal>
+
+      <RedoModal
+        open={!!redoModalRecord}
+        record={(() => {
+          for (const t of tasks) {
+            const r = t.records.find((x) => x.id === redoModalRecord)
+            if (r) return r
+          }
+          return null
+        })()}
+        taskId={(() => {
+          for (const t of tasks) {
+            if (t.records.some((x) => x.id === redoModalRecord)) return t.id
+          }
+          return null
+        })()}
+        prompt={redoOf(redoModalRecord ?? 0).prompt}
+        loading={redoOf(redoModalRecord ?? 0).loading}
+        onClose={closeRedo}
+        onPromptChange={(p) => {
+          if (redoModalRecord == null) return
+          setRedo((prev) => ({ ...prev, [redoModalRecord]: { ...redoOf(redoModalRecord), prompt: p } }))
+        }}
+        onSubmit={() => {
+          if (redoModalRecord == null) return
+          let rec: GalleryRecord | undefined
+          let taskId: number | undefined
+          for (const t of tasks) {
+            const r = t.records.find((x) => x.id === redoModalRecord)
+            if (r) { rec = r; taskId = t.id; break }
+          }
+          if (rec && taskId) doRedo(rec, taskId)
+        }}
+      />
     </div>
   )
 }

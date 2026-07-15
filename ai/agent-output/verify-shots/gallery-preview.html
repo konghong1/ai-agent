@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="theme-natural-green">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>电商套图 · 设计系统预览</title>
+<script>
+(function(){
+  const p = new URLSearchParams(location.search);
+  const theme = p.get('theme') || 'natural-green';
+  const mode = p.get('mode') || 'light';
+  document.documentElement.className = `theme-${theme}${mode === 'dark' ? ' dark' : ''}`;
+})();
+</script>
+<link rel="stylesheet" href="file:///D:/workspace/ai-agent/web/src/styles/variables.css" />
+<link rel="stylesheet" href="file:///D:/workspace/ai-agent/web/src/styles/gallery-design-system.css" />
+<link rel="stylesheet" href="file:///D:/workspace/ai-agent/web/src/pages/EcommerceGallery/gallery.css" />
+<style>
+  body { margin: 0; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 24px 80px; }
+  .section-title { font-family: var(--g-font-display); font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--g-ink-faint); margin: 36px 0 14px; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+  .btn-demo { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+  .btn-generate { background: linear-gradient(135deg, var(--g-brand), var(--g-ai-purple)); color: #fff; border: none; padding: 12px 22px; border-radius: 12px; font-weight: 700; font-size: 14px; cursor: pointer; }
+  .btn-primary { background: var(--g-brand); color: #fff; border: none; padding: 10px 18px; border-radius: 10px; font-weight: 700; font-size: 13px; cursor: pointer; }
+  .cell-redo-go { background: var(--g-brand); color: #fff; border: none; padding: 9px 16px; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; }
+  .ghost-cell { width: 160px; min-width: 160px; max-width: 160px; border-radius: var(--g-r-md); border: 1px dashed var(--g-line); background: var(--g-surface-2); display: flex; align-items: center; justify-content: center; color: var(--g-ink-faint); font-size: 12px; aspect-ratio: 3/4; }
+</style>
+</head>
+<body>
+<div class="gallery-page">
+  <div class="wrap">
+
+    <div class="page-head">
+      <div>
+        <div class="page-crumb"><span>工作台</span><span class="crumb-sep">/</span><span class="crumb-current">电商套图</span></div>
+        <h2 class="page-title" style="font-family:var(--g-font-display);font-size:26px;margin:0;color:var(--g-ink);">电商套图生成</h2>
+      </div>
+      <div class="area-tabs">
+        <button class="area-tab active">📋 创作结果</button>
+        <button class="area-tab">✦ 创作案例</button>
+        <span class="area-tab-spacer"></span>
+        <button class="area-link">使用说明</button>
+      </div>
+    </div>
+
+    <div class="hero-text">
+      <h1>为电商商品一键生成多角度、多场景的套图</h1>
+      <p>基于 AI 提示词引擎，自动编排主图、细节图、场景图与规格参数图，支持三种品牌风格与深浅主题。</p>
+    </div>
+
+    <div class="section-title">示例展示</div>
+    <div class="showcase-section">
+      <div class="showcase-head">
+        <h3>精选案例</h3>
+        <div class="showcase-tabs">
+          <button class="showcase-tab on">全部</button>
+          <button class="showcase-tab">服饰</button>
+          <button class="showcase-tab">美妆</button>
+          <button class="showcase-tab">数码</button>
+        </div>
+      </div>
+      <div class="gallery-grid">
+        <div class="case-card">
+          <div class="case-strip">
+            <div class="cell orig"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%23ddd'/%3E%3C/svg%3E"/></div>
+            <div class="cell"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%23ccc'/%3E%3C/svg%3E"/></div>
+            <div class="cell"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='%23bbb'/%3E%3C/svg%3E"/></div>
+            <div class="cell more" data-n="6"></div>
+          </div>
+          <div class="case-body">
+            <div class="case-meta"><span class="cat-dot"></span><span class="cat">服饰 · 夏季连衣裙</span></div>
+            <div class="case-name">夏日碎花连衣裙电商主图套图</div>
+            <div class="case-actions"><button class="btn">查看</button><button class="btn">复用</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">生成方案（Plan Rows）</div>
+    <div class="plan-rows">
+      <div class="plan-row">
+        <div class="pr-body">
+          <div class="pr-top">
+            <span class="pr-num">1</span>
+            <span class="pr-name">产品白底图</span>
+            <span class="pr-tag custom">自定义</span>
+          </div>
+          <div class="pr-meta">
+            <span class="pr-chip"><span class="pr-ci">🖼</span>数量 <b>1</b></span>
+            <span class="pr-chip"><span class="pr-ci">⬜</span>比例 <b>自适应尺寸</b></span>
+            <span class="pr-chip"><span class="pr-ci">📐</span>分辨率 <b>1K</b></span>
+            <span class="pr-chip"><span class="pr-ci">🤖</span>模型 <b>agnes-image-2.1-flash</b></span>
+          </div>
+        </div>
+        <div class="pr-actions">
+          <button class="pr-btn-icon pr-btn-copy" title="复制">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+          <button class="pr-btn-icon pr-btn-delete" title="删除">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6"/></svg>
+          </button>
+          <button class="pr-set-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            设置
+          </button>
+        </div>
+      </div>
+
+      <div class="plan-row">
+        <div class="pr-body">
+          <div class="pr-top">
+            <span class="pr-num">2</span>
+            <span class="pr-name">首屏视觉图</span>
+            <span class="pr-tag custom">自定义</span>
+          </div>
+          <div class="pr-meta">
+            <span class="pr-chip"><span class="pr-ci">🖼</span>数量 <b>1</b></span>
+            <span class="pr-chip"><span class="pr-ci">⬜</span>比例 <b>自适应尺寸</b></span>
+            <span class="pr-chip"><span class="pr-ci">📐</span>分辨率 <b>1K</b></span>
+            <span class="pr-chip"><span class="pr-ci">🤖</span>模型 <b>agnes-image-2.1-flash</b></span>
+          </div>
+        </div>
+        <div class="pr-actions">
+          <button class="pr-btn-icon pr-btn-copy" title="复制">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+          <button class="pr-btn-icon pr-btn-delete" title="删除">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6"/></svg>
+          </button>
+          <button class="pr-set-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            设置
+          </button>
+        </div>
+      </div>
+
+      <div class="plan-row">
+        <div class="pr-body">
+          <div class="pr-top">
+            <span class="pr-num">3</span>
+            <span class="pr-name">主图 + 五视角细节图（超长标题溢出测试）</span>
+            <span class="pr-tag fast">极速</span>
+          </div>
+          <div class="pr-meta">
+            <span class="pr-chip"><span class="pr-ci">🖼</span>数量 <b>8</b></span>
+            <span class="pr-chip"><span class="pr-ci">⬜</span>比例 <b>1:1</b></span>
+            <span class="pr-chip"><span class="pr-ci">🤖</span>模型 <b>agnes-image-2.1</b></span>
+          </div>
+        </div>
+        <div class="pr-actions">
+          <button class="pr-btn-icon pr-btn-copy" title="复制">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+          </button>
+          <button class="pr-btn-icon pr-btn-delete" title="删除">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2m-9 0v14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V6"/></svg>
+          </button>
+          <button class="pr-set-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+            设置
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">状态徽章（5 种状态 · 主题自适配）</div>
+    <div class="legend">
+      <span class="ts-badge ts-pending">待生成</span>
+      <span class="ts-badge ts-running">生成中</span>
+      <span class="ts-badge ts-completed">已完成</span>
+      <span class="ts-badge ts-partial">部分完成</span>
+      <span class="ts-badge ts-failed">失败</span>
+    </div>
+
+    <div class="section-title">创作结果（Task Cards & Cells）</div>
+    <div class="task-card status-completed">
+      <div class="task-head">
+        <div class="task-title">
+          <span class="task-pname">夏日碎花连衣裙套图</span>
+          <button class="task-rename-btn" title="重命名">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20h4L18 10l-4-4L4 16v4z"/></svg>
+          </button>
+        </div>
+        <span class="ts-badge ts-completed">已完成</span>
+      </div>
+      <div class="task-progress">
+        <div class="tp-bar"><div class="tp-fill" style="width:100%"></div></div>
+        <div class="tp-meta"><span class="tp-count">8 / 8</span><span class="tp-dot">●</span><span>全部生成成功</span></div>
+      </div>
+      <div class="task-grid">
+        <div class="task-cell">
+          <div class="cell-media">
+            <div class="ghost-cell" style="border-style:solid;">主图</div>
+          </div>
+          <div class="cell-footer">
+            <div class="cell-actions-row">
+              <button class="prompt-badge">
+                <span class="prompt-badge-icon"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h14"/></svg></span>
+                <span>提示词</span>
+                <span class="prompt-badge-ai">AI</span>
+              </button>
+              <button class="cell-redo-btn">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg>
+                重作
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="task-cell skeleton"></div>
+
+        <div class="task-cell is-failed">
+          <div class="cell-media">
+            <div class="cell-failed">
+              <div class="cell-failed-text">生成失败</div>
+              <div class="cell-failed-err">模型返回空图像，可能触发内容安全策略，请调整提示词后重试</div>
+            </div>
+          </div>
+          <div class="cell-footer">
+            <div class="cell-actions-row">
+              <button class="prompt-badge is-disabled" disabled>
+                <span class="prompt-badge-icon"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h14"/></svg></span>
+                <span>提示词</span>
+              </button>
+              <button class="cell-redo-btn">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg>
+                重作
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="task-actions">
+        <button class="btn btn-secondary" onClick="alert('查看详情')">查看详情</button>
+        <button class="btn btn-primary">🎨 一键做同款</button>
+      </div>
+    </div>
+
+    <div class="section-title">按钮演示</div>
+    <div class="btn-demo">
+      <button class="btn-generate">生成套图</button>
+      <button class="btn-primary">保存方案</button>
+      <button class="cell-redo-go">立即重作</button>
+    </div>
+
+  </div>
+</div>
+</body>
+</html>

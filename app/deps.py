@@ -33,12 +33,16 @@ def get_current_user_sse(
     custom headers on EventSource connections, so we fall back to query
     parameter authentication.  Header is still tried first.
     """
-    # Try Authorization header first
+    # Try Authorization header first, then the ?token= query param. EventSource
+    # cannot set custom request headers, so SSE clients pass the JWT as a query
+    # argument. Read it from both the FastAPI Query binding and the raw query
+    # string as a belt-and-suspenders fallback (covers any Starlette/pydantic
+    # version quirk in Query extraction for this dependency signature).
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         effective_token = auth_header.removeprefix("Bearer ")
     else:
-        effective_token = token_query
+        effective_token = token_query or request.query_params.get("token")
 
     if not effective_token:
         raise HTTPException(

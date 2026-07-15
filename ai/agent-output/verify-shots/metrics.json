@@ -1,0 +1,290 @@
+[
+  {
+    "theme": "natural-green",
+    "mode": "light",
+    "metrics": {
+      "rows": [
+        {
+          "index": 0,
+          "name": "产品白底图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 1,
+          "name": "首屏视觉图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 2,
+          "name": "主图 + 五视角细节图（超长标题溢出测试",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 510,
+          "nameScrollWidth": 510,
+          "tagLeft": 838,
+          "nameRight": 830,
+          "gap": 8
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "theme": "natural-green",
+    "mode": "dark",
+    "metrics": {
+      "rows": [
+        {
+          "index": 0,
+          "name": "产品白底图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 1,
+          "name": "首屏视觉图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 2,
+          "name": "主图 + 五视角细节图（超长标题溢出测试",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 510,
+          "nameScrollWidth": 510,
+          "tagLeft": 838,
+          "nameRight": 830,
+          "gap": 8
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "theme": "tech-blue",
+    "mode": "light",
+    "metrics": {
+      "rows": [
+        {
+          "index": 0,
+          "name": "产品白底图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 1,
+          "name": "首屏视觉图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 2,
+          "name": "主图 + 五视角细节图（超长标题溢出测试",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 510,
+          "nameScrollWidth": 510,
+          "tagLeft": 838,
+          "nameRight": 830,
+          "gap": 8
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "theme": "tech-blue",
+    "mode": "dark",
+    "metrics": {
+      "rows": [
+        {
+          "index": 0,
+          "name": "产品白底图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 1,
+          "name": "首屏视觉图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 2,
+          "name": "主图 + 五视角细节图（超长标题溢出测试",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 510,
+          "nameScrollWidth": 510,
+          "tagLeft": 838,
+          "nameRight": 830,
+          "gap": 8
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "theme": "elegant-purple",
+    "mode": "light",
+    "metrics": {
+      "rows": [
+        {
+          "index": 0,
+          "name": "产品白底图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 1,
+          "name": "首屏视觉图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 2,
+          "name": "主图 + 五视角细节图（超长标题溢出测试",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 510,
+          "nameScrollWidth": 510,
+          "tagLeft": 838,
+          "nameRight": 830,
+          "gap": 8
+        }
+      ],
+      "errors": []
+    }
+  },
+  {
+    "theme": "elegant-purple",
+    "mode": "dark",
+    "metrics": {
+      "rows": [
+        {
+          "index": 0,
+          "name": "产品白底图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 1,
+          "name": "首屏视觉图",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 500,
+          "nameScrollWidth": 500,
+          "tagLeft": 827,
+          "nameRight": 819,
+          "gap": 8
+        },
+        {
+          "index": 2,
+          "name": "主图 + 五视角细节图（超长标题溢出测试",
+          "overlap": false,
+          "sameRow": true,
+          "tagAtRight": true,
+          "fullVisible": true,
+          "nameWidth": 510,
+          "nameScrollWidth": 510,
+          "tagLeft": 838,
+          "nameRight": 830,
+          "gap": 8
+        }
+      ],
+      "errors": []
+    }
+  }
+]

@@ -1086,6 +1086,15 @@ def _real_generate(
                 result = _call(cand, None)
             if _has_image(result):
                 url = result["data"][0]["url"]
+                # 自包含的 data: URL（base64）可直接展示，无需落盘
+                if isinstance(url, str) and url.startswith("data:"):
+                    return {
+                        "url": url,
+                        "filename": None,
+                        "provider_id": provider.id,
+                        "provider_name": provider.name,
+                        "model_name": model.model_name,
+                    }
                 filename = _save_generated_image(url)
                 if filename:
                     return {
@@ -1095,13 +1104,12 @@ def _real_generate(
                         "provider_name": provider.name,
                         "model_name": model.model_name,
                     }
-                # 下载失败但仍保留远程 URL，避免整单失败
+                # 本地下载失败：远程临时地址常因跨域 / 过期无法在浏览器稳定加载，
+                # 不再把不可显示的 URL 落盘成 result_url（否则表现为「已完成却打不开的破图」），
+                # 改为返回错误，由调用方把该记录标记为 failed（任务其余图仍正常完成），
+                # 用户在单图底部点「重作」即可重新生成。
                 return {
-                    "url": url,
-                    "filename": None,
-                    "provider_id": provider.id,
-                    "provider_name": provider.name,
-                    "model_name": model.model_name,
+                    "error": "图片已生成，但下载到本地失败（网络受限或上游链接不可达），未保存",
                 }
             err = _result_error(result)
             last_err = err
@@ -1195,6 +1203,117 @@ def rename_record(db: Session, user: models.User, record_id: int, title: str) ->
     rec.title = title.strip()
     db.commit()
     db.refresh(rec)
+    return rec
+
+
+def regenerate_record(db: Session, user: models.User, record_id: int, *, prompt: str | None = None) -> models.GalleryRecord | None:
+    """单张创作记录「重作」：用（可选的）覆盖提示词重新出图，原地更新该记录。
+
+    - 仅允许用户操作自己的记录；
+    - 同步先把记录标记为 processing 并回写（前端轮询立即可见），
+      真实出图在后台守护线程执行（复用 _real_generate 的候选降级与 spec 叠加逻辑），
+      长 I/O 期间不持有请求事务连接，从根源避免 "Can't reconnect" 类错误；
+    - 提示词优先级：用户覆盖 > 记录已存 prompt_en > prompt（中文）。
+    """
+    rec = db.get(models.GalleryRecord, record_id)
+    if not rec or rec.user_id != user.id:
+        raise ValueError("记录不存在或无权操作")
+    proj = db.get(models.GalleryProject, rec.project_id)
+    if not proj:
+        raise ValueError("项目不存在")
+
+    # 从记录快照还原运行时元数据（与 run_gallery_task 同源，避免重新解析 ORM）
+    snap = rec.plan_item_snapshot or {}
+    ios = snap.get("output_settings") or {}
+    ratio = ios.get("ratio") or "自适应尺寸"
+    ref_files: list[str] = []
+    for f in (snap.get("reference_images") or []):
+        if f and f not in ref_files:
+            ref_files.append(f)
+    if not ref_files and proj.images:
+        ref_files.append(proj.images[0].filename)
+    size = _ratio_to_size(ratio, reference_filename=ref_files[0] if ref_files else None)
+    provider_id = ios.get("provider_id")
+    model_name = ios.get("model_name")
+    ps = snap.get("personal_settings") or {}
+    spec_text = ps.get("规格参数原文", "") or ""
+    category = ps.get("产品品类", "") or ""
+    final_prompt = (prompt or "").strip() or rec.prompt_en or rec.prompt or ""
+
+    # 同步标记 processing（短事务提交，前端立即可见），真实出图在后台线程
+    rec.status = "processing"
+    rec.error = None
+    db.commit()
+
+    from app.core.database import SessionLocal
+    import threading
+
+    def _do() -> None:
+        s = SessionLocal()
+        try:
+            r = s.get(models.GalleryRecord, record_id)
+            if not r:
+                return
+            s.rollback()  # 关闭读取事务后再发起长 HTTP 出图调用
+            # 先保留旧图指针：重作失败时不破坏用户原有成图，仅静默回退到原图
+            prev_url = r.result_url
+            prev_file = r.result_filename
+            real = _real_generate(
+                user.id, final_prompt, ref_files,
+                provider_id, model_name, size=size,
+                hint=f"{category} {rec.title or ''}",
+            )
+            r = s.get(models.GalleryRecord, record_id)
+            if not r:
+                return
+            if real and real.get("url"):
+                r.result_filename = real.get("filename")
+                r.result_url = real["url"]
+                r.provider_id = real["provider_id"]
+                r.provider_name = real["provider_name"]
+                r.model_name = real["model_name"]
+                # 规格参数图：生成后叠加尺码表/标注（纯视觉图 + 后端文字叠加，消除乱码）
+                if rec.type_id == "spec" and real.get("filename"):
+                    from app.spec_overlay import overlay_spec
+                    local = resolve_file(real["filename"])
+                    if local:
+                        over_name = overlay_spec(
+                            str(local),
+                            spec_text=spec_text,
+                            note="",
+                            title=rec.title or "",
+                            category=category,
+                        )
+                        if over_name:
+                            r.result_filename = over_name
+                            r.result_url = f"/api/gallery/files/{over_name}"
+                r.status = "completed"
+                r.error = None
+                s.commit()
+            else:
+                # 失败：保留用户原图（不置空），仅记录原因，避免「重作」把已有成图破坏
+                reason = _result_error(real) or "出图失败（未返回图片，可能 prompt 过长、参考图不被支持，或被上游限流）"
+                r.status = "completed"
+                r.result_url = prev_url
+                r.result_filename = prev_file
+                r.error = reason[:500]
+                s.commit()
+        except Exception as exc:
+            logger.exception("regenerate_record failed rec=%s: %s", record_id, exc)
+            try:
+                s.rollback()
+                r = s.get(models.GalleryRecord, record_id)
+                if r:
+                    r.status = "failed"
+                    r.result_url = None
+                    r.error = str(exc)[:500]
+                    s.commit()
+            except Exception:
+                pass
+        finally:
+            s.close()
+
+    threading.Thread(target=_do, name=f"regen-{record_id}", daemon=True).start()
     return rec
 
 

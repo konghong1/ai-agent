@@ -538,28 +538,54 @@ def _assemble(cfg: dict, copy: dict, market: dict, platform: dict) -> str:
             if ln and ln.strip():
                 lines.append(ln)
 
-    # 规格参数图：纯视觉图 + 后端文字叠加（画面严禁任何文字）
+    # 规格参数图：产品视觉为主 + 后端文字叠加（画面严禁任何文字）
+    # 策略：overlay 会替换右侧约40%为自有面板，所以 AI 必须把产品画大画完整
     if type_id == "spec":
         is_apparel = ps.get("产品品类") == "服饰穿戴产品"
-        spec_parts: list[str] = [f"画面类型为「{title}」信息图（纯视觉，画面不出现任何文字）："]
+        spec_parts: list[str] = [f"画面类型为「{title}」专业电商信息图（纯视觉，画面不出现任何文字）："]
         spec_parts.append(
-            "产品主体置于左侧、约占画面 60% 宽，与参考图严格一致、不改变外观；"
+            "产品大而清晰、占画面 70-75% 面积，居中或略偏左；完整展示产品全貌（服饰需显示整套），细节清晰可见、不被裁切或挤压到边缘；"
         )
         spec_parts.append(
-            "右侧预留一块干净的浅灰空白面板区，不要画任何东西（尺码表由后端文字叠加渲染）；"
+            "浅灰（#F5F5F7）纯色背景，干净的棚拍光线，柔和自然阴影，高级目录品质；"
         )
         if is_apparel:
+            # 允许优雅的测量引导线（无线条上的文字）——像真实规格参数图那样专业
             spec_parts.append(
-                "产品保持干净，不在画面绘制任何测量引导线/箭头/尺寸数值（尺寸标注线由后端统一精确叠加，确保尺寸准确不乱码）；"
+                "产品周围可带优雅的细测量指示线+箭头（左侧竖向长度箭头、胸部/腰部横向宽度箭头、袖子斜向箭头）——仅干净线条，线上绝对无文字/数字/标签；"
             )
-            spec_parts.append("可附带淡淡的儿童人体剪影作为穿着比例参考（同样无文字）；")
+            spec_parts.append(
+                "可附带极淡的儿童人体轮廓剪影作为穿着比例参考（同样无文字）；"
+            )
         else:
             spec_parts.append(
-                "产品保持干净，不在画面绘制任何测量引导线/箭头/尺寸数值（尺寸标注线由后端统一精确叠加）；可附带无文字的物体比例参照；"
+                "产品周围可带淡淡的双向箭头尺寸标注线（高/宽/深方向）——仅线条、无文字标签；"
             )
-        spec_parts.append("整体为电商详情页信息图风格，浅灰纯色背景，排版干净、无杂乱装饰；")
-        spec_parts.append("再次强调：画面中绝对不要出现任何文字、数字、字母或表格，否则会乱码。")
+        spec_parts.append("整体为高端电商规格参数表风格，排版干净专业；")
+        spec_parts.append("再次强调：画面中绝对不要出现任何文字、数字、字母、表格、水印或价格标签。")
         lines.append(" ".join(spec_parts))
+
+    # 对比类（使用对比图 / 客户痛点展示）：左右分屏，两屏均锚定上传参考图商品
+    if type_id in {"cmp", "pain"}:
+        cmp_parts: list[str] = [
+            "左右分屏对比信息图，中间以细分割线分隔；",
+            "左、右两个分屏都必须是上传参考图中的同一款商品（颜色、材质、图案、logo、结构完全一致），绝不可用近似或通用产品替代；",
+            "两屏仅在场景、使用状态、环境或语境上不同，商品本身始终保持一致；",
+        ]
+        if type_id == "cmp":
+            cmp_parts.append(
+                "左屏为「使用前 / 普通款 / 竞品」状态，右屏为「使用后 / 本产品优势」状态，对比直观一目了然；"
+            )
+        else:  # pain：左痛点右方案
+            cmp_parts.append(
+                "左屏呈现客户痛点（不便、杂乱、不适、低效）的生活化场景，右屏呈现同一款产品解决问题后的状态；"
+            )
+        if has_ref:
+            cmp_parts.append(
+                "两个分屏中的商品都必须与参考图严格一致，不得改变其颜色/图案/logo，也不得替换成其他产品；"
+            )
+        cmp_parts.append("两屏光影与背景色调统一，干净电商对比风格。")
+        lines.append(" ".join(cmp_parts))
 
     # 用户补充说明（出图规划项里自由填写的额外方向，作为补充约束注入提示词）
     # 规格参数图的补充说明改由后端叠加层渲染，不进图像提示词（避免画面出现中文）
@@ -909,32 +935,63 @@ def _assemble_en(cfg: dict, copy: dict, market_en: dict, platform_en: dict) -> s
     cam_parts.append(QUALITY_BOOSTERS_EN)
     chunks.append(". ".join(cam_parts) + ".")
 
-    # Spec chart: clean text-free visual + back-end text overlay (NO text in image)
+    # Spec chart: product-focused visual + back-end text overlay (NO text in image)
+    # Strategy: overlay replaces the right ~40% with its own panel anyway,
+    # so the AI must make the product LARGE, CLEAR, and COMPLETE within the frame.
     if type_id == "spec":
         is_apparel = ps.get("产品品类") == "服饰穿戴产品"
-        spec_en: list[str] = ["specification size chart infographic, TEXT-FREE visual only:"]
-        spec_en.append(
-            "product on the left occupying about 60% width, identical to reference, no alteration;"
-        )
-        spec_en.append(
-            "leave a clean light-gray empty panel area on the right for a back-end size chart overlay, draw nothing there;"
-        )
+        spec_en: list[str] = [
+            "professional e-commerce specification size chart infographic, TEXT-FREE visual only:",
+            # Product must be LARGE and PROMINENT — overlay will crop left portion
+            "product displayed LARGE and CLEAR, filling 70-75% of the image area, centered or slightly left-of-center;",
+            "product shown COMPLETE (full outfit if apparel), all details visible, not cropped or squeezed to edge;",
+            "light gray (#F5F5F7) solid background, clean studio lighting, soft natural shadows, premium catalog quality;",
+        ]
         if is_apparel:
+            # Allow elegant measurement guide LINES (no text) — they look professional like real spec charts
             spec_en.append(
-                "NO measurement guide lines/arrows or dimension numbers in the image (measurement lines are added by the back-end overlay precisely, to avoid garbled text);"
+                "elegant thin measurement indicator lines with arrow tips around the product "
+                "(vertical length arrows along left side, horizontal width arrows across chest/waist, diagonal sleeve arrows) "
+                "— clean lines ONLY, absolutely no text/numbers/labels on the lines;"
             )
-            spec_en.append("faint children silhouette as wearing scale reference, also text-free;")
+            spec_en.append(
+                "optional very faint child body silhouette outline as wearing scale reference near the product, text-free;"
+            )
         else:
             spec_en.append(
-                "NO measurement guide lines/arrows or dimension numbers in the image (measurement lines are added by the back-end overlay); optional text-free scale reference object;"
+                "subtle dimension indicator lines with double-headed arrows showing height/width/depth "
+                "— clean lines ONLY, no text labels;"
             )
+        spec_en.append("high-end e-commerce product specification sheet style, clean and professional layout;")
         spec_en.append(
-            "clean e-commerce infographic style, light gray solid background, no clutter;"
-        )
-        spec_en.append(
-            "CRITICAL: absolutely no text, numbers, letters or table in the image (text is added by back-end overlay to avoid garbled characters)."
+            "CRITICAL: absolutely NO text, numbers, letters, words, tables, watermarks, brand names, or price tags anywhere in the image."
         )
         chunks.append(" ".join(spec_en))
+
+    # 对比类（使用对比图 / 客户痛点展示）：左右分屏，两屏均锚定上传参考图商品
+    if type_id in {"cmp", "pain"}:
+        cmp_en: list[str] = [
+            "split-screen comparison infographic with a thin vertical divider;",
+            "BOTH left and right panels feature the SAME product as the uploaded reference image "
+            "(identical color, material, pattern, logo and structure) — never substitute a similar or generic product;",
+            "the two panels differ ONLY in scene, usage state, environment or context, not in the product itself;",
+        ]
+        if type_id == "cmp":
+            cmp_en.append(
+                "left panel = 'before / ordinary / competitor' state, right panel = 'after / our product advantage' state, "
+                "clear and intuitive contrast;"
+            )
+        else:  # pain：左痛点右方案
+            cmp_en.append(
+                "left panel shows the customer PAIN POINT (inconvenience, mess, discomfort, inefficiency) in a relatable "
+                "lifestyle scene, right panel shows the SOLUTION with the same product resolving it;"
+            )
+        if has_ref:
+            cmp_en.append(
+                "product in both panels must exactly match the reference image; do NOT alter its color/pattern/logo or swap it;"
+            )
+        cmp_en.append("consistent lighting and background tone across both panels, clean e-commerce comparison style.")
+        chunks.append(" ".join(cmp_en))
 
     # 用户补充说明（规格参数图的补充说明改由后端叠加层渲染，不进英文图像提示词）
     note = (cfg.get("note") or "").strip()
@@ -964,10 +1021,13 @@ def _assemble_en(cfg: dict, copy: dict, market_en: dict, platform_en: dict) -> s
     neg_core = [
         "blurry", "out of focus", "heavy noise", "cluttered background", "messy shadows",
         "oversaturated", "cartoon", "3D render feel", "watermark", "text", "logo", "numbers",
-        "letters", "dimension marks", "people", "model", "hands", "deformed", "plastic feel",
+        "letters", "people", "model", "hands", "deformed", "plastic feel",
         "wrong size", "out of proportion", "damaged edges", "messy stitching", "flash reflection",
         "crushed shadows"
     ]
+    # Spec 类型需要保留测量指示线（无文字），所以排除 dimension/masurement 相关负面词
+    if type_id != "spec":
+        neg_core += ["dimension marks", "measurement lines", "annotation arrows"]
     if wants_human:
         neg_core += ["deformed hands", "extra fingers", "distorted face", "incomplete limbs", "pale face"]
     seen = set()

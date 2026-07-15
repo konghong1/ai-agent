@@ -169,31 +169,38 @@ def _draw_measurement_lines(draw, W, H, lw, data, f_num):
     - 未提供数据时仍绘制代表性标注线（无数值），确保画面始终带「尺寸」视觉语言。
     - 服饰类画 衣长/胸围/肩宽(+袖长)；非服饰类画 高/宽(+厚)，按实际表头自适应。
     """
-    color = (110, 120, 190, 255)
+    # 优雅的紫灰色（接近参考图中的测量线色调）
+    color = (140, 130, 170, 220)
     lw_ = max(1, int(lw))
     headers = [h for h in (data.get("headers") or [])]
     apparel_kw = ("衣长", "裙长", "裤长", "胸围", "肩宽", "袖长", "腰围", "臀围")
     is_apparel = any(any(k in h for k in apparel_kw) for h in headers) or not headers
 
     if is_apparel:
+        # 位置微调：箭头线稍微靠内，不和边缘重叠；留出标签空间
+        margin_x = int(lw_ * 0.08)
         specs = [
-            (("衣长", "裙长", "裤长"), int(lw_ * 0.18), int(H * 0.10), int(lw_ * 0.18), int(H * 0.90), "v"),
-            (("胸围",), int(lw_ * 0.30), int(H * 0.40), int(lw_ * 0.70), int(H * 0.40), "h"),
-            (("肩宽",), int(lw_ * 0.34), int(H * 0.17), int(lw_ * 0.66), int(H * 0.17), "h"),
+            # 衣长/总长 — 左侧竖向
+            (("衣长", "裙长", "裤长"), margin_x, int(H * 0.08), margin_x, int(H * 0.92), "v"),
+            # 胸围 — 横跨产品中部
+            (("胸围",), int(lw_ * 0.22), int(H * 0.42), int(lw_ * 0.78), int(H * 0.42), "h"),
+            # 肩宽 — 靠近顶部横向
+            (("肩宽",), int(lw_ * 0.25), int(H * 0.15), int(lw_ * 0.75), int(H * 0.15), "h"),
         ]
         if _dim_value(data, "袖长"):
-            specs.append((("袖长",), int(lw_ * 0.74), int(H * 0.20), int(lw_ * 0.74), int(H * 0.52), "v"))
+            specs.append((("袖长",), int(lw_ * 0.82), int(H * 0.18), int(lw_ * 0.82), int(H * 0.50), "v"))
     else:
+        margin_x = int(lw_ * 0.08)
         specs = [
-            (("高度", "高", "长", "长度"), int(lw_ * 0.18), int(H * 0.12), int(lw_ * 0.18), int(H * 0.88), "v"),
-            (("宽度", "宽", "径"), int(lw_ * 0.28), int(H * 0.55), int(lw_ * 0.72), int(H * 0.55), "h"),
+            (("高度", "高", "长", "长度"), margin_x, int(H * 0.10), margin_x, int(H * 0.90), "v"),
+            (("宽度", "宽", "径"), int(lw_ * 0.20), int(H * 0.55), int(lw_ * 0.80), int(H * 0.55), "h"),
         ]
         if _dim_value(data, "厚度", "厚"):
-            specs.append((("厚度", "厚"), int(lw_ * 0.74), int(H * 0.30), int(lw_ * 0.74), int(H * 0.55), "v"))
+            specs.append((("厚度", "厚"), int(lw_ * 0.82), int(H * 0.30), int(lw_ * 0.82), int(H * 0.55), "v"))
 
     for keys, x1, y1, x2, y2, orient in specs:
         val = _dim_value(data, *keys)
-        _arrow_tips(draw, x1, y1, x2, y2, color, width=3, head=12)
+        _arrow_tips(draw, x1, y1, x2, y2, color, width=2, head=10)
         if val:
             # 标签用「表头中文名 + 数值」（如「衣长 62」），中文由后端真实字体精确绘制，不会乱码
             matched_header = next((h for h in data["headers"] if any(k in h for k in keys)), "")
@@ -201,66 +208,113 @@ def _draw_measurement_lines(draw, W, H, lw, data, f_num):
             tw = draw.textlength(label, font=f_num)
             pad = 4
             if orient == "v":
-                bx = x1 - int(tw) - pad * 2 - 6
+                bx = x1 - int(tw) - pad * 2 - 8
                 by = (y1 + y2) // 2 - f_num.size // 2
             else:
                 bx = (x1 + x2) // 2 - int(tw) // 2 - pad
-                by = y1 - f_num.size - 8
+                by = y1 - f_num.size - 10
             bx = max(2, bx)
             by = max(2, by)
-            draw.rectangle([bx, by, bx + int(tw) + pad * 2, by + f_num.size + 4], fill=(255, 255, 255, 235))
-            draw.text((bx + pad, by + 2), label, font=f_num, fill=(40, 40, 45, 255))
+            # 标签背景：半透明白色圆角效果
+            draw.rectangle(
+                [bx, by, bx + int(tw) + pad * 2, by + f_num.size + 4],
+                fill=(255, 255, 255, 230),
+            )
+            draw.text((bx + pad, by + 2), label, font=f_num, fill=(60, 55, 80, 255))
 
 
 def _draw_scale_silhouette(draw, px, pw, H):
-    """在右侧面板底部画一个淡淡的人体/比例剪影，作尺寸参照（参考信息图风格）。
+    """在右侧面板底部画一个精致的人体/比例剪影，作尺寸参照。
 
-    仅作比例示意，不承载任何用户补充说明文字。
+    仿电商规格参数图风格，绘制带基本人体特征的儿童/人物轮廓（头+颈+躯干+腿），
+    比纯几何图形更直观专业。仅作比例示意，不承载任何用户补充说明文字。
     """
     cx = px + pw // 2
-    base_y = H - int(H * 0.04)
-    fig_h = int(H * 0.40)
+    base_y = H - int(H * 0.03)
+    fig_h = int(H * 0.38)  # 略高一点，更接近真人比例
     top_y = base_y - fig_h
-    color = (206, 206, 214, 255)
+    color = (210, 208, 218, 255)   # 更淡的灰紫色
 
-    # 头
-    head_r = max(8, int(fig_h * 0.09))
+    # ── 头部（椭圆）──
+    head_r = max(10, int(fig_h * 0.10))
     head_cx = cx
-    head_cy = top_y + head_r
+    head_cy = top_y + head_r + int(fig_h * 0.01)
     draw.ellipse(
-        [head_cx - head_r, head_cy - head_r, head_cx + head_r, head_cy + head_r],
+        [head_cx - head_r, head_cy - head_r,
+         head_cx + head_r, head_cy + head_r],
         fill=color,
     )
-    # 身体（肩宽到髋部的梯形）
-    shoulder_y = head_cy + head_r + int(fig_h * 0.02)
-    body_top_w = int(fig_h * 0.20)
-    body_bot_w = int(fig_h * 0.14)
-    hip_y = base_y - int(fig_h * 0.06)
-    draw.polygon(
-        [
-            (cx - body_top_w, shoulder_y),
-            (cx + body_top_w, shoulder_y),
-            (cx + body_bot_w, hip_y),
-            (cx - body_bot_w, hip_y),
-        ],
-        fill=color,
-    )
-    # 腿
-    leg_w = int(body_bot_w * 0.55)
-    leg_gap = int(body_bot_w * 0.25)
+
+    # ── 颈部（细长矩形）──
+    neck_w = max(4, int(head_r * 0.35))
+    neck_h = max(4, int(fig_h * 0.04))
+    neck_y = head_cy + head_r - 2
     draw.rounded_rectangle(
-        [cx - leg_gap - leg_w, hip_y, cx - leg_gap, base_y],
-        radius=leg_w // 2, fill=color,
+        [cx - neck_w // 2, neck_y, cx + neck_w // 2, neck_y + neck_h],
+        radius=neck_w // 2, fill=color,
+    )
+
+    # ── 躯干（肩 → 腰的梯形，更接近真实身形）──
+    shoulder_y = neck_y + neck_h
+    shoulder_w = int(fig_h * 0.22)     # 肩宽
+    waist_w = int(fig_h * 0.16)        # 腰宽
+    hip_y = base_y - int(fig_h * 0.22) # 臀线位置
+    hip_w = int(fig_h * 0.18)          # 臀宽
+    # 上半躯干（肩到腰）
+    mid_y = shoulder_y + (hip_y - shoulder_y) // 2
+    mid_w = (shoulder_w + waist_w) // 2
+    body_top = [
+        (cx - shoulder_w, shoulder_y),
+        (cx + shoulder_w, shoulder_y),
+        (cx + mid_w, mid_y),
+        (cx - mid_w, mid_y),
+    ]
+    draw.polygon(body_top, fill=color)
+    # 下半躯干（腰到臀）
+    body_bot = [
+        (cx - mid_w, mid_y),
+        (cx + mid_w, mid_y),
+        (cx + hip_w, hip_y),
+        (cx - hip_w, hip_y),
+    ]
+    draw.polygon(body_bot, fill=color)
+
+    # ── 腿（略分开的圆角矩形，模拟双腿）──
+    leg_w = max(8, int(hip_w * 0.45))
+    leg_gap = max(4, int(hip_w * 0.22))
+    leg_r = leg_w // 2
+    draw.rounded_rectangle(
+        [cx - leg_gap - leg_w, hip_y + 2, cx - leg_gap, base_y],
+        radius=leg_r, fill=color,
     )
     draw.rounded_rectangle(
-        [cx + leg_gap, hip_y, cx + leg_gap + leg_w, base_y],
-        radius=leg_w // 2, fill=color,
+        [cx + leg_gap, hip_y + 2, cx + leg_gap + leg_w, base_y],
+        radius=leg_r, fill=color,
     )
-    # 比例参考标注（非用户补充文字）
-    f_cap = resolve_spec_font(max(11, int(pw * 0.06)))
+
+    # ── 手臂（可选：淡淡的手臂轮廓）──
+    arm_w = max(5, int(fig_h * 0.035))
+    arm_len = int((hip_y - shoulder_y) * 0.75)
+    arm_inner_y = shoulder_y + int(arm_len * 0.25)
+    arm_outer_y = shoulder_y + int(arm_len * 0.7)
+    # 左臂
+    draw.rounded_rectangle(
+        [cx - shoulder_w - arm_w, arm_inner_y,
+         cx - shoulder_w + 1, arm_outer_y],
+        radius=arm_w // 2, fill=color,
+    )
+    # 右臂
+    draw.rounded_rectangle(
+        [cx + shoulder_w - 1, arm_inner_y,
+         cx + shoulder_w + arm_w, arm_outer_y],
+        radius=arm_w // 2, fill=color,
+    )
+
+    # ── 底部标注（非用户文字，UI 元素）──
+    f_cap = resolve_spec_font(max(11, int(pw * 0.055)))
     cap = "比例参考"
     tw = draw.textlength(cap, font=f_cap)
-    draw.text((cx - int(tw) // 2, base_y + 2), cap, font=f_cap, fill=(150, 150, 160, 255))
+    draw.text((cx - int(tw) // 2, base_y + 2), cap, font=f_cap, fill=(155, 153, 165, 255))
 
 
 # ── 主入口：叠加合成 ─────────────────────────────────────────────
@@ -284,8 +338,8 @@ def overlay_spec(
     W, H = base.size
     canvas = Image.new("RGBA", (W, H), (255, 255, 255, 255))
 
-    # 左侧：产品视觉（cover 裁剪到左 60% 宽）
-    left_ratio = 0.60
+    # 左侧：产品视觉（cover 裁剪到左 65% 宽 — 新 prompt 让 AI 把产品画到 70-75%，多留一点余量）
+    left_ratio = 0.65
     lw = max(1, int(W * left_ratio))
     bw, bh = base.size
     scale = max(lw / bw, H / bh)
@@ -305,9 +359,9 @@ def overlay_spec(
     draw.line([(px, 0), (px, H)], fill=(210, 210, 215, 255), width=2)
 
     # 字号随图宽缩放
-    fs_title = max(22, int(W * 0.028))
-    fs_head = max(16, int(W * 0.020))
-    fs_cell = max(15, int(W * 0.019))
+    fs_title = max(24, int(W * 0.030))
+    fs_head = max(16, int(W * 0.019))
+    fs_cell = max(14, int(W * 0.018))
 
     f_title = resolve_spec_font(fs_title)
     f_head = resolve_spec_font(fs_head)
@@ -318,11 +372,11 @@ def overlay_spec(
     x1 = W - pad
     inner_w = x1 - x0
 
-    # 标题
-    y = int(H * 0.05)
-    title_text = f"{category} · 规格参数" if category else (title or "规格参数图")
-    draw.text((x0, y), title_text, font=f_title, fill=(30, 30, 35, 255))
-    y += fs_title + int(H * 0.03)
+    # 标题（更接近参考图的规格参数表风格）
+    y = int(H * 0.04)
+    title_text = f"{category} · 规格参数" if category else (title or "规格参数")
+    draw.text((x0, y), title_text, font=f_title, fill=(35, 35, 40, 255))
+    y += fs_title + int(H * 0.025)
 
     # 尺码表
     data = parse_spec_data(spec_text)
@@ -380,7 +434,7 @@ def overlay_spec_image(base_image: Image.Image, spec_text: str = "", note: str =
     """纯内存版本（不落盘），供单测/预览复用。"""
     W, H = base_image.size
     canvas = Image.new("RGBA", (W, H), (255, 255, 255, 255))
-    left_ratio = 0.60
+    left_ratio = 0.65
     lw = max(1, int(W * left_ratio))
     base = base_image.convert("RGBA")
     bw, bh = base.size
@@ -395,9 +449,9 @@ def overlay_spec_image(base_image: Image.Image, spec_text: str = "", note: str =
     pw = W - lw
     draw.rectangle([px, 0, W, H], fill=(245, 245, 247, 255))
     draw.line([(px, 0), (px, H)], fill=(210, 210, 215, 255), width=2)
-    fs_title = max(22, int(W * 0.028))
-    fs_head = max(16, int(W * 0.020))
-    fs_cell = max(15, int(W * 0.019))
+    fs_title = max(24, int(W * 0.030))
+    fs_head = max(16, int(W * 0.019))
+    fs_cell = max(14, int(W * 0.018))
     f_title = resolve_spec_font(fs_title)
     f_head = resolve_spec_font(fs_head)
     f_cell = resolve_spec_font(fs_cell)

@@ -36,6 +36,7 @@ from app.gallery_service import (
     list_showcases,
     publish_showcase,
     list_templates,
+    regenerate_record,
     recompute_estimate,
     reorder_plan_items,
     rename_record,
@@ -51,6 +52,7 @@ from app.schemas import (
     GalleryEstimateResponse,
     GalleryGenerateResponse,
     GalleryPlanItemCreate,
+    GalleryRecordRegenerate,
     GalleryPlanItemRead,
     GalleryPlanItemUpdate,
     GalleryPlanReorder,
@@ -389,7 +391,7 @@ def list_tasks(
     return [GalleryTaskRead.model_validate(t) for t in tasks]
 
 
-@router.get("/tasks/{task_id}", response_model=GalleryTaskRead)
+@router.get("/tasks/{task_id:int}", response_model=GalleryTaskRead)
 def get_task(
     task_id: int,
     db: Session = Depends(get_db),
@@ -475,7 +477,7 @@ def stream_tasks(
     )
 
 
-@router.patch("/tasks/{task_id}", response_model=GalleryTaskRead)
+@router.patch("/tasks/{task_id:int}", response_model=GalleryTaskRead)
 def patch_task(
     task_id: int,
     payload: GalleryTaskUpdate,
@@ -487,6 +489,26 @@ def patch_task(
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return GalleryTaskRead.model_validate(task)
+
+
+@router.post("/records/{record_id}/regenerate", response_model=GalleryRecordRead)
+def regenerate_record_endpoint(
+    record_id: int,
+    payload: GalleryRecordRegenerate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> models.GalleryRecord:
+    """单张创作记录「重作」：用（可选的）覆盖提示词重新出图，原地更新该记录。
+
+    后端标记 processing 后立即返回，真实出图在后台线程执行，前端轮询该记录即可看到状态变化。
+    """
+    try:
+        rec = regenerate_record(db, current_user, record_id, prompt=payload.prompt)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not rec:
+        raise HTTPException(status_code=404, detail="记录不存在或无权操作")
+    return rec
 
 
 @router.get("/projects/{project_id}/records", response_model=list)

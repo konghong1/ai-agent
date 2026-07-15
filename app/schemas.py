@@ -625,6 +625,12 @@ class GalleryRecordUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
 
 
+class GalleryRecordRegenerate(BaseModel):
+    """单张创作记录「重作」：可选自定义提示词（不传则用原提示词）。"""
+
+    prompt: str | None = None
+
+
 class GalleryTaskRead(BaseModel):
     id: int
     project_id: int

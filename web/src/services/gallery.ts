@@ -354,6 +354,11 @@ export function updateRecord(recordId: number, data: { title?: string }): Promis
   return patch(`${BASE}/records/${recordId}`, data)
 }
 
+// 单张创作记录「重作」：可选覆盖提示词，后端后台重新出图
+export function regenerateRecord(recordId: number, prompt?: string): Promise<GalleryRecord> {
+  return post(`${BASE}/records/${recordId}/regenerate`, { prompt: prompt ?? null })
+}
+
 export function getProjectRecords(projectId: number): Promise<GalleryRecord[]> {
   return get(`${BASE}/projects/${projectId}/records`)
 }

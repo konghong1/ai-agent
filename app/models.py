@@ -491,7 +491,7 @@ class GalleryRecord(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("gallery_projects.id", ondelete="CASCADE"), index=True)
-    plan_item_id: Mapped[int | None] = mapped_column(ForeignKey("gallery_plan_items.id", ondelete="CASCADE"), nullable=True, index=True)
+    plan_item_id: Mapped[int | None] = mapped_column(ForeignKey("gallery_plan_items.id", ondelete="SET NULL"), nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     type_id: Mapped[str] = mapped_column(String(40), default="")
     title: Mapped[str] = mapped_column(String(200), default="")

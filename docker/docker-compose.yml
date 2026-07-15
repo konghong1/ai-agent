@@ -185,6 +185,12 @@ services:
       - sh
       - -c
       - |
+        # 删除镜像构建时可能产生的陈旧 __pycache__：Docker 在 Windows 上把宿主源码
+        # bind mount 进 /app 时，源码 mtime 可能落后于镜像内预编译的 .pyc，导致 Python
+        # 信任陈旧字节码而不重新编译（现象：改了后端代码 restart 却不生效）。已设置
+        # PYTHONDONTWRITEBYTECODE=1 禁止写入 .pyc，这里在启动时清掉残留，确保始终从
+        # 最新源码编译。
+        find /app -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
         python -m app.db.init_db
         python -m app.storage.ilm || true
         exec uvicorn app.server:app --host 0.0.0.0 --port 8010
@@ -237,7 +243,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - ../:/app
-    command: python -m app.worker.media_worker
+    command: sh -c "find /app -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true; exec python -m app.worker.media_worker"
 
   # ──────────────────────────────────────────────────────────────
   # FRONTEND: Nginx serves static React app

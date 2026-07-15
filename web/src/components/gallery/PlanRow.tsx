@@ -7,6 +7,7 @@ export interface PlanRowProps {
   count?: number | string
   ratio?: string
   resolution?: string
+  model?: string
   onCopy?: () => void
   onDelete?: () => void
   onSettings?: () => void
@@ -29,6 +30,7 @@ export function PlanRow({
   count,
   ratio,
   resolution,
+  model,
   onCopy,
   onDelete,
   onSettings,
@@ -50,6 +52,7 @@ export function PlanRow({
           <span className="pr-chip"><span className="pr-ci">🖼</span>数量 <b>{count ?? 1}</b></span>
           <span className="pr-chip"><span className="pr-ci">⬜</span>比例 <b>{ratio || (fast ? '自动' : '3:4')}</b></span>
           <span className="pr-chip"><span className="pr-ci">📐</span>分辨率 <b>{resolution || '1K'}</b></span>
+          <span className="pr-chip"><span className="pr-ci">🤖</span>模型 <b>{model || '默认图片模型'}</b></span>
         </div>
       </div>
       {/* 右侧：操作按钮组（固定宽度，永不压缩） */}
