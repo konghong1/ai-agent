@@ -265,7 +265,7 @@ def list_agent_threads(agent_id: int, current_user: User = Depends(get_current_u
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found.")
 
-    return list(db.scalars(select(Thread).where(Thread.agent_id == agent_id).order_by(Thread.updated_at.desc())))
+    return list(db.scalars(select(Thread).where(Thread.agent_id == agent_id).order_by(Thread.created_at.asc())))
 
 
 @router.post('/agents/{agent_id}/threads', response_model=ThreadRead)
@@ -287,7 +287,7 @@ def list_threads(agent_id: int | None = None, current_user: User = Depends(get_c
     query = select(Thread).where(Thread.user_id == current_user.id)
     if agent_id is not None:
         query = query.where(Thread.agent_id == agent_id)
-    return list(db.scalars(query.order_by(Thread.updated_at.desc())))
+    return list(db.scalars(query.order_by(Thread.created_at.asc())))
 
 
 @router.post("/threads", response_model=ThreadRead)

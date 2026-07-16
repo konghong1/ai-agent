@@ -346,6 +346,11 @@ export function getTask(taskId: number): Promise<GalleryTask> {
   return get(`${BASE}/tasks/${taskId}`)
 }
 
+// 删除一次「立即生成」任务：同步删除其全部成图（MinIO + 本地）、任务与配置
+export function deleteTask(taskId: number): Promise<null> {
+  return del(`${BASE}/tasks/${taskId}`)
+}
+
 export function updateTask(taskId: number, data: { name?: string }): Promise<GalleryTask> {
   return patch(`${BASE}/tasks/${taskId}`, data)
 }

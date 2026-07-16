@@ -47,6 +47,22 @@ def startup() -> None:
     init_db()
     _ensure_gallery_showcase_payload_column()
     _ensure_pillow()
+    _start_gallery_worker()
+
+
+def _start_gallery_worker() -> None:
+    """幂等启动电商套图后台生成 worker（含孤儿恢复）。
+
+    必须在 api 进程启动时主动拉起，而非仅依赖「用户创建新任务」时的懒启动——
+    否则 api 重启后若短期内无人创建套图任务，worker 线程与孤儿恢复永不运行，
+    历史 running 任务会永久卡在「创作中」。仅启线程 + 查本地 DB，无任何网络调用，
+    符合 startup 不阻塞/不联网的硬约束。
+    """
+    try:
+        from app import gallery_worker
+        gallery_worker.start_worker()
+    except Exception as e:
+        logger.error("startup: 启动 gallery worker 失败: %s", e)
 
 
 def _ensure_pillow() -> None:

@@ -6,10 +6,11 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import time
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,7 @@ from app.gallery_service import (
     delete_image,
     delete_plan_item,
     delete_project,
+    delete_task,
     delete_template,
     generate,
     get_or_create_draft,
@@ -630,7 +632,31 @@ def apply_template(
 
 @router.get("/files/{filename:path}")
 def serve_file(filename: str):
+    # 优先从对象存储（MinIO）读取；失败回退本地磁盘（兼容历史本地文件）
+    try:
+        from app.storage import get_storage_backend
+        data = get_storage_backend().get(filename)
+        if data is not None:
+            ct = mimetypes.guess_type(filename)[0] or "image/png"
+            return Response(data, media_type=ct)
+    except Exception:
+        pass
     path = resolve_file(filename)
     if not path:
         raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(path)
+
+
+@router.delete("/tasks/{task_id:int}", status_code=204)
+def remove_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+) -> None:
+    """删除一次「立即生成」任务：同步删除其全部成图（MinIO + 本地）、任务与配置。"""
+    try:
+        if not delete_task(db, current_user, task_id):
+            raise HTTPException(status_code=404, detail="任务不存在")
+    except ValueError as e:
+        # 进行中等不可删除状态 → 400（而非 404），让前端区分「不存在」与「禁止操作」
+        raise HTTPException(status_code=400, detail=str(e))

@@ -15,6 +15,7 @@
   "type": "module",
   "dependencies": {
     "@ant-design/pro-components": "^2.7",
+    "@ant-design/v5-patch-for-react-19": "^1.0.3",
     "animejs": "^4.5.0",
     "antd": "^5.25",
     "axios": "^1.6",

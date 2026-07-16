@@ -1286,6 +1286,18 @@
 .gallery-page .task-badge { display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--g-ink); background: var(--g-surface-2); border: 1px solid var(--g-line); padding: 3px 10px; border-radius: 999px; flex-shrink: 0; white-space: nowrap; font-family: var(--g-font-display); }
 
 .gallery-page .ts-badge { font-size: 12px; font-weight: 600; padding: 4px 12px; border-radius: 999px; flex-shrink: 0; white-space: nowrap; }
+.gallery-page .task-head-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.gallery-page .task-del-btn {
+  width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--g-line);
+  background: transparent; color: var(--g-ink-faint); display: grid; place-items: center;
+  cursor: pointer; flex-shrink: 0; transition: all .15s var(--g-ease);
+}
+.gallery-page .task-del-btn:hover { background: color-mix(in srgb, var(--g-error) 12%, transparent); color: var(--g-error); border-color: color-mix(in srgb, var(--g-error) 40%, transparent); }
+.gallery-page .task-del-btn:active { transform: scale(.94); }
+.gallery-page .task-del-btn:disabled { opacity: .35; cursor: not-allowed; transform: none; pointer-events: none; }
+/* 进行中（活跃）任务：保留可点击，点击时弹提示说明不可删；仅做灰态视觉 */
+.gallery-page .task-del-btn.is-blocked { opacity: .4; cursor: not-allowed; color: var(--g-ink-faint); }
+.gallery-page .task-del-btn.is-blocked:hover { background: transparent; color: var(--g-ink-faint); border-color: var(--g-line); transform: none; }
 /* 状态徽章：浅色主题用「深色」语义字保证 WCAG AA；深色主题用「浅色」语义字（原配色） */
 .gallery-page .ts-pending,
 .gallery-page .ts-running {

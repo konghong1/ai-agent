@@ -177,7 +177,9 @@ export default function ChatInterface() {
       const res = await fetch(`/api/threads`, { headers: authHeaders() })
       if (res.ok) {
         const data = await res.json()
-        setThreads(data)
+        // 列表按「创建时间正序」排列：最新创建的会话排在最下面（历史会话在上）。
+        // 与后端 list_threads 的 order_by(Thread.created_at.asc()) 保持一致。
+        setThreads([...data].sort((a: any, b: any) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()))
         // Restore the previously-viewed thread (persisted in localStorage) so a
         // refresh or navigating away and back keeps the same conversation open.
         // Fall back to the first thread only if nothing was persisted or the
@@ -646,7 +648,7 @@ export default function ChatInterface() {
       })
         if (res.ok) {
           const data = await res.json()
-          setThreads(prev => [data, ...prev])
+          setThreads(prev => [...prev, data])
           threadId = data.id
           // Skip the next fetchMessages — the thread is empty and we're about
           // to add the user's message to state ourselves
@@ -760,7 +762,7 @@ export default function ChatInterface() {
                   setThreads(prev => {
                     const exists = prev.find(t => t.id === finalThreadId)
                     if (exists) return prev
-                    return [{ id: finalThreadId, title: messageContent.slice(0, 5) || "新会话", agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }, ...prev]
+                    return [...prev, { id: finalThreadId, title: messageContent.slice(0, 5) || "新会话", agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
                   })
                   // Skip fetch — we already have the messages in state
                   skipNextFetchRef.current = true
@@ -866,7 +868,7 @@ export default function ChatInterface() {
       })
       if (res.ok) {
         const data = await res.json()
-        setThreads(prev => [data, ...prev])
+        setThreads(prev => [...prev, data])
         // Skip fetch — new thread is empty
         skipNextFetchRef.current = true
         setMessages([])
@@ -1139,6 +1141,7 @@ export default function ChatInterface() {
               >
                 <div
                   onClick={() => selectThread(t.id)}
+                  data-thread-id={t.id}
                   style={{
                     padding: "10px 12px",
                     borderRadius: 8,

@@ -181,6 +181,9 @@ def _build_client():
         base_url=_get_ai_base_url(),
         http_client=httpx.AsyncClient(proxy=None),
         timeout=AI_PROMPT_TIMEOUT,
+        # 上游 chat 接口偶发不可达时快速失败，避免默认 2 次重试叠加 timeout 把单任务
+        # 卡死过久（配合 gallery worker 并发消费，单任务卡顿也不会冻死全局）。
+        max_retries=1,
     )
 
 

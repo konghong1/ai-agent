@@ -298,6 +298,65 @@ def delete_plan_item(db: Session, user: models.User, project_id: int, item_id: i
     return True
 
 
+def delete_task(db: Session, user: models.User, task_id: int) -> bool:
+    """删除一次「立即生成」任务：同步清理其全部成图与任务配置，释放存储与内存。
+
+    - 删除每张成图的对象存储对象（MinIO ``ai-agent-minio``）+ 本地回退文件；
+    - 删除任务记录，``GalleryTask.records`` 级联删除（含 ``plan_item_snapshot`` 配置快照）。
+
+    数据隔离：仅允许删除当前用户自己的任务。
+    """
+    task = db.get(models.GalleryTask, task_id)
+    if not task or task.user_id != user.id:
+        return False
+
+    # 进行中（排队中 / 创作中）原则上禁止删除：worker 仍在写入，此时删除会产生
+    # 孤儿对象且与后台写入竞争；同时从根本上消除「删除与上传竞态」孤儿数据。
+    if task.status == "pending":
+        raise ValueError("任务正在排队中，暂不可删除。请等待其开始创作或失败后重试")
+    if task.status == "running":
+        # 但“卡死”的 running 任务（创建很久仍无进度，通常是 api 容器重启导致
+        # 内存队列丢失的孤儿）应允许清理，否则会永久卡在“创作中”无法释放。
+        # 活跃 running（刚创建不久）仍拒绝，避免与正在进行的写入竞争。
+        STUCK_RUNNING_MAX_AGE_MINUTES = 30
+        created = task.created_at
+        if created is not None and created.tzinfo is not None:
+            created = created.replace(tzinfo=None)
+        age_min = (datetime.now() - (created or datetime.now())).total_seconds() / 60
+        if age_min <= STUCK_RUNNING_MAX_AGE_MINUTES:
+            raise ValueError("任务正在进行中（创作中），暂不可删除。请等待其完成、失败或部分完成后再删除")
+        # 卡死孤儿，放行删除（下方会同步清理其成图与记录）
+
+    # 1) 释放存储：删除每张成图的对象存储对象 / 本地回退文件
+    try:
+        from app.storage import get_storage_backend
+        backend = get_storage_backend()
+    except Exception:
+        backend = None
+    for rec in list(task.records):
+        fn = rec.result_filename
+        if not fn:
+            continue
+        if backend is not None:
+            try:
+                backend.delete(fn)
+            except Exception:
+                logger.warning("删除 MinIO 对象失败（忽略）: %s", fn)
+        # 本地回退文件（历史或 MinIO 不可用时写入的）一并清理
+        p = resolve_file(fn)
+        if p:
+            try:
+                p.unlink()
+            except Exception:
+                pass
+
+    # 2) 释放记录与任务（records 级联删除，含 plan_item_snapshot 配置）
+    db.delete(task)
+    db.commit()
+    return True
+
+
+
 def reorder_plan_items(db: Session, user: models.User, project_id: int, ordered_ids: list[int]) -> bool:
     proj = get_owned_project(db, user, project_id)
     if not proj:
@@ -664,11 +723,69 @@ def _resolve_image_model(
     return None, None
 
 
-def _save_generated_image(url: str) -> str | None:
-    """把 AI 提供商返回的临时图片下载到本地 ``uploads/gallery/results/``。
+def _ext_from_content(content_type: str | None, url: str) -> str:
+    """根据 Content-Type / URL 推断图片扩展名。"""
+    ct = (content_type or '').lower()
+    low = url.lower()
+    if ct.endswith('jpeg') or ct.endswith('jpg') or '.jpg' in low or '.jpeg' in low:
+        return ".jpg"
+    if ct.endswith('webp') or '.webp' in low:
+        return ".webp"
+    return ".png"
 
-    返回本地相对文件名（如 ``results/xxx.png``），失败返回 ``None``。
-    本地持久化后，下载/预览都走同源 ``/api/gallery/files/``，避免跨域。
+
+def _save_to_storage(data: bytes, ext: str, folder: str = "gallery/results") -> str | None:
+    """把生成的图片字节落库：优先上传 MinIO（``ai-agent-minio``），失败回退本地磁盘。
+
+    返回可用于 ``/api/gallery/files/{key}`` 的存储键（MinIO 对象 key 或本地相对路径）。
+    这样无论对象存储是否可用，页面都通过同一同源路由取图，避免跨域 / 破图。
+    """
+    obj_key = f"{folder}/{uuid.uuid4().hex}{ext}"
+    try:
+        from app.storage import get_storage_backend
+        backend = get_storage_backend()
+        backend.put(
+            data,
+            obj_key,
+            mime_type=mimetypes.guess_type(obj_key)[0] or "image/png",
+        )
+        return obj_key
+    except Exception as exc:
+        logger.warning("MinIO 上传失败，回退本地磁盘: %s", exc)
+        try:
+            _ensure_dirs()
+            local_name = f"results/{uuid.uuid4().hex}{ext}"
+            path = GALLERY_UPLOAD_ROOT / local_name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            return local_name
+        except Exception:
+            return None
+
+
+def _persist_overlay_result(over_name: str) -> str:
+    """规格参数图叠加产物：上传到对象存储（MinIO），返回存储键；失败则保留本地文件。"""
+    local = resolve_file(over_name)
+    if not local:
+        return over_name
+    try:
+        data = local.read_bytes()
+        key = _save_to_storage(data, ".png")
+        if key and key != over_name:
+            try:
+                local.unlink()
+            except Exception:
+                pass
+        return key or over_name
+    except Exception:
+        return over_name
+
+
+def _save_generated_image(url: str) -> str | None:
+    """把 AI 提供商返回的临时图片下载后落到对象存储（MinIO 优先，回退本地）。
+
+    返回存储键（如 ``gallery/results/xxx.png`` 或本地 ``results/xxx.png``），
+    失败返回 ``None``。预览统一走同源 ``/api/gallery/files/{key}``，避免跨域。
     """
     try:
         data, content_type = download_bytes_with_fallback(url, timeout=60)
@@ -677,23 +794,8 @@ def _save_generated_image(url: str) -> str | None:
     except Exception:
         return None
 
-    ext = ".png"
-    ct = (content_type or '').lower()
-    low = url.lower()
-    if ct.endswith('jpeg') or ct.endswith('jpg') or '.jpg' in low or '.jpeg' in low:
-        ext = ".jpg"
-    elif ct.endswith('webp') or '.webp' in low:
-        ext = ".webp"
-    elif ct.endswith('png') or '.png' in low:
-        ext = ".png"
-    fname = f"results/{uuid.uuid4().hex}{ext}"
-    _ensure_dirs()
-    path = GALLERY_UPLOAD_ROOT / fname
-    try:
-        path.write_bytes(data)
-    except Exception:
-        return None
-    return fname
+    ext = _ext_from_content(content_type, url)
+    return _save_to_storage(data, ext)
 
 
 # ── 比例 / 尺寸推断 ──
@@ -1222,6 +1324,16 @@ def regenerate_record(db: Session, user: models.User, record_id: int, *, prompt:
     if not proj:
         raise ValueError("项目不存在")
 
+    # 关键：在主线程（请求会话仍打开）内先把 user.id 取出为普通整数。
+    # 后台线程 _do 绝不能访问已 detach 的 ORM 对象（请求返回后会话即关闭，
+    # 再读 user.id 会触发懒加载 → DetachedInstanceError → 记录被误置 failed）。
+    uid = user.id
+
+    # 后台线程还会用到记录自身的字段（title / type_id），同样在主线程取好，
+    # 禁止在 _do 里读已 detach 的 rec（否则触发懒加载 → session 并发/脱离错误）。
+    rec_title = rec.title
+    rec_type_id = rec.type_id
+
     # 从记录快照还原运行时元数据（与 run_gallery_task 同源，避免重新解析 ORM）
     snap = rec.plan_item_snapshot or {}
     ios = snap.get("output_settings") or {}
@@ -1259,9 +1371,9 @@ def regenerate_record(db: Session, user: models.User, record_id: int, *, prompt:
             prev_url = r.result_url
             prev_file = r.result_filename
             real = _real_generate(
-                user.id, final_prompt, ref_files,
+                uid, final_prompt, ref_files,
                 provider_id, model_name, size=size,
-                hint=f"{category} {rec.title or ''}",
+                hint=f"{category} {rec_title or ''}",
             )
             r = s.get(models.GalleryRecord, record_id)
             if not r:
@@ -1273,7 +1385,7 @@ def regenerate_record(db: Session, user: models.User, record_id: int, *, prompt:
                 r.provider_name = real["provider_name"]
                 r.model_name = real["model_name"]
                 # 规格参数图：生成后叠加尺码表/标注（纯视觉图 + 后端文字叠加，消除乱码）
-                if rec.type_id == "spec" and real.get("filename"):
+                if rec_type_id == "spec" and real.get("filename"):
                     from app.spec_overlay import overlay_spec
                     local = resolve_file(real["filename"])
                     if local:
@@ -1281,12 +1393,13 @@ def regenerate_record(db: Session, user: models.User, record_id: int, *, prompt:
                             str(local),
                             spec_text=spec_text,
                             note="",
-                            title=rec.title or "",
+                            title=rec_title or "",
                             category=category,
                         )
                         if over_name:
-                            r.result_filename = over_name
-                            r.result_url = f"/api/gallery/files/{over_name}"
+                            key = _persist_overlay_result(over_name)
+                            r.result_filename = key
+                            r.result_url = f"/api/gallery/files/{key}"
                 r.status = "completed"
                 r.error = None
                 s.commit()
@@ -1389,85 +1502,145 @@ def run_gallery_task(task_id: int) -> None:
                 "is_custom": is_custom,
             })
 
-        # 阶段1：按策略批量生成所有提示词（默认方案1：单次批量调用）
-        prompts_by_item = _build_prompts_for_plan(proj, items_meta, model_name=global_model)
+        # 阶段1：提示词生成（仅全新任务）。
+        # resume / 孤儿恢复场景下任务已有 record，record 自带 prompt_en，
+        # 直接复用即可，【绝不】再调 _build_prompts_for_plan 走 chat 接口——
+        # 否则上游 chat 接口不可用时，历史任务也会卡死在 120s 超时上，
+        # 表现为「很多图片一直生成中」。
+        existing = (
+            db.query(models.GalleryRecord)
+            .filter(models.GalleryRecord.task_id == task.id)
+            .order_by(models.GalleryRecord.id)
+            .all()
+        )
+        prompts_by_item: dict = {}
+        if not existing:
+            prompts_by_item = _build_prompts_for_plan(proj, items_meta, model_name=global_model)
 
-        # 阶段1.5：预建全部 record（pending），前端轮询即可看到每张图的状态与提示词
+        # 阶段1.5：预建 / 复用 record。
+        # - 若该任务已有 record（孤儿恢复 / resume 场景）：复用已有 record，
+        #   只重跑未完成（pending/processing）的项，已完成/失败保留，避免重复出图
+        #   与僵尸 pending 记录；processing 重置为 pending（其出图已随进程重启丢失）。
+        # - 否则（全新任务）：按策划项预建全部 record 为 pending。
         plan: list[dict] = []
-        for m in items_meta:
-            item = m["item"]
-            title = m["title"]
-            pd = prompts_by_item.get(item.id)
-            if not pd:
-                # 极端兜底：任意项没有提示词时回退单条
-                pd = _build_prompt(
-                    proj, item, model_name=m["item_model"],
-                    effective_product_image=m["effective_product_image"], ratio=m["ratio"],
-                )
-            entries_spec = [{
-                "prompt_cn": pd["prompt"],
-                "prompt_en": pd["prompt_en"],
-                "prompt_source": pd.get("prompt_source", "template"),
-                "prompt_input": pd.get("prompt_input", ""),
-                "prompt_raw": pd.get("prompt_raw", ""),
-            }] * m["count"]
-
-            for idx, spec in enumerate(entries_spec, start=1):
-                rec_title = f"{title} #{idx}"
-                rec = models.GalleryRecord(
-                    project_id=proj.id,
-                    plan_item_id=item.id,
-                    user_id=user.id,
-                    type_id=item.type_id,
-                    title=rec_title,
-                    status="pending",
-                    prompt=spec["prompt_cn"],
-                    prompt_en=spec["prompt_en"],
-                    prompt_source=spec["prompt_source"],
-                    prompt_input=spec.get("prompt_input", ""),
-                    prompt_raw=spec.get("prompt_raw", ""),
-                    prompt_short=spec.get("prompt_short", ""),
-                    prompt_en_short=spec.get("prompt_en_short", ""),
-                    provider_id=m["item_provider_id"],
-                    provider_name=None,
-                    model_name=m["item_model"],
-                    task_id=task.id,
-                    plan_item_snapshot={
-                        "type_id": item.type_id,
-                        "personal_settings": item.personal_settings or {},
-                        "common_settings": item.common_settings or {},
-                        "output_settings": item.output_settings or {},
-                        "note": item.note or "",
-                        "reference_images": item.reference_images or [],
-                        "product_image": item.product_image or "",
-                    },
-                )
-                db.add(rec)
-                db.commit()
-                db.refresh(rec)
+        if existing:
+            logger.info("run_gallery_task resume：复用已有 record（task=%s，共 %d 张）", task.id, len(existing))
+            for rec in existing:
+                if rec.status in ("completed", "failed"):
+                    continue  # 已完成/已失败：保留，不参与重跑
+                rec.status = "pending"  # 未完成（pending/processing）：重置后重跑
+                snap = rec.plan_item_snapshot or {}
+                ps = snap.get("personal_settings") or {}
+                os_ = snap.get("output_settings") or {}
+                ref_imgs = snap.get("reference_images") or []
+                prod_img = snap.get("product_image") or ""
+                ratio = os_.get("ratio") or "自适应尺寸"
+                rf: list[str] = []
+                if prod_img:
+                    rf.append(prod_img)
+                rf.extend(f for f in ref_imgs if f and f != prod_img)
+                if not rf and proj.images:
+                    rf.append(proj.images[0].filename)
+                size = _ratio_to_size(ratio, reference_filename=rf[0] if rf else None)
                 plan.append({
                     "rec": rec,
-                    "prompt_cn": spec["prompt_cn"],
-                    "prompt_en": spec["prompt_en"],
-                    "prompt_short": spec.get("prompt_short", ""),
-                    "prompt_en_short": spec.get("prompt_en_short", ""),
-                    "ref_files": m["ref_files"],
-                    "size": m["size"],
-                    "item_provider_id": m["item_provider_id"],
-                    "item_model": m["item_model"],
-                    "title": title,
-                    "i": idx,
-                    # 不存放 ORM 对象，改为提取纯标量，从根上避免 db.close() 后
-                    # 访问 item.* 触发 DetachedInstanceError（ORM 对象跨会话边界）
-                    "item_id": item.id,
-                    "item_type_id": item.type_id,
-                    "item_personal_settings": item.personal_settings or {},
-                    "item_common_settings": item.common_settings or {},
-                    "item_output_settings": item.output_settings or {},
-                    "item_note": item.note or "",
-                    "item_reference_images": item.reference_images or [],
-                    "item_product_image": item.product_image or "",
+                    "prompt_cn": rec.prompt or "",
+                    "prompt_en": rec.prompt_en or rec.prompt or "",
+                    "prompt_short": rec.prompt_short or "",
+                    "prompt_en_short": rec.prompt_en_short or "",
+                    "ref_files": rf,
+                    "item_provider_id": os_.get("provider_id") or global_provider_id,
+                    "item_model": os_.get("model_name") or global_model,
+                    "size": size,
+                    "type_id": snap.get("type_id") or rec.type_id or "",
+                    "item_type_id": snap.get("type_id") or rec.type_id or "",
+                    "item_id": rec.plan_item_id,
+                    "i": 1,
+                    "title": rec.title or "",
+                    "spec_text": ps.get("规格参数原文", "") or "",
+                    "category": ps.get("产品品类", "") or "",
+                    "item_personal_settings": ps,
+                    "item_common_settings": snap.get("common_settings") or {},
+                    "item_output_settings": os_,
+                    "item_note": snap.get("note") or "",
+                    "item_reference_images": ref_imgs,
+                    "item_product_image": prod_img,
                 })
+        else:
+            for m in items_meta:
+                item = m["item"]
+                title = m["title"]
+                pd = prompts_by_item.get(item.id)
+                if not pd:
+                    # 极端兜底：任意项没有提示词时回退单条
+                    pd = _build_prompt(
+                        proj, item, model_name=m["item_model"],
+                        effective_product_image=m["effective_product_image"], ratio=m["ratio"],
+                    )
+                entries_spec = [{
+                    "prompt_cn": pd["prompt"],
+                    "prompt_en": pd["prompt_en"],
+                    "prompt_source": pd.get("prompt_source", "template"),
+                    "prompt_input": pd.get("prompt_input", ""),
+                    "prompt_raw": pd.get("prompt_raw", ""),
+                }] * m["count"]
+
+                for idx, spec in enumerate(entries_spec, start=1):
+                    rec_title = f"{title} #{idx}"
+                    rec = models.GalleryRecord(
+                        project_id=proj.id,
+                        plan_item_id=item.id,
+                        user_id=user.id,
+                        type_id=item.type_id,
+                        title=rec_title,
+                        status="pending",
+                        prompt=spec["prompt_cn"],
+                        prompt_en=spec["prompt_en"],
+                        prompt_source=spec["prompt_source"],
+                        prompt_input=spec.get("prompt_input", ""),
+                        prompt_raw=spec.get("prompt_raw", ""),
+                        prompt_short=spec.get("prompt_short", ""),
+                        prompt_en_short=spec.get("prompt_en_short", ""),
+                        provider_id=m["item_provider_id"],
+                        provider_name=None,
+                        model_name=m["item_model"],
+                        task_id=task.id,
+                        plan_item_snapshot={
+                            "type_id": item.type_id,
+                            "personal_settings": item.personal_settings or {},
+                            "common_settings": item.common_settings or {},
+                            "output_settings": item.output_settings or {},
+                            "note": item.note or "",
+                            "reference_images": item.reference_images or [],
+                            "product_image": item.product_image or "",
+                        },
+                    )
+                    db.add(rec)
+                    db.commit()
+                    db.refresh(rec)
+                    plan.append({
+                        "rec": rec,
+                        "prompt_cn": spec["prompt_cn"],
+                        "prompt_en": spec["prompt_en"],
+                        "prompt_short": spec.get("prompt_short", ""),
+                        "prompt_en_short": spec.get("prompt_en_short", ""),
+                        "ref_files": m["ref_files"],
+                        "size": m["size"],
+                        "item_provider_id": m["item_provider_id"],
+                        "item_model": m["item_model"],
+                        "title": title,
+                        "i": idx,
+                        # 不存放 ORM 对象，改为提取纯标量，从根上避免 db.close() 后
+                        # 访问 item.* 触发 DetachedInstanceError（ORM 对象跨会话边界）
+                        "item_id": item.id,
+                        "item_type_id": item.type_id,
+                        "item_personal_settings": item.personal_settings or {},
+                        "item_common_settings": item.common_settings or {},
+                        "item_output_settings": item.output_settings or {},
+                        "item_note": item.note or "",
+                        "item_reference_images": item.reference_images or [],
+                        "item_product_image": item.product_image or "",
+                    })
 
         # 阶段2：并发逐张出图（processing → completed / failed），前端实时看到「生成中」
         # 每张图独立调用图片模型，用线程池并发执行，缩短墙钟时间（不再逐张串行等待）。
@@ -1550,8 +1723,9 @@ def run_gallery_task(task_id: int) -> None:
                                 category=job["category"],
                             )
                             if over_name:
-                                rec.result_filename = over_name
-                                rec.result_url = f"/api/gallery/files/{over_name}"
+                                key = _persist_overlay_result(over_name)
+                                rec.result_filename = key
+                                rec.result_url = f"/api/gallery/files/{key}"
                     rec.status = "completed"
                     s.commit()
                     return job["rec_id"], "completed", None
@@ -1593,17 +1767,23 @@ def run_gallery_task(task_id: int) -> None:
                     failed += 1
         # 出图完成：用全新短生命周期会话回写任务状态
         # （连接不跨长 I/O 持有，从根源避免 "Can't reconnect" 类错误）
+        # 注意：以该任务【全部 record 的实际状态】重新统计 done/failed/status，
+        # 而非仅统计本次 plan。这样 resume（复用已有 record）场景下，已完成的图
+        # 不会被「本次 plan 仅含未完成项」清零，status 判定也始终准确。
         with SessionLocal() as udb:
             utask = udb.get(models.GalleryTask, _task_id)
             if utask:
+                recs = udb.query(models.GalleryRecord).filter_by(task_id=_task_id).all()
+                done = sum(1 for r in recs if r.status == "completed")
+                failed = sum(1 for r in recs if r.status == "failed")
                 utask.done = done
                 utask.failed = failed
-                if failed == 0:
+                if failed == 0 and done == len(recs):
                     utask.status = "completed"
-                elif done > 0:
-                    utask.status = "partial"
+                elif done > 0 or failed > 0:
+                    utask.status = "partial" if (done > 0 and failed > 0) else ("completed" if done > 0 else "failed")
                 else:
-                    utask.status = "failed"
+                    utask.status = "running"
                 udb.commit()
     finally:
         if db is not None:

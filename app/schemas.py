@@ -1,9 +1,24 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, model_validator
+
+
+def _ser_utc(v: datetime | None) -> str | None:
+    """Serialize a (possibly naive) UTC datetime as an explicit 'Z' ISO string.
+
+    The DB stores timestamps in UTC but without tz info, so naive strings like
+    '2026-07-16T05:37:00' would be misinterpreted as *local* time by JS (a GMT+8
+    browser would treat them as 8h in the past). Appending 'Z' makes them
+    unambiguous UTC and stops clients from mis-computing elapsed time / display.
+    """
+    if v is None:
+        return None
+    if v.tzinfo is None:
+        v = v.replace(tzinfo=timezone.utc)
+    return v.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class UserCreate(BaseModel):
@@ -616,6 +631,10 @@ class GalleryRecordRead(BaseModel):
     # 生成时刻的 plan_item 配置快照，用于「一键做同款」
     plan_item_snapshot: dict | None = None
 
+    @field_serializer("created_at")
+    def _ser_created_at(self, v: datetime | None) -> str | None:
+        return _ser_utc(v)
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -643,6 +662,10 @@ class GalleryTaskRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     records: list[GalleryRecordRead] = Field(default_factory=list)
+
+    @field_serializer("created_at", "updated_at")
+    def _ser_task_dt(self, v: datetime | None) -> str | None:
+        return _ser_utc(v)
 
     model_config = ConfigDict(from_attributes=True)
 

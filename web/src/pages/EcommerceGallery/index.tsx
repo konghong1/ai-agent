@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
 import { message, Modal, Spin, Input, Select, Image } from 'antd'
+import { ExclamationCircleFilled } from '@ant-design/icons'
 import {
   getTypes, getDraft, getTemplates,
   getImageModels, getTasks, updateTask, updateRecord, regenerateRecord, getShowcases, publishShowcase,
   uploadImages, deleteImage, updateProject,
   createPlanItem, updatePlanItem, deletePlanItem,
-  generate, createTemplate, deleteTemplate, applyTemplate, updateTemplate,
+  generate, createTemplate, deleteTemplate, applyTemplate, updateTemplate, deleteTask,
   aiWriteSellingPoints,
 } from '@/services/gallery'
 import { getToken } from '@/services/auth'
@@ -252,9 +253,21 @@ function caseStripImages(sc: GalleryShowcase): string[] {
   return arr.slice(0, 4)
 }
 
+// 后端时间戳为 UTC，但序列化时不含时区后缀（如 2026-07-16T05:37:00）。
+// 若直接 new Date()，浏览器会当成“本地时间”解析 → GMT+8 下被算成 8 小时前，
+// 导致刚创建的任务被误判“卡死”、且任务时间显示错乱。统一按 UTC 解析（无后缀则补 Z）。
+function parseUtc(iso: string | undefined | null): number | null {
+  if (!iso) return null
+  const s = String(iso)
+  const hasTz = /[Zz]$|[+\-]\d{2}:?\d{2}$/.test(s)
+  const t = new Date(hasTz ? s : s + 'Z').getTime()
+  return isNaN(t) ? null : t
+}
+
 function formatTaskTime(iso: string | undefined): string {
-  if (!iso) return ''
-  const d = new Date(iso)
+  const t = parseUtc(iso)
+  if (t == null) return ''
+  const d = new Date(t)
   const pad = (n: number) => `${n}`.padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
@@ -856,7 +869,14 @@ export default function EcommerceGallery() {
     setRedo((prev) => ({ ...prev, [rec.id]: { ...st, loading: true } }))
     setRedoModalRecord(null)
     try {
-      await regenerateRecord(rec.id, st.prompt.trim() || undefined)
+      const updated = await regenerateRecord(rec.id, st.prompt.trim() || undefined)
+      // 提交成功后立即在本地把该记录标为 processing，让单元格马上显示「生成中」进度，
+      // 不必等首次轮询（2.5s）才刷新，避免提交瞬间仍显示旧图/旧失败态。
+      if (updated?.id) {
+        setTasks((prev) => prev.map((t) => t.id === taskId
+          ? { ...t, records: (t.records || []).map((r) => r.id === updated.id ? { ...r, status: 'processing', result_url: null, error: null } : r) }
+          : t))
+      }
       message.success('已提交重作，正在重新生成…')
       pollRecord(rec.id, taskId)
     } catch (e) {
@@ -884,6 +904,60 @@ export default function EcommerceGallery() {
       setTemplates(await getTemplates())
       message.success('模板已删除')
     } catch (e) { /* 已提示 */ }
+  }
+
+  // 判断任务是否“卡死”：running 且最近 30 分钟无任何进度更新（通常是 api 重启导致内存队列丢失的孤儿）。
+  // 必须以 updated_at（最后进度时间）为基准并按 UTC 解析；用 created_at 会把“跑了 31 分钟但仍在正常出图”的活任务误判卡死，
+  // 且朴素 UTC 字符串在 GMT+8 下会被当成 8 小时前 → 刚创建的任务立刻误报卡死。
+  const isStuck = (t: GalleryTask) => {
+    if (t.status !== 'running') return false
+    const last = parseUtc(t.updated_at) ?? parseUtc(t.created_at)
+    if (last == null) return false
+    return Date.now() - last > 30 * 60 * 1000
+  }
+
+  // 删除一次「立即生成」任务：删掉全部成图（存储）+ 任务 + 配置，释放内存与存储
+  const handleDeleteTask = (task: GalleryTask) => {
+    // 防御性校验：活跃进行中任务不允许删除（按钮已禁用，此处双保险，覆盖直接调接口场景）；
+    // 卡死（僵尸）running 任务放行，允许清理释放资源。
+    if (task.status === 'pending') {
+      message.warning('任务正在排队中，暂不可删除')
+      return
+    }
+    if (task.status === 'running' && !isStuck(task)) {
+      message.warning('任务正在进行中，暂不可删除')
+      return
+    }
+    Modal.confirm({
+      title: '删除任务',
+      icon: <ExclamationCircleFilled />,
+      content: (
+        <div>
+          确定删除「<b>{displayTaskName(task)}</b>」？
+          <br />
+          该任务生成的<b>全部图片</b>与<b>任务配置</b>都会被永久删除，且不可恢复。
+          {task.status === 'running' && isStuck(task) && (
+            <div style={{ color: 'var(--g-error)', marginTop: 8 }}>
+              ⚠ 该任务疑似已卡死（长时间无进度），删除可释放占用的资源。
+            </div>
+          )}
+        </div>
+      ),
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await deleteTask(task.id)
+          // 立即从本地列表移除，释放内存
+          setTasks((prev) => prev.filter((t) => t.id !== task.id))
+          message.success('任务已删除，相关图片已清理')
+        } catch (e: any) {
+          const detail = e?.response?.data?.detail
+          message.error(detail || '删除失败，请稍后重试')
+        }
+      },
+    })
   }
 
   const totalCount = project
@@ -1180,8 +1254,11 @@ export default function EcommerceGallery() {
                     .sort((a, b) => a.order - b.order)
                     .map((item, idx) => {
                       const t = types.find((x) => x.id === item.type_id)
-                      const isFast = !!t?.fast
                       const isCustom = item.type_id === 'custom'
+                      // 标签语义：推荐类型一律「极速出图」，自定义子任务为「自定义」
+                      const isFast = !isCustom
+                      // 类型自带的极速标记，仅用于比例默认回退，避免误改原有展示
+                      const typeFast = !!t?.fast
                       const customName = item.personal_settings?.['任务名称'] || item.note || '自定义子任务'
                       return (
                         <PlanRow
@@ -1190,7 +1267,7 @@ export default function EcommerceGallery() {
                           name={isCustom ? customName : typeTitle(types, item.type_id)}
                           fast={isFast}
                           count={Number(item.output_settings?.count) || 1}
-                          ratio={item.output_settings?.ratio || (isFast ? '自动' : '3:4')}
+                          ratio={item.output_settings?.ratio || (typeFast ? '自动' : '3:4')}
                           resolution={item.output_settings?.resolution || '1K'}
                           model={project?.output_config?.model_label || undefined}
                           onCopy={() => handleCopyItem(item)}
@@ -1304,13 +1381,25 @@ export default function EcommerceGallery() {
                           </button>
                         )}
                       </div>
-                      <span className={`ts-badge ts-${task.status}`}>
-                        {task.status === 'pending' && '排队中'}
-                        {task.status === 'running' && '创作中'}
-                        {task.status === 'completed' && '已完成'}
-                        {task.status === 'partial' && `部分完成（失败 ${task.failed}）`}
-                        {task.status === 'failed' && '失败'}
-                      </span>
+                      <div className="task-head-right">
+                        <span className={`ts-badge ts-${task.status}`}>
+                          {task.status === 'pending' && '排队中'}
+                          {task.status === 'running' && '创作中'}
+                          {task.status === 'completed' && '已完成'}
+                          {task.status === 'partial' && `部分完成（失败 ${task.failed}）`}
+                          {task.status === 'failed' && '失败'}
+                        </span>
+                        <button
+                          className={`task-del-btn${running && !isStuck(task) ? ' is-blocked' : ''}`}
+                          title={running ? (isStuck(task) ? '任务可能已卡住，可删除释放资源' : '任务进行中，暂不可删除（点击查看说明）') : '删除任务（含全部成图与配置）'}
+                          onClick={() => handleDeleteTask(task)}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3,6 5,6 21,6" />
+                            <path d="M19,6v14a2,2 0 01-2,2H7a2,2 0 01-2-2V6M8,6V4a2,2 0 012-2h4a2,2 0 012,2V6" />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
                     <div className="task-progress">
                       <div className="tp-bar"><div className="tp-fill" style={{ width: `${pct}%` }} /></div>
@@ -1318,6 +1407,7 @@ export default function EcommerceGallery() {
                         <span className="tp-count">{task.done} / {task.total} 张</span>
                         {running && <span className="tp-dot">● 后台生成中</span>}
                         {task.status === 'failed' && task.error && <span className="tp-err">⚠ {task.error}</span>}
+                        {task.status === 'running' && isStuck(task) && <span className="tp-err">⚠ 任务疑似卡死（长时间无进度），可点右上角删除释放</span>}
                       </div>
                     </div>
                     <div className="task-grid">
@@ -1329,6 +1419,7 @@ export default function EcommerceGallery() {
                           <div
                             className={`task-cell ${isBusy ? 'is-busy' : ''} ${isFailed ? 'is-failed' : ''}`}
                             key={rec.id ?? i}
+                            data-record-id={rec.id ?? ''}
                           >
                             {/* 图片媒体区：保持 3:4，干净无浮层（提示词查看已移到底部操作区） */}
                             <div className="cell-media">
