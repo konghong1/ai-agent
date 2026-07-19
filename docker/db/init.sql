@@ -193,12 +193,62 @@ CREATE TABLE IF NOT EXISTS `skills` (
 CREATE TABLE IF NOT EXISTS `mcp_servers` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `user_id` INT NOT NULL,
-    `name` VARCHAR(200) NOT NULL,
-    `config` JSON NOT NULL,
+    `name` VARCHAR(120) NOT NULL,
+    `transport` VARCHAR(40) NOT NULL DEFAULT 'stdio',
+    `command` VARCHAR(260) NOT NULL DEFAULT '',
+    `args` JSON,
+    `env` JSON,
+    `url` VARCHAR(500) NOT NULL DEFAULT '',
     `enabled` BOOLEAN NOT NULL DEFAULT TRUE,
+    `auth_type` VARCHAR(20) NOT NULL DEFAULT 'none',
+    `api_key` TEXT,
+    `headers` TEXT,
+    `tool_allowlist` JSON,
+    `timeout_ms` INT,
+    `max_retries` INT NOT NULL DEFAULT 2,
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
     INDEX `idx_user_mcp` (`user_id`, `enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── Hooks（用户自定义生命周期钩子） ──────────────────────────────
+CREATE TABLE IF NOT EXISTS `hooks` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT NOT NULL,
+    `skill_id` INT NULL,
+    `event` VARCHAR(40) NOT NULL DEFAULT 'PreToolUse',
+    `matcher` VARCHAR(200) NOT NULL DEFAULT '',
+    `command` TEXT NOT NULL DEFAULT '',
+    `env` JSON,
+    `secret_env` TEXT,
+    `timeout_ms` INT NOT NULL DEFAULT 30000,
+    `on_error` VARCHAR(20) NOT NULL DEFAULT 'block',
+    `enabled` BOOLEAN NOT NULL DEFAULT TRUE,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+    FOREIGN KEY (`skill_id`) REFERENCES `skills`(`id`) ON DELETE CASCADE,
+    INDEX `idx_user_hooks` (`user_id`, `enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── Tool Call Audit（审计留痕） ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS `tool_call_audit` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `user_id` INT NOT NULL,
+    `session_id` VARCHAR(120) NOT NULL DEFAULT '',
+    `turn_id` VARCHAR(120) NOT NULL DEFAULT '',
+    `tool_type` VARCHAR(20) NOT NULL DEFAULT 'mcp',
+    `target` VARCHAR(200) NOT NULL DEFAULT '',
+    `tool_name` VARCHAR(200) NOT NULL DEFAULT '',
+    `input_encrypted` TEXT,
+    `output_encrypted` TEXT,
+    `duration_ms` INT NOT NULL DEFAULT 0,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'ok',
+    `hook_decision` VARCHAR(20) NOT NULL DEFAULT '',
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON DELETE CASCADE,
+    INDEX `idx_user_audit` (`user_id`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── System Settings ────────────────────────────────────────────

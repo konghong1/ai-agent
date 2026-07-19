@@ -22,6 +22,23 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 
+def require_superuser(current_user: User = Depends(get_current_user)) -> User:
+    """Platform-level superuser guard. Use as a dependency on admin-only routes."""
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superuser access required.")
+    return current_user
+
+
+def require_team_admin(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> User:
+    """团队管理员守卫（系统超管可通过；团队管理员 is_team_admin=1 或持有 team_admin_scopes）。"""
+    from app.permissions import is_team_admin
+    if current_user.is_superuser:
+        return current_user
+    if not is_team_admin(current_user, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team admin access required.")
+    return current_user
+
+
 def get_current_user_sse(
     request: Request,
     token_query: str | None = Query(None, alias="token"),

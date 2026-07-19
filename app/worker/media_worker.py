@@ -56,7 +56,10 @@ POLL_INTERVAL = int(os.getenv("WORKER_POLL_INTERVAL", "5"))  # seconds
 
 # ── Sync Engine Setup ──────────────────────────────────────────
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+if "mysql" in DATABASE_URL.lower():
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, connect_args={"charset": "utf8mb4"})
+else:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 logger.info("Worker connected to database: %s", _parse_db_type(DATABASE_URL))
 
 shutdown_event = asyncio.Event()

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import JSON as SA_JSON
 
@@ -28,6 +28,8 @@ class User(TimestampMixin, Base):
     username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(40), default="user")
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
+    is_team_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     chunking_strategy: Mapped[str] = mapped_column(String(80), default="recursive_character")
@@ -38,6 +40,217 @@ class User(TimestampMixin, Base):
     prompt_templates: Mapped[list["PromptTemplate"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     knowledge_bases: Mapped[list["KnowledgeBase"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     providers: Mapped[list["Provider"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+# ============================================================
+# Team Space (ADR-027) — Team / Member / Invite / JoinRequest
+# ============================================================
+
+class Team(TimestampMixin, Base):
+    __tablename__ = "teams"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    settings: Mapped[dict] = mapped_column(SA_JSON, default=dict)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"), nullable=False)
+
+
+class TeamMember(TimestampMixin, Base):
+    __tablename__ = "team_members"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # role within team: owner | admin | member
+    role: Mapped[str] = mapped_column(String(40), default="member", server_default=text("'member'"), nullable=False)
+    # per-member permission overrides (list of perm strings); baseline derived from role
+    permissions: Mapped[list] = mapped_column(SA_JSON, default=list)
+    invited_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # status: active | removed
+    status: Mapped[str] = mapped_column(String(20), default="active", server_default=text("'active'"), nullable=False)
+
+    __table_args__ = (UniqueConstraint("team_id", "user_id", name="uq_team_user"),)
+
+
+class TeamInvite(TimestampMixin, Base):
+    __tablename__ = "team_invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    email: Mapped[str] = mapped_column(String(255), index=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    role: Mapped[str] = mapped_column(String(40), default="member", server_default=text("'member'"), nullable=False)
+    invited_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # status: pending | accepted | expired | revoked | declined
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default=text("'pending'"), nullable=False)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    comment: Mapped[str] = mapped_column(Text, default="")
+    # 邀请方附加留言（与响应备注 comment 区分）
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class TeamJoinRequest(TimestampMixin, Base):
+    __tablename__ = "team_join_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    message: Mapped[str] = mapped_column(Text, default="")
+    # status: pending | approved | rejected
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default=text("'pending'"), nullable=False)
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_comment: Mapped[str] = mapped_column(Text, default="")
+
+
+# ============================================================
+# Permission System (ADR: 两级委派 · 最细粒度)
+# ============================================================
+
+
+class TeamAdminScope(TimestampMixin, Base):
+    """系统超管授予团队管理员的「可授予范围」。
+
+    存在即代表该用户是团队管理员；其自身 user_permissions 会同步写入等效权限以便使用。
+    team_id 为 NULL 表示对该管理员所管理的所有团队生效（预留按团队细分）。
+    """
+
+    __tablename__ = "team_admin_scopes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_admin_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    permission_code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    granted_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+
+    __table_args__ = (
+        UniqueConstraint("team_admin_user_id", "team_id", "permission_code", name="uq_admin_scope"),
+    )
+
+
+class UserPermission(TimestampMixin, Base):
+    """用户实际持有的权限（单一真源，取代 TeamMember.permissions JSON）。
+
+    team_id 为 NULL = 个人空间权限；非 NULL = 该团队内权限。
+    """
+
+    __tablename__ = "user_permissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    permission_code: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    granted_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "team_id", "permission_code", name="uq_user_perm"),
+    )
+
+
+class ApprovalLog(TimestampMixin, Base):
+    """审批审计轨迹：自申请审批 / 邀请响应 的每一次操作都留痕。"""
+
+    __tablename__ = "approval_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    target_type: Mapped[str] = mapped_column(String(20), nullable=False)  # join_request | invite
+    target_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)  # approve|reject|accept|decline
+    actor_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    comment: Mapped[str] = mapped_column(Text, default="")
+
+
+# ============================================================
+# RBAC v2 — Resource / Role / RolePermission / UserRole
+# 动态菜单 + 显式角色。角色一律 global（team_id 预留不使用）。
+# ============================================================
+
+class Resource(TimestampMixin, Base):
+    """资源表：菜单项与权限码的统一注册（驱动动态菜单 + 权限分配）。
+
+    type='menu' 的节点通过 parent_code 组装成菜单树；
+    type='permission' 的节点即功能权限码——权限码统一真源（ADR-031），由 CATALOG 常量种子化。
+    """
+
+    __tablename__ = "resources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(120), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    type: Mapped[str] = mapped_column(
+        String(16), default="menu", server_default=text("'menu'"), nullable=False
+    )  # 'menu' | 'permission'
+    category: Mapped[str] = mapped_column(
+        String(40), default="general", server_default=text("'general'"), nullable=False, index=True
+    )
+    parent_code: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    path: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    component: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    icon: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+    permission_code: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"), nullable=False)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"), nullable=False)
+
+
+class Role(TimestampMixin, Base):
+    """角色（全局，不按团队细分）。base 角色 is_default=True 自动授予新用户。"""
+
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(60), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    description: Mapped[str] = mapped_column(String(255), default="", nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"), nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"), nullable=False)
+
+
+class RolePermission(TimestampMixin, Base):
+    """角色-权限关联。"""
+
+    __tablename__ = "role_permissions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), index=True, nullable=False)
+    permission_code: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    granted_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("role_id", "permission_code", name="uq_role_perm"),
+    )
+
+
+class UserRole(TimestampMixin, Base):
+    """用户-角色关联（global: team_id 恒 NULL；预留团队级，暂不使用）。"""
+
+    __tablename__ = "user_roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), index=True, nullable=False)
+    team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    granted_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "role_id", "team_id", name="uq_user_role"),
+    )
 
 
 # ============================================================
@@ -115,6 +328,13 @@ class McpServer(TimestampMixin, Base):
     env: Mapped[dict] = mapped_column(SA_JSON, default=dict)
     url: Mapped[str] = mapped_column(String(500), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # ── MCP/Skill/Hook 扩展字段（全部可空，后向兼容旧数据）──
+    auth_type: Mapped[str] = mapped_column(String(20), default="none")       # none | bearer | api_key
+    api_key: Mapped[str] = mapped_column(Text, default="")                  # 加密存储的令牌（空=无）
+    headers: Mapped[str] = mapped_column(Text, default="")                  # 加密存储的 JSON 头（空=无）
+    tool_allowlist: Mapped[list] = mapped_column(SA_JSON, default=list)     # 允许暴露的工具名；空=全部
+    timeout_ms: Mapped[int] = mapped_column(Integer, default=30000)
+    max_retries: Mapped[int] = mapped_column(Integer, default=2)
 
     __table_args__ = (UniqueConstraint("user_id", "name", name="uq_mcp_user_name"),)
 
@@ -130,8 +350,57 @@ class Skill(TimestampMixin, Base):
     source_type: Mapped[str] = mapped_column(String(40), default="local")
     path: Mapped[str] = mapped_column(String(500), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # ── Skill 运行时扩展（全部可空/带默认，后向兼容旧数据）──
+    content: Mapped[str] = mapped_column(Text, default="")          # 技能完整正文（Markdown/指令）
+    trigger_words: Mapped[list] = mapped_column(SA_JSON, default=list)  # 触发词
+    declared_hooks: Mapped[dict] = mapped_column(SA_JSON, default=dict)  # 声明式 Hook（扩展能力）
+    version: Mapped[int] = mapped_column(Integer, default=1)
 
     __table_args__ = (UniqueConstraint("user_id", "name", name="uq_skill_user_name"),)
+
+
+# ============================================================
+# Hook（用户自定义生命周期钩子；声明式扩展 Skill 的能力）
+# ============================================================
+
+class Hook(TimestampMixin, Base):
+    __tablename__ = "hooks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    skill_id: Mapped[int | None] = mapped_column(
+        ForeignKey("skills.id", ondelete="CASCADE"), nullable=True
+    )
+    event: Mapped[str] = mapped_column(String(40), default="PreToolUse")     # PreToolUse/PostToolUse/...
+    matcher: Mapped[str] = mapped_column(String(200), default="")            # 工具名 glob/正则
+    command: Mapped[str] = mapped_column(Text, default="")                   # 钩子执行命令
+    env: Mapped[dict] = mapped_column(SA_JSON, default=dict)                 # 非敏感环境变量
+    secret_env: Mapped[str] = mapped_column(Text, default="")                # 加密存储的敏感环境变量
+    timeout_ms: Mapped[int] = mapped_column(Integer, default=30000)
+    on_error: Mapped[str] = mapped_column(String(20), default="block")       # block | continue
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+# ============================================================
+# ToolCallAudit（每工具/Hook 执行留痕，租户隔离，安全审计）
+# ============================================================
+
+class ToolCallAudit(TimestampMixin, Base):
+    __tablename__ = "tool_call_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[str] = mapped_column(String(120), default="")
+    turn_id: Mapped[str] = mapped_column(String(120), default="")
+    tool_type: Mapped[str] = mapped_column(String(20), default="mcp")        # mcp | skill | builtin | hook
+    target: Mapped[str] = mapped_column(String(200), default="")             # server/skill/hook 名称
+    tool_name: Mapped[str] = mapped_column(String(200), default="")
+    input_encrypted: Mapped[str] = mapped_column(Text, default="")           # 加密输入
+    output_encrypted: Mapped[str] = mapped_column(Text, default="")          # 加密输出
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="ok")            # ok | error | blocked
+    hook_decision: Mapped[str] = mapped_column(String(20), default="")       # approve | block | modify
+    error: Mapped[str] = mapped_column(Text, default="")                     # 执行错误信息（留痕）
 
 
 # ============================================================
@@ -592,5 +861,67 @@ class GalleryConfig(TimestampMixin, Base):
     config_key: Mapped[str] = mapped_column(String(60), unique=True, index=True)
     config_value: Mapped[dict] = mapped_column(SA_JSON, default=dict)
     description: Mapped[str] = mapped_column(String(200), default="")
+
+
+# ============================================================
+# Context & Memory Subsystem (ADR-021 / 022 / 023)
+# 说明：以下均为「新增独立表」，由 Base.metadata.create_all 在 SQLite/MySQL
+# 自动建表，无需 ALTER 旧表，满足 MySQL TEXT 禁默认值硬约束（所有 Text 列
+# 仅允许 NULL，应用层用 or "" 兜底）。功能默认关闭（见 settings）。
+# ============================================================
+
+class ThreadContextState(TimestampMixin, Base):
+    """Per-thread compaction state (会话内压缩的工作记忆视图)。
+
+    不修改 Message 原始行：压缩只改变「喂给 LLM 的视图」，清空 summary 即恢复
+    全量历史，完全可逆、可审计。
+    """
+    __tablename__ = "thread_context_states"
+
+    thread_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    summary: Mapped[str | None] = mapped_column(Text, default=None)
+    last_compacted_msg_id: Mapped[int | None] = mapped_column(Integer, default=None)
+
+
+class UserMemory(TimestampMixin, Base):
+    """跨会话长期记忆（用户偏好/事实/纠正/身份），L0–L3 分层。
+
+    - layer: 0 身份 / 1 偏好 / 2 事实纠正 / 3 情景
+    - mem_type: identity | preference | fact | correction | entity
+    - status: active | archived | rejected（软状态，绝不硬删）
+    - source: explicit(用户显式) | extracted(隐式提取) | promoted(会话摘要提升)
+    """
+    __tablename__ = "user_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    layer: Mapped[int] = mapped_column(Integer, default=1)
+    mem_type: Mapped[str] = mapped_column(String(32), default="preference")
+    key: Mapped[str] = mapped_column(String(128), default="")
+    value: Mapped[str | None] = mapped_column(Text, default=None)
+    importance: Mapped[float] = mapped_column(Float, default=0.5)
+    confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    source: Mapped[str] = mapped_column(String(16), default="explicit")
+    last_accessed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    __table_args__ = (
+        Index("ix_user_memories_user_key", "user_id", "key"),
+    )
+
+
+class PendingMemory(TimestampMixin, Base):
+    """隐式提取候选队列（需用户确认后才落入 user_memories）。
+
+    默认总开关关闭；提取出的候选进此表，前端记忆面板展示、可一键采纳/驳回。
+    防止自动写入污染他人上下文（多用户生产环境硬约束）。
+    """
+    __tablename__ = "pending_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    candidate: Mapped[str | None] = mapped_column(Text, default=None)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending|accepted|rejected
 
 

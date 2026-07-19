@@ -96,14 +96,31 @@ export const settingsApi = {
 
 export const mcpApi = {
   list: () => fetch('/api/mcp-servers', { headers: authHeaders() }).then(r => r.json()),
+  get: (id: number) => fetch(`/api/mcp-servers/${id}`, { headers: authHeaders() }).then(r => r.json()),
   create: (data: any) => fetch('/api/mcp-servers', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   update: (id: number, data: any) => fetch(`/api/mcp-servers/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   remove: (id: number) => fetch(`/api/mcp-servers/${id}`, { method: 'DELETE', headers: authHeaders() }),
+  securityCheck: (id: number) => fetch(`/api/mcp-servers/${id}/security-check`, { method: 'POST', headers: authHeaders() }).then(r => r.json()),
+  enable: (id: number) => fetch(`/api/mcp-servers/${id}/enable`, { method: 'POST', headers: authHeaders() }).then(r => r.json()),
+  audit: (id: number) => fetch(`/api/mcp-servers/${id}/audit`, { headers: authHeaders() }).then(r => r.json()),
 }
 
 export const skillApi = {
   list: () => fetch('/api/skills', { headers: authHeaders() }).then(r => r.json()),
+  get: (id: number) => fetch(`/api/skills/${id}`, { headers: authHeaders() }).then(r => r.json()),
   create: (data: any) => fetch('/api/skills', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   update: (id: number, data: any) => fetch(`/api/skills/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
   remove: (id: number) => fetch(`/api/skills/${id}`, { method: 'DELETE', headers: authHeaders() }),
+  securityCheck: (id: number) => fetch(`/api/skills/${id}/security-check`, { method: 'POST', headers: authHeaders() }).then(r => r.json()),
+  enable: (id: number) => fetch(`/api/skills/${id}/enable`, { method: 'POST', headers: authHeaders() }).then(r => r.json()),
+}
+
+export const hookApi = {
+  list: () => fetch('/api/hooks', { headers: authHeaders() }).then(r => r.json()),
+  get: (id: number) => fetch(`/api/hooks/${id}`, { headers: authHeaders() }).then(r => r.json()),
+  create: (data: any) => fetch('/api/hooks', { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  update: (id: number, data: any) => fetch(`/api/hooks/${id}`, { method: 'PATCH', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(data) }).then(r => r.json()),
+  remove: (id: number) => fetch(`/api/hooks/${id}`, { method: 'DELETE', headers: authHeaders() }),
+  securityCheck: (id: number) => fetch(`/api/hooks/${id}/security-check`, { method: 'POST', headers: authHeaders() }).then(r => r.json()),
+  enable: (id: number) => fetch(`/api/hooks/${id}/enable`, { method: 'POST', headers: authHeaders() }).then(r => r.json()),
 }

@@ -26,7 +26,13 @@ if _database_url.startswith("sqlite"):
 elif _database_url.startswith("mysql"):
     # pool_recycle 回收空闲过久的连接，避免 Docker 部署下连接被服务端/
     # 防火墙断开后复用触发 "Can't reconnect until invalid transaction is rolled back"
-    engine = create_engine(_database_url, pool_pre_ping=True, pool_recycle=1800)
+    # 显式 charset=utf8mb4 防止历史 cp1252/latin1 连接导致中文 double-mojibake
+    engine = create_engine(
+        _database_url,
+        pool_pre_ping=True,
+        pool_recycle=1800,
+        connect_args={"charset": "utf8mb4"},
+    )
 elif _database_url.startswith("postgresql"):
     engine = create_engine(_database_url, pool_pre_ping=True, pool_recycle=1800)
 else:
@@ -57,6 +63,16 @@ def _migrate_sqlite_columns() -> None:
     from sqlalchemy import text, inspect
 
     insp = inspect(engine)
+    # users.is_superuser（超级管理员标识）
+    if insp.has_table("users"):
+        u_cols = {c["name"] for c in insp.get_columns("users")}
+        if "is_superuser" not in u_cols:
+            with engine.connect() as conn:
+                # BOOLEAN 非 TEXT，MySQL 可带默认值，SQLite 同样兼容，避开 1101 坑
+                conn.execute(text("ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT 0"))
+                conn.commit()
+                logger.info("Added is_superuser column to users")
+
     if not insp.has_table("knowledge_bases"):
         return
 
@@ -138,3 +154,61 @@ def _migrate_sqlite_columns() -> None:
                 conn.execute(text("ALTER TABLE gallery_records ADD COLUMN error TEXT"))
                 conn.commit()
                 logger.info("Added error column to gallery_records")
+
+    # ── gallery_tasks.name（套图任务命名；模型新增列，运行时迁移补齐）──
+    # 注意：运行时 init_db 路径此前未对齐该列（仅 CLI sync_model_columns 覆盖），
+    # 导致旧库创建新套图任务时触发 "no such column: gallery_tasks.name"。
+    # name 可空（模型侧 default="" 在插入时补默认值），故不加 NOT NULL。
+    if insp.has_table("gallery_tasks"):
+        gt_cols = {c["name"] for c in insp.get_columns("gallery_tasks")}
+        if "name" not in gt_cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE gallery_tasks ADD COLUMN name VARCHAR(200)"))
+                conn.commit()
+                logger.info("Added name column to gallery_tasks")
+
+    # ── MCP Servers 扩展列（MCP/Skill/Hook 扩展，Phase 0）──
+    # 注意：TEXT/JSON 在 MySQL 不允许带 DEFAULT，此处一律不加默认值（列允许 NULL，应用层兜底）。
+    if insp.has_table("mcp_servers"):
+        ms_cols = {c["name"] for c in insp.get_columns("mcp_servers")}
+        _mcp_alters = {
+            "auth_type": "VARCHAR(20) DEFAULT 'none'",
+            "api_key": "TEXT",
+            "headers": "TEXT",
+            "tool_allowlist": "JSON",
+            "timeout_ms": "INTEGER",
+            "max_retries": "INTEGER DEFAULT 2",
+        }
+        for _col, _ddl in _mcp_alters.items():
+            if _col not in ms_cols:
+                with engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE mcp_servers ADD COLUMN {_col} {_ddl}"))
+                    conn.commit()
+                    logger.info(f"Added {_col} column to mcp_servers")
+
+    # ── Skills 运行时扩展列（Skill 目录 + use_skill，Phase 4）──
+    # 注意：TEXT/JSON 在 MySQL 不允许带 DEFAULT，此处一律不加默认值（列允许 NULL，应用层兜底）。
+    if insp.has_table("skills"):
+        sk_cols = {c["name"] for c in insp.get_columns("skills")}
+        _skill_alters = {
+            "content": "TEXT",
+            "trigger_words": "JSON",
+            "declared_hooks": "JSON",
+            "version": "INTEGER DEFAULT 1",
+        }
+        for _col, _ddl in _skill_alters.items():
+            if _col not in sk_cols:
+                with engine.connect() as conn:
+                    conn.execute(text(f"ALTER TABLE skills ADD COLUMN {_col} {_ddl}"))
+                    conn.commit()
+                    logger.info(f"Added {_col} column to skills")
+
+    # ── ToolCallAudit 扩展（Hook 执行留痕/错误，Phase 4）──
+    # 注意：TEXT 在 MySQL 不允许带 DEFAULT，故不加默认值（列允许 NULL）。
+    if insp.has_table("tool_call_audit"):
+        ta_cols = {c["name"] for c in insp.get_columns("tool_call_audit")}
+        if "error" not in ta_cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE tool_call_audit ADD COLUMN error TEXT"))
+                conn.commit()
+                logger.info("Added error column to tool_call_audit")

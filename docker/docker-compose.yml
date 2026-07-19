@@ -166,6 +166,25 @@ services:
       # ── Init ──
       INIT_DB_ON_STARTUP: "true"
 
+      # ── Context & Memory Subsystem (ADR-021/022/023) ──
+      # 这些开关来自 docker/.env（compose 变量替换文件），经此显式注入 api 容器。
+      # 注意：compose environment 注入的变量优先级高于 app 内部 load_dotenv(根 .env)，
+      # 因此在 Docker 部署下以 docker/.env 为准。默认全关，开启前不影响现有行为。
+      ENABLE_CONTEXT_SERVICE: ${ENABLE_CONTEXT_SERVICE:-false}
+      ENABLE_RETRIEVAL_REFLEX: ${ENABLE_RETRIEVAL_REFLEX:-false}
+      ENABLE_MEMORY_RECALL: ${ENABLE_MEMORY_RECALL:-false}
+      ENABLE_IMPLICIT_EXTRACTION: ${ENABLE_IMPLICIT_EXTRACTION:-false}
+      ENABLE_MEMORY_ENRICHER: ${ENABLE_MEMORY_ENRICHER:-false}
+      ENABLE_GAP_ANALYSIS: ${ENABLE_GAP_ANALYSIS:-false}
+      ENABLE_RRF: ${ENABLE_RRF:-false}
+      ENABLE_WORKSPACE_MEMORY: ${ENABLE_WORKSPACE_MEMORY:-false}
+      ENABLE_USER_PROFILE_MEMORY: ${ENABLE_USER_PROFILE_MEMORY:-false}
+
+      # ── MCP / Skill / Hook 扩展（ADR: MCP-Skill-Hook）──
+      ENABLE_MCP_TOOLS: ${ENABLE_MCP_TOOLS:-false}
+      ENABLE_SKILL_TOOLS: ${ENABLE_SKILL_TOOLS:-false}
+      ENABLE_HOOKS: ${ENABLE_HOOKS:-false}
+
       # 禁止写入 .pyc 字节码缓存：源码通过 bind mount 覆盖镜像，若镜像自带
       # 的 .pyc mtime 比源码新，Python 会信任陈旧字节码导致运行时类缺失字段
       # （如 GalleryRecord.error）。禁用缓存后始终读取最新源码，避免此类坑。

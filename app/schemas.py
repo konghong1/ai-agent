@@ -37,6 +37,9 @@ class UserRead(BaseModel):
     email: EmailStr
     username: str
     role: str
+    is_superuser: bool = False
+    is_team_admin: bool = False
+    enabled: bool = True
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -44,6 +47,7 @@ class UserRead(BaseModel):
 class UserUpdate(BaseModel):
     role: str | None = Field(default=None, min_length=1, max_length=40)
     enabled: bool | None = None
+    is_superuser: bool | None = None
 
 
 class TokenResponse(BaseModel):
@@ -172,6 +176,13 @@ class McpServerCreate(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     url: str = ""
     enabled: bool = True
+    # ── 扩展字段（可空，向后兼容）──
+    auth_type: str = "none"
+    api_key: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+    tool_allowlist: list[str] = Field(default_factory=list)
+    timeout_ms: int | None = None
+    max_retries: int | None = None
 
 
 class McpServerUpdate(BaseModel):
@@ -182,6 +193,13 @@ class McpServerUpdate(BaseModel):
     env: dict[str, str] | None = None
     url: str | None = None
     enabled: bool | None = None
+    # ── 扩展字段 ──
+    auth_type: str | None = None
+    api_key: str | None = None
+    headers: dict[str, str] | None = None
+    tool_allowlist: list[str] | None = None
+    timeout_ms: int | None = None
+    max_retries: int | None = None
 
 
 class McpServerRead(BaseModel):
@@ -193,6 +211,13 @@ class McpServerRead(BaseModel):
     env: dict[str, str]
     url: str
     enabled: bool
+    # ── 扩展字段（api_key/headers 不回传明文，仅暴露是否设置）──
+    auth_type: str = "none"
+    tool_allowlist: list[str] = Field(default_factory=list)
+    timeout_ms: int | None = None
+    max_retries: int | None = None
+    has_api_key: bool = False
+    has_headers: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -204,6 +229,10 @@ class SkillCreate(BaseModel):
     source_type: str = "local"
     path: str = ""
     enabled: bool = True
+    # ── 运行时扩展 ──
+    content: str = ""
+    trigger_words: list[str] = Field(default_factory=list)
+    declared_hooks: dict = Field(default_factory=dict)
 
 
 class SkillUpdate(BaseModel):
@@ -213,6 +242,10 @@ class SkillUpdate(BaseModel):
     source_type: str | None = None
     path: str | None = None
     enabled: bool | None = None
+    # ── 运行时扩展 ──
+    content: str | None = None
+    trigger_words: list[str] | None = None
+    declared_hooks: dict | None = None
 
 
 class SkillRead(BaseModel):
@@ -223,6 +256,88 @@ class SkillRead(BaseModel):
     source_type: str
     path: str
     enabled: bool
+    trigger_words: list[str] = Field(default_factory=list)
+    version: int = 1
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SkillDetailRead(BaseModel):
+    id: int
+    name: str
+    title: str
+    description: str
+    source_type: str
+    path: str
+    enabled: bool
+    content: str = ""
+    trigger_words: list[str] = Field(default_factory=list)
+    declared_hooks: dict = Field(default_factory=dict)
+    version: int = 1
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# Hook Schemas（用户自定义生命周期钩子）
+# ============================================================
+
+class HookCreate(BaseModel):
+    skill_id: int | None = None
+    event: str = "PreToolUse"
+    matcher: str = ""
+    command: str = ""
+    env: dict[str, str] = Field(default_factory=dict)
+    secret_env: dict[str, str] = Field(default_factory=dict)
+    timeout_ms: int = 30000
+    on_error: str = "block"
+    enabled: bool = True
+
+
+class HookUpdate(BaseModel):
+    skill_id: int | None = None
+    event: str | None = None
+    matcher: str | None = None
+    command: str | None = None
+    env: dict[str, str] | None = None
+    secret_env: dict[str, str] | None = None
+    timeout_ms: int | None = None
+    on_error: str | None = None
+    enabled: bool | None = None
+
+
+class HookRead(BaseModel):
+    id: int
+    user_id: int
+    skill_id: int | None = None
+    event: str
+    matcher: str
+    command: str
+    env: dict[str, str]
+    has_secret_env: bool = False
+    timeout_ms: int
+    on_error: str
+    enabled: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# ============================================================
+# ToolCallAudit（审计只读）
+# ============================================================
+
+class ToolCallAuditRead(BaseModel):
+    id: int
+    user_id: int
+    session_id: str
+    turn_id: str
+    tool_type: str
+    target: str
+    tool_name: str
+    duration_ms: int
+    status: str
+    hook_decision: str
+    created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -351,6 +466,7 @@ class UserManagementRead(BaseModel):
     email: EmailStr
     username: str
     role: str
+    is_superuser: bool
     enabled: bool
     created_at: datetime
 

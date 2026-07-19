@@ -14,10 +14,16 @@ import KBDetail from '@/pages/KnowledgeBase/KBDetail'
 import UserManagement from '@/pages/UserManagement'
 import MCPManagement from '@/pages/MCPManagement'
 import SkillManagement from '@/pages/SkillManagement'
+import HookManagement from '@/pages/HookManagement'
 import SettingsPage from '@/pages/Settings'
 import ProviderManagement from '@/pages/ProviderManagement'
 import MediaLibrary from '@/pages/MediaLibrary'
 import EcommerceGallery from '@/pages/EcommerceGallery'
+import MemoryPanel from '@/pages/MemoryPanel'
+import TeamAdminPermissions from '@/pages/TeamAdminPermissions'
+import Teams from '@/pages/Teams'
+import ResourceManage from '@/pages/System/ResourceManage'
+import RoleManage from '@/pages/System/RoleManage'
 import './styles/variables.css'
 import './styles/global-theme.css'
 import './styles/gallery-design-system.css'
@@ -94,10 +100,16 @@ export default function App() {
             <Route path="users" element={<UserManagement />} />
             <Route path="mcp-servers" element={<MCPManagement />} />
             <Route path="skills" element={<SkillManagement />} />
+          <Route path="hooks" element={<HookManagement />} />
             <Route path="providers" element={<ProviderManagement />} />
             <Route path="media-library" element={<MediaLibrary />} />
             <Route path="ecommerce-gallery" element={<EcommerceGallery />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="memory" element={<MemoryPanel />} />
+            <Route path="teams" element={<Teams />} />
+            <Route path="admin/team-admins" element={<TeamAdminPermissions />} />
+            <Route path="admin/resources" element={<ResourceManage />} />
+            <Route path="admin/roles" element={<RoleManage />} />
           </Route>
         </Routes>
       </BrowserRouter>

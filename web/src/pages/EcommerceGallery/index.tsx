@@ -246,13 +246,6 @@ function PromptBadge({ prompt, prompt_en, promptSource, promptInput, promptRaw }
   )
 }
 
-// 把一条创作案例（original + image_urls）拼成 4 格 strip，不足用空串占位
-function caseStripImages(sc: GalleryShowcase): string[] {
-  const arr = [sc.original_url, ...(sc.image_urls || [])]
-  while (arr.length < 4) arr.push('')
-  return arr.slice(0, 4)
-}
-
 // 后端时间戳为 UTC，但序列化时不含时区后缀（如 2026-07-16T05:37:00）。
 // 若直接 new Date()，浏览器会当成“本地时间”解析 → GMT+8 下被算成 8 小时前，
 // 导致刚创建的任务被误判“卡死”、且任务时间显示错乱。统一按 UTC 解析（无后缀则补 Z）。
@@ -284,6 +277,8 @@ export default function EcommerceGallery() {
   const [modalOpen, setModalOpen] = useState(false)
   const [activeType, setActiveType] = useState<GalleryType | null>(null)
   const [activeItem, setActiveItem] = useState<GalleryPlanItem | undefined>(undefined)
+  // 编辑自定义子任务：被编辑的 plan_item（null=新增模式）
+  const [editingCustomItem, setEditingCustomItem] = useState<GalleryPlanItem | null>(null)
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false)
   const [pendingTemplate, setPendingTemplate] = useState<{
     type_id: string
@@ -508,29 +503,39 @@ export default function EcommerceGallery() {
     count: number
   }) => {
     if (!project) return
-    let referenceImages: string[] = []
-    if (payload.files.length > 0) {
-      const res = await uploadImages(project.id, payload.files)
-      const latestProject = res[0] || project
-      const images = latestProject.images || []
-      referenceImages = images.slice(-payload.files.length).map((img: any) => img.url)
+    try {
+      let referenceImages: string[] = []
+      if (payload.files.length > 0) {
+        const res = await uploadImages(project.id, payload.files)
+        const latestProject = res[0] || project
+        const images = latestProject.images || []
+        referenceImages = images.slice(-payload.files.length).map((img: any) => img.url)
+      }
+      await createPlanItem(project.id, {
+        type_id: 'custom',
+        note: payload.description,
+        personal_settings: { '任务名称': payload.name },
+        output_settings: {
+          provider_id: payload.provider_id,
+          model_name: payload.model_name,
+          model_label: payload.model_label,
+          model: payload.model_label,
+          resolution: payload.resolution,
+          ratio: payload.ratio,
+          count: payload.count,
+        },
+        reference_images: referenceImages,
+      })
+      const updatedProject = await refreshProject()
+      // 添加成功后，若项目中仍无产品原图，主动提示用户上传（否则「立即生成」会被 disabled）
+      if (updatedProject && updatedProject.images.length === 0) {
+        message.info('已添加自定义子任务，请上传产品原图后点击「立即生成」')
+      }
+    } catch (e) {
+      console.error('[gallery] createCustomTask failed:', e)
+      // request.ts 已统一弹错误 toast；继续抛出，让抽屉层关闭 submitting 状态
+      throw e
     }
-    await createPlanItem(project.id, {
-      type_id: 'custom',
-      note: payload.description,
-      personal_settings: { '任务名称': payload.name },
-      output_settings: {
-        provider_id: payload.provider_id,
-        model_name: payload.model_name,
-        model_label: payload.model_label,
-        model: payload.model_label,
-        resolution: payload.resolution,
-        ratio: payload.ratio,
-        count: payload.count,
-      },
-      reference_images: referenceImages,
-    })
-    await refreshProject()
   }
 
   // ── 属性设置弹窗 ──
@@ -540,6 +545,58 @@ export default function EcommerceGallery() {
     setActiveType(t)
     setActiveItem(it)
     setModalOpen(true)
+  }
+
+  // 编辑自定义子任务：打开策划台并预填该项的设置
+  const openEditCustom = (item: GalleryPlanItem) => {
+    setEditingCustomItem(item)
+    setDrawerOpen(true)
+  }
+
+  // 保存编辑后的自定义子任务：合并「保留的参考图 + 新上传图」，走 updatePlanItem
+  const updateCustomTask = async (payload: {
+    name: string
+    description: string
+    files: File[]
+    provider_id: number | null
+    model_name: string | null
+    model_label: string
+    resolution: string
+    ratio: string
+    count: number
+    reference_images: string[]
+  }) => {
+    if (!project || !editingCustomItem) return
+    try {
+      let referenceImages: string[] = [...payload.reference_images]
+      if (payload.files.length > 0) {
+        const res = await uploadImages(project.id, payload.files)
+        const latestProject = res[0] || project
+        const images = latestProject.images || []
+        const newRefs = images.slice(-payload.files.length).map((img: any) => img.url)
+        referenceImages = [...referenceImages, ...newRefs]
+      }
+      await updatePlanItem(project.id, editingCustomItem.id, {
+        type_id: 'custom',
+        note: payload.description,
+        personal_settings: { '任务名称': payload.name },
+        output_settings: {
+          provider_id: payload.provider_id,
+          model_name: payload.model_name,
+          model_label: payload.model_label,
+          model: payload.model_label,
+          resolution: payload.resolution,
+          ratio: payload.ratio,
+          count: payload.count,
+        },
+        reference_images: referenceImages,
+      })
+      await refreshProject()
+      setEditingCustomItem(null)
+    } catch (e) {
+      console.error('[gallery] updateCustomTask failed:', e)
+      throw e
+    }
   }
 
   const handleSaveSettings = async (payload: any) => {
@@ -697,6 +754,14 @@ export default function EcommerceGallery() {
       setDetailGroup((prev) =>
         prev ? prev.map((r) => (r.id === recordId ? { ...r, title: updated.title } : r)) : prev,
       )
+      // 同步刷新主列表（任务卡片里的 records）
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.records && t.records.some((r) => r.id === recordId)
+            ? { ...t, records: t.records.map((r) => (r.id === recordId ? { ...r, title: updated.title } : r)) }
+            : t,
+        ),
+      )
       message.success('图片名称已更新')
     } catch (e) { /* 已提示 */ } finally {
       setEditingRecordId(null)
@@ -793,39 +858,14 @@ export default function EcommerceGallery() {
     }
   }
 
-  // ── 一键做同款（任务结果详情）：把当前详情套图的生成配置回填到左侧 ──
-  const handleSameStyle = async () => {
-    if (!project || !detailGroup || detailGroup.length === 0) return
-    setLoading(true)
-    try {
-      const snapshots = detailGroup
-        .map((r) => (r.plan_item_snapshot ? { ...r.plan_item_snapshot } : null))
-        .filter(Boolean) as NonNullable<GalleryRecord['plan_item_snapshot']>[]
-
-      if (snapshots.length === 0) {
-        message.warning('该套图没有保存生成配置，无法做同款')
-        setDetailGroup(null)
-        return
-      }
-      // 全局输出取第一张图快照里的 output_settings（与旧逻辑一致）
-      const ok = await applySnapshotsToProject({ snapshots, globalOutput: snapshots[0]?.output_settings })
-      setDetailGroup(null)
-      if (ok) message.success('同款配置已带入左侧，可直接点击「立即生成」')
-      else message.error('带入同款配置失败，请重试')
-    } finally {
-      setLoading(false)
-    }
-  }
-
   // ── 创作案例「生成同款」：把案例携带的源任务参数回填到左侧 ──
-  const handleSameStyleFromShowcase = async (sc: GalleryShowcase | null) => {
-    if (!project || !sc) return
+  const handleSameStyleFromShowcase = async (sc: GalleryShowcase | null): Promise<boolean> => {
+    if (!project || !sc) return false
     const payload = sc.payload
     const snapshots = (payload?.plan_items || []) as NonNullable<GalleryRecord['plan_item_snapshot']>[]
     if (snapshots.length === 0) {
       message.warning('该案例没有保存生成配置，无法做同款')
-      setShowcaseDetail(null)
-      return
+      return false
     }
     setLoading(true)
     try {
@@ -833,9 +873,30 @@ export default function EcommerceGallery() {
       // 还原到左侧配置；不覆盖当前项目的全局 output_config / market_config / 核心卖点，
       // 避免把源项目的全部设置强行反显。
       const ok = await applySnapshotsToProject({ snapshots })
-      setShowcaseDetail(null)
       if (ok) message.success('同款配置已带入左侧，可直接点击「立即生成」')
       else message.error('带入同款配置失败，请重试')
+      return ok
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ── 创作结果「生成同款」：把任务下各记录的快照回填到左侧 ──
+  const handleSameStyleFromRecords = async (records: GalleryRecord[] | null): Promise<boolean> => {
+    if (!project || !records || records.length === 0) return false
+    const snapshots = records
+      .map((r) => r.plan_item_snapshot)
+      .filter(Boolean) as NonNullable<GalleryRecord['plan_item_snapshot']>[]
+    if (snapshots.length === 0) {
+      message.warning('该任务没有保存生成配置，无法做同款')
+      return false
+    }
+    setLoading(true)
+    try {
+      const ok = await applySnapshotsToProject({ snapshots })
+      if (ok) message.success('同款配置已带入左侧，可直接点击「立即生成」')
+      else message.error('带入同款配置失败，请重试')
+      return ok
     } finally {
       setLoading(false)
     }
@@ -1272,7 +1333,7 @@ export default function EcommerceGallery() {
                           model={project?.output_config?.model_label || undefined}
                           onCopy={() => handleCopyItem(item)}
                           onDelete={() => handleDeleteItem(item.id)}
-                          onSettings={isCustom ? undefined : () => openSettings(item.type_id)}
+                          onSettings={isCustom ? () => openEditCustom(item) : () => openSettings(item.type_id)}
                         />
                       )
                     })}
@@ -1305,12 +1366,34 @@ export default function EcommerceGallery() {
           </section>
 
           {/* 生成按钮 */}
-          <div className="gen-bar">
-          <button className="btn-generate" onClick={handleGenerate} disabled={submitting || !project || project.images.length === 0 || project.plan_items.length === 0}>
-            ✦ {submitting ? '提交中…' : '立即生成'}
-            <small>预计生成 {totalCount} 张</small>
-          </button>
-          </div>
+          {(() => {
+            const generateDisabled = submitting || !project || project.images.length === 0 || project.plan_items.length === 0
+            const generateDisabledReason = submitting
+              ? '生成任务提交中…'
+              : !project
+              ? '请先创建项目'
+              : project.images.length === 0
+              ? '请先上传至少一张产品原图'
+              : project.plan_items.length === 0
+              ? '请先在 AI 智能策划台选择要生成的类型'
+              : ''
+            return (
+              <div className="gen-bar">
+                <button
+                  className="btn-generate"
+                  onClick={handleGenerate}
+                  disabled={generateDisabled}
+                  title={generateDisabled ? generateDisabledReason : undefined}
+                >
+                  ✦ {submitting ? '提交中…' : '立即生成'}
+                  <small>预计生成 {totalCount} 张</small>
+                </button>
+                {generateDisabled && (
+                  <div className="btn-generate-hint">{generateDisabledReason}</div>
+                )}
+              </div>
+            )
+          })()}
         </aside>
 
         {/* ========== RIGHT: Content Area ========== */}
@@ -1446,7 +1529,34 @@ export default function EcommerceGallery() {
                               ) : (
                                 <img src={placeholderImg(rec.title || '作品')} alt={rec.title || ''} />
                               )}
-                              {rec.title && <div className="cell-caption" title={rec.title}>{rec.title}</div>}
+                              {editingRecordId === rec.id ? (
+                                <Input
+                                  className="cell-rename-input"
+                                  value={editingRecordName}
+                                  autoFocus
+                                  maxLength={200}
+                                  onChange={(e) => setEditingRecordName(e.target.value)}
+                                  onBlur={() => submitRenameRecord(rec.id)}
+                                  onPressEnter={() => submitRenameRecord(rec.id)}
+                                  onKeyDown={(e) => { if (e.key === 'Escape') { setEditingRecordId(null); setEditingRecordName('') } }}
+                                />
+                              ) : (
+                                rec.title && (
+                                  <div className="cell-caption" title={rec.title}>
+                                    <span className="cell-caption-text">{rec.title}</span>
+                                    <button
+                                      className="cell-caption-edit"
+                                      title="重命名图片"
+                                      onClick={(e) => { e.stopPropagation(); startRenameRecord(rec) }}
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
+                                        <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                )
+                              )}
                             </div>
                             {/* 单图底部操作区：提示词查看 + 重作 弹框编辑 */}
                             <div className="cell-footer">
@@ -1528,22 +1638,57 @@ export default function EcommerceGallery() {
                 ) : (
                   <div className="gallery-grid">
                     {filteredShowcases.map((sc) => {
-                      const strip = caseStripImages(sc)
+                      const mainImage = sc.image_urls?.[0] || sc.original_url
+                      const samples = (sc.image_urls || []).slice(1, 4)
                       return (
-                        <article className="case-card" key={sc.id}>
-                          <div className="case-strip">
-                            <div className="cell orig"><img src={strip[0] && isRealImage(strip[0]) ? strip[0] : placeholderImg(sc.name)} alt="" onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg(sc.name) }} /><span className="badge-orig">原图</span></div>
-                            {strip.slice(1, 3).map((u, i) => (
-                              <div className="cell" key={i}><img src={u && isRealImage(u) ? u : placeholderImg('')} alt="" onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg('') }} /></div>
-                            ))}
-                            <div className={`cell ${sc.total_count > 4 ? 'more' : ''}`} data-n={Math.max(0, sc.total_count - 4)}><img src={strip[3] && isRealImage(strip[3]) ? strip[3] : placeholderImg('')} alt="" onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg('') }} /></div>
+                        <article className="case-card" key={sc.id} onClick={() => setShowcaseDetail(sc)}>
+                          <div className="case-hero">
+                            <div className="case-hero-img">
+                              {isRealImage(mainImage) ? (
+                                <img src={mainImage} alt={sc.name} onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg(sc.name) }} />
+                              ) : (
+                                <img src={placeholderImg(sc.name)} alt={sc.name} />
+                              )}
+                            </div>
+                            {isRealImage(sc.original_url) && (
+                              <div className="case-orig-thumb">
+                                <img src={sc.original_url} alt="原图" onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg('原图') }} />
+                                <span className="orig-label">原图</span>
+                              </div>
+                            )}
+                            {samples.length > 0 && (
+                              <>
+                                <span className="case-count-badge">
+                                  <span className="cb-icon" aria-hidden="true">
+                                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                                      <circle cx="8.5" cy="8.5" r="1.5" />
+                                      <path d="m21 15-5-5L5 21" />
+                                    </svg>
+                                  </span>
+                                  生成 {sc.total_count || samples.length} 张套图
+                                </span>
+                                <div className="case-samples">
+                                  {samples.map((u, i) => (
+                                    <img
+                                      key={i}
+                                      src={u && isRealImage(u) ? u : placeholderImg('')}
+                                      alt=""
+                                      className={`sample-${i}`}
+                                      onError={(e) => { const t = e.currentTarget; t.onerror = null; t.src = placeholderImg('') }}
+                                    />
+                                  ))}
+                                  <span className="case-total">+{sc.total_count || samples.length}</span>
+                                </div>
+                              </>
+                            )}
                           </div>
                           <div className="case-body">
-                            <div className="case-meta"><span className="cat-dot" /><span className="cat">{sc.category}</span></div>
+                            <div className="case-meta"><span className="cat">{sc.category}</span></div>
                             <p className="case-name">{sc.name}</p>
                             <div className="case-actions">
-                              <button className="btn btn-secondary" onClick={() => setShowcaseDetail(sc)}>查看详情</button>
-                              <button className="btn btn-primary" onClick={() => handleSameStyleFromShowcase(sc)}>生成同款</button>
+                              <button className="btn case-view-btn" onClick={() => setShowcaseDetail(sc)}>查看详情</button>
+                              <button className="btn case-style-btn" onClick={() => setShowcaseDetail(sc)}>立即生成同款</button>
                             </div>
                           </div>
                         </article>
@@ -1560,7 +1705,7 @@ export default function EcommerceGallery() {
       {/* 抽屉 + 弹窗 */}
       <PlannerDrawer
         open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
+        onClose={() => { setDrawerOpen(false); setEditingCustomItem(null) }}
         types={types}
         options={options}
         templates={templates}
@@ -1572,6 +1717,8 @@ export default function EcommerceGallery() {
         onDeleteTemplate={handleDeleteTemplate}
         onRenameTemplate={handleRenameTemplate}
         onCreateCustomTask={createCustomTask}
+        editItem={editingCustomItem}
+        onUpdateCustomTask={updateCustomTask}
       />
       <TypeSettingsModal
         open={modalOpen}
@@ -1638,40 +1785,15 @@ export default function EcommerceGallery() {
                           <img src={placeholderImg(r.title || '作品')} alt={r.title} />
                         )}
                       </div>
-                      <div className="detail-title-row">
-                        {editingRecordId === r.id ? (
-                          <Input
-                            className="detail-rename-input input"
-                            value={editingRecordName}
-                            autoFocus
-                            maxLength={200}
-                            onChange={(e) => setEditingRecordName(e.target.value)}
-                            onBlur={() => submitRenameRecord(r.id)}
-                            onPressEnter={() => submitRenameRecord(r.id)}
-                            onKeyDown={(e) => { if (e.key === 'Escape') { setEditingRecordId(null); setEditingRecordName('') } }}
-                          />
-                        ) : (
-                          <span className="detail-title" onClick={() => startRenameRecord(r)} title="点击重命名">
-                            {r.title}
-                          </span>
-                        )}
-                        {editingRecordId !== r.id && (
-                          <button className="detail-rename-btn" title="重命名图片" onClick={() => startRenameRecord(r)}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
+                      <div className="detail-title">{r.title}</div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
             <div className="detail-actions">
-              <button className="btn btn-primary" onClick={handleSameStyle}>🎨 一键做同款</button>
               <button className="btn btn-secondary" onClick={() => { message.success('分享链接已复制'); navigator.clipboard?.writeText(window.location.href).catch(() => {}); }}>🔗 复制分享链接</button>
+              <button className="btn btn-primary" onClick={async () => { const ok = await handleSameStyleFromRecords(detailGroup); if (ok) setDetailGroup(null) }}>🎨 一键做同款</button>
             </div>
           </div>
         )}
@@ -1773,8 +1895,8 @@ export default function EcommerceGallery() {
               </div>
             </div>
             <div className="detail-actions">
-              <button className="btn btn-primary" onClick={() => handleSameStyleFromShowcase(showcaseDetail)}>🎨 生成同款</button>
               <button className="btn btn-secondary" onClick={() => setShowcaseDetail(null)}>关闭</button>
+              <button className="btn btn-primary" onClick={async () => { const ok = await handleSameStyleFromShowcase(showcaseDetail); if (ok) setShowcaseDetail(null) }}>🎨 一键做同款</button>
             </div>
           </div>
         )}

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
+import threading
 import time
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -76,8 +81,12 @@ def _resolve_llm_config(
     4. Global settings
     """
     settings = get_settings()
-    api_key = settings.openai_api_key
-    base_url = settings.openai_base_url
+    # Honor both OpenAI- and Agnes-style env naming. The deployment injects
+    # AGNES_API_KEY / AGNES_BASE_URL into the container (not OPENAI_*), so the
+    # chat/extraction LLM path must fall back to those — mirrors the convention
+    # already used in app/gallery_prompt_ai.py for the gallery AI path.
+    api_key = settings.openai_api_key or os.getenv("AGNES_API_KEY")
+    base_url = settings.openai_base_url or os.getenv("AGNES_BASE_URL")
     resolved_model = model_name
     resolved_temperature = temperature or (agent_config.temperature if agent_config else 0.7)
 
@@ -133,7 +142,11 @@ def _resolve_llm_config(
             resolved_temperature = agent_config.temperature
 
     if not resolved_model:
-        resolved_model = settings.openai_model
+        resolved_model = os.getenv("AGNES_MODEL") or settings.openai_model
+        # An Agnes endpoint won't have generic OpenAI model names — default to
+        # the Agnes model when we're clearly pointed at one.
+        if base_url and "agnes" in base_url and resolved_model == settings.openai_model:
+            resolved_model = os.getenv("AGNES_MODEL", "agnes-2.0-flash")
     
     # Determine provider_type based on base_url
     provider_type = "openai-compatible"  # default
@@ -152,6 +165,29 @@ def _resolve_llm_config(
         base_url=base_url,
         temperature=resolved_temperature,
     )
+
+
+def _make_chat_http_client():
+    """Proxy-resilient httpx client for the OpenAI-compatible chat client.
+
+    Mirrors :func:`app.http_client.ensure_proxy_strategy`: if the injected
+    egress proxy (``HTTPS_PROXY``) is unreachable we connect directly, so a
+    dead sandbox proxy does not break every chat / memory-extraction /
+    summarization call. The ``openai`` SDK used by langchain has no per-call
+    fallback of its own, unlike ``app.http_client``.
+    """
+    import httpx
+    from app.http_client import _proxy_url, _proxy_reachable
+
+    if os.environ.get("DISABLE_PROXY_AUTOFALLBACK"):
+        proxy = _proxy_url()
+        return httpx.Client(proxy=proxy, timeout=120.0) if proxy else httpx.Client(timeout=120.0)
+
+    proxy = _proxy_url()
+    if proxy and _proxy_reachable():
+        logging.getLogger(__name__).info("Chat client using egress proxy %s", proxy)
+        return httpx.Client(proxy=proxy, timeout=120.0)
+    return httpx.Client(timeout=120.0)
 
 
 def _create_llm_from_config(config: LLMConfig):
@@ -179,6 +215,7 @@ def _create_llm_from_config(config: LLMConfig):
             temperature=config.temperature,
             api_key=config.api_key,
             base_url=config.base_url,
+            http_client=_make_chat_http_client(),
         )
     except Exception as e:
         _log.error("Factory create failed: %s, falling back to ChatOpenAI directly", e)
@@ -189,6 +226,7 @@ def _create_llm_from_config(config: LLMConfig):
             temperature=config.temperature,
             api_key=config.api_key,
             base_url=config.base_url,
+            http_client=_make_chat_http_client(),
         )
 
 
@@ -322,39 +360,7 @@ def ask_agent(
             )
             db.add(log_entry)
 
-    # Build messages
-    stored_messages = list(db.scalars(
-        select(Message).where(Message.thread_id == thread.id).order_by(Message.created_at)
-    ))
-    langchain_messages = [
-        {"role": "system", "content": system_prompt or RAG_SYSTEM_PROMPT},
-    ]
-    # Find the index of the current (last) user message so we can attach
-    # reference images to exactly that turn — earlier user turns stay text-only.
-    last_user_idx = None
-    for _i, _m in enumerate(stored_messages):
-        if _m.role == "user":
-            last_user_idx = _i
-
-    image_blocks = _reference_images_to_blocks(reference_images) if reference_images else []
-
-    for _i, msg in enumerate(stored_messages):
-        if msg.role not in ("user", "assistant"):
-            continue
-        content = msg.content
-        if msg.role == "user" and image_blocks and _i == last_user_idx:
-            # Multimodal content: text first, then the attached images.
-            content = [{"type": "text", "text": content}, *image_blocks]
-        langchain_messages.append({"role": msg.role, "content": content})
-
-    # Inject RAG context
-    if rag_context:
-        langchain_messages.append({
-            "role": "user",
-            "content": f"\n\n<knowledge_context>\n{rag_context}\n</knowledge_context>\n\n请基于以上知识回答用户的问题。",
-        })
-
-    # Resolve LLM config from provider/agent
+    # ── Resolve LLM config early (needed by ContextService summarizer) ──
     resolved_config = _resolve_llm_config(
         user_id=user_id,
         provider_id=provider_id,
@@ -363,10 +369,81 @@ def ask_agent(
         agent_config=agent_config,
         temperature=temperature,
     )
-    
-    # Override with explicit provider_type if provided
     if provider_type:
         resolved_config.provider_type = provider_type
+
+    # ── Build messages: unified ContextService OR legacy full-history ──
+    # 默认 enable_context_service=False → 走原全量加载，行为不变（后向兼容）。
+    image_blocks = _reference_images_to_blocks(reference_images) if reference_images else []
+
+    if getattr(settings, "enable_context_service", False):
+        from app.context_service import ContextService, BuildOptions
+
+        def _summarizer(text: str) -> str:
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            sum_llm = _create_llm_from_config(resolved_config)
+            resp = sum_llm.invoke([
+                SystemMessage(content=(
+                    "将以下对话压缩为简洁中文摘要，保留：关键事实、用户明确表达的偏好/纠正、"
+                    "未决事项与待办。不要编造未提及的信息。输出纯文本摘要。"
+                )),
+                HumanMessage(content=text),
+            ])
+            return resp.content or ""
+
+        opts = BuildOptions(
+            recent_turns=settings.context_service_recent_turns,
+            reserved_reply_ratio=settings.context_service_reserved_reply_ratio,
+            reflex_cap=settings.context_service_reflex_cap,
+            recall_k=settings.context_service_recall_k,
+            summarizer=_summarizer,
+            enable_reflex=getattr(settings, "enable_retrieval_reflex", False),
+            enable_memory_recall=getattr(settings, "enable_memory_recall", False),
+            enable_gap_analysis=getattr(settings, "enable_gap_analysis", False),
+            enable_rrf=getattr(settings, "enable_rrf", False),
+        )
+        cs = ContextService(db)
+        langchain_messages = cs.build(
+            thread=thread, user_id=user_id, current_text=message,
+            system_prompt=system_prompt, opts=opts, model_name=resolved_config.model_name,
+        )
+        # 把参考图挂到当前用户轮（build 后最后一条 user 消息）
+        if image_blocks:
+            for _i in range(len(langchain_messages) - 1, -1, -1):
+                if langchain_messages[_i]["role"] == "user":
+                    _c = langchain_messages[_i]["content"]
+                    langchain_messages[_i]["content"] = (
+                        [{"type": "text", "text": _c}, *image_blocks] if isinstance(_c, str) else _c
+                    )
+                    break
+    else:
+        stored_messages = list(db.scalars(
+            select(Message).where(Message.thread_id == thread.id).order_by(Message.created_at)
+        ))
+        langchain_messages = [
+            {"role": "system", "content": system_prompt or RAG_SYSTEM_PROMPT},
+        ]
+        last_user_idx = None
+        for _i, _m in enumerate(stored_messages):
+            if _m.role == "user":
+                last_user_idx = _i
+
+        for _i, msg in enumerate(stored_messages):
+            if msg.role not in ("user", "assistant"):
+                continue
+            content = msg.content
+            if msg.role == "user" and image_blocks and _i == last_user_idx:
+                # Multimodal content: text first, then the attached images.
+                content = [{"type": "text", "text": content}, *image_blocks]
+            langchain_messages.append({"role": msg.role, "content": content})
+
+    # Inject RAG context (两条路径共用)
+    if rag_context:
+        langchain_messages.append({
+            "role": "user",
+            "content": f"\n\n<knowledge_context>\n{rag_context}\n</knowledge_context>\n\n请基于以上知识回答用户的问题。",
+        })
 
     llm = _create_llm_from_config(resolved_config)
 
@@ -383,8 +460,153 @@ def ask_agent(
         else:
             lc_messages.append(HumanMessage(content=content))
 
-    response = llm.invoke(lc_messages)
-    answer_raw = response.content
+    # ── 扩展能力：Skill 目录 + MCP 工具 + Hook 生命周期（均受开关保护，默认关闭）──
+    tools: list = []
+    blocked_reason: str | None = None
+
+    # Skill 目录（注入 system 上下文，让模型知道有哪些技能可用）
+    skill_catalog = ""
+    if getattr(settings, "enable_skill_tools", False):
+        try:
+            from app.skill_runtime import get_skill_catalog
+
+            skill_catalog = get_skill_catalog(db, user_id)
+        except Exception as e:
+            logger.warning("Skill 目录加载失败（优雅降级）: %s", e)
+
+    # Hook: UserPromptSubmit —— 用户提交消息时，可拦截或改写
+    if getattr(settings, "enable_hooks", False):
+        try:
+            from app.hook_runner import run_hooks, first_blocking
+
+            up = run_hooks("UserPromptSubmit", user_id, db,
+                           {"session_id": thread.id, "prompt": message})
+            blk = first_blocking(up)
+            if blk:
+                blocked_reason = f"消息被 Hook 拦截：{blk.reason}"
+        except Exception as e:
+            logger.warning("UserPromptSubmit Hook 执行失败（放行）: %s", e)
+
+    if blocked_reason:
+        answer_text, blocks = _extract_blocks(blocked_reason)
+        db.add(Message(thread_id=thread.id, role="assistant", content=answer_text,
+                       extra={"blocks": blocks, "hook_blocked": True}))
+        db.commit()
+        return answer_text, thread.id, blocks
+
+    # 拼接 MCP + Skill 目录到 system 消息
+    catalog_block = ""
+    if getattr(settings, "enable_mcp_tools", False):
+        try:
+            from app.mcp_tools import get_mcp_tool_catalog
+
+            catalog_block += get_mcp_tool_catalog(db, user_id)
+        except Exception as e:
+            logger.warning("MCP 目录加载失败（优雅降级）: %s", e)
+    if skill_catalog:
+        catalog_block += ("\n\n" + skill_catalog)
+    if catalog_block:
+        for _i, _m in enumerate(lc_messages):
+            if isinstance(_m, SystemMessage):
+                lc_messages[_i] = SystemMessage(content=(system_prompt or "") + "\n\n" + catalog_block)
+                break
+
+    # 构建工具集：MCP 远端工具 + use_skill
+    if getattr(settings, "enable_mcp_tools", False):
+        try:
+            from app.mcp_tools import build_mcp_langchain_tools
+
+            tools += build_mcp_langchain_tools(db, user_id)
+        except Exception as e:
+            logger.warning("MCP 工具加载失败（优雅降级）: %s", e)
+    if getattr(settings, "enable_skill_tools", False):
+        try:
+            from app.skill_runtime import build_use_skill_tool
+
+            us = build_use_skill_tool(db, user_id)
+            if us:
+                tools.append(us)
+        except Exception as e:
+            logger.warning("use_skill 工具加载失败（优雅降级）: %s", e)
+
+    if tools:
+        from langchain_core.messages import ToolMessage
+
+        llm_with_tools = llm.bind_tools(tools)
+        messages = list(lc_messages)
+        answer_raw: str | None = None
+        last_resp = None
+        for _step in range(getattr(settings, "mcp_max_iterations", 5)):
+            try:
+                resp = llm_with_tools.invoke(messages)
+            except Exception as e:
+                logger.warning("工具循环 LLM 调用失败: %s", e)
+                answer_raw = None
+                break
+            last_resp = resp
+            messages.append(resp)
+            tool_calls = getattr(resp, "tool_calls", None) or []
+            if not tool_calls:
+                answer_raw = resp.content or ""
+                break
+            for tc in tool_calls:
+                tname = tc.get("name")
+                targs = tc.get("args", {}) or {}
+                # PreToolUse Hook：可拦截或改写工具参数
+                if getattr(settings, "enable_hooks", False):
+                    try:
+                        from app.hook_runner import run_hooks, first_blocking
+
+                        pre = run_hooks("PreToolUse", user_id, db,
+                                        {"session_id": thread.id, "tool_name": tname, "tool_args": targs},
+                                        matcher=tname)
+                        blk = first_blocking(pre)
+                        if blk:
+                            messages.append(ToolMessage(
+                                content=f"[blocked by hook] {blk.reason}", tool_call_id=tc.get("id")))
+                            continue
+                        mod = next((o for o in pre
+                                    if o.decision == "modify" and isinstance(o.data.get("tool_args"), dict)), None)
+                        if mod:
+                            targs = mod.data["tool_args"]
+                    except Exception as e:
+                        logger.warning("PreToolUse Hook 失败（放行）: %s", e)
+                tool = next((t for t in tools if t.name == tname), None)
+                try:
+                    result = tool.func(**targs) if tool else f"[error] unknown tool: {tname}"
+                except Exception as ex:
+                    result = f"[error] {ex}"
+                # PostToolUse Hook：可改写工具结果
+                if getattr(settings, "enable_hooks", False):
+                    try:
+                        from app.hook_runner import run_hooks
+
+                        post = run_hooks("PostToolUse", user_id, db,
+                                         {"session_id": thread.id, "tool_name": tname, "tool_result": result},
+                                         matcher=tname)
+                        mod = next((o for o in post
+                                    if o.decision == "modify" and "tool_result" in o.data), None)
+                        if mod:
+                            result = mod.data["tool_result"]
+                    except Exception as e:
+                        logger.warning("PostToolUse Hook 失败（保留原结果）: %s", e)
+                messages.append(ToolMessage(content=str(result), tool_call_id=tc.get("id")))
+        if answer_raw is None:
+            answer_raw = last_resp.content if last_resp is not None else ""
+        # Stop Hook：响应生成后（informational，可改写最终答案）
+        if getattr(settings, "enable_hooks", False):
+            try:
+                from app.hook_runner import run_hooks
+
+                stop = run_hooks("Stop", user_id, db, {"session_id": thread.id, "answer": answer_raw})
+                mod = next((o for o in stop if o.decision == "modify" and "answer" in o.data), None)
+                if mod:
+                    answer_raw = mod.data["answer"]
+            except Exception as e:
+                logger.warning("Stop Hook 失败（保留原答案）: %s", e)
+    else:
+        response = llm.invoke(lc_messages)
+        answer_raw = response.content or ""
     answer_text, blocks = _extract_blocks(answer_raw)
 
     msg = Message(
@@ -393,4 +615,174 @@ def ask_agent(
     )
     db.add(msg)
     db.commit()
+
+    # ── P5 隐式提取（默认关，后台线程，own session，不阻塞主链路）──
+    if getattr(settings, "enable_implicit_extraction", False):
+        _maybe_extract_memories(user_id, thread.id, resolved_config)
+
     return answer_text, thread.id, blocks
+
+
+def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, model_name,
+                         provider_base_url, provider_type, provider_id, reference_images):
+    """Streaming variant of :func:`ask_agent`.
+
+    Yields tuples:
+      ``("delta", text_chunk)``  — one incremental token/segment
+      ``("done", thread_id, blocks, full_text)`` — generation finished
+      ``("error", message)`` — unrecoverable error
+
+    The function owns its OWN database session (same rationale as
+    ``_run_text_chat``): a client disconnect that cancels the SSE generator can
+    never close the session mid-commit, so user + assistant messages are always
+    persisted even if the user switches pages mid-generation.
+
+    Default simple chat path streams token-by-token via ``llm.stream()``.
+    Complex paths (KB/RAG bindings, MCP/Skill tools, hooks, context-service)
+    fall back to the battle-tested :func:`ask_agent` (non-stream) and emit the
+    full answer as a single delta — correct, just not token-streamed.
+    """
+    from app.core.database import SessionLocal
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+
+        # Detect paths that ask_agent handles with extra machinery.
+        agent_config = None
+        if agent_id:
+            agent_config = db.scalar(
+                select(AgentConfig).where(AgentConfig.id == agent_id, AgentConfig.user_id == user_id)
+            )
+        complex_path = bool(
+            getattr(settings, "enable_mcp_tools", False)
+            or getattr(settings, "enable_skill_tools", False)
+            or getattr(settings, "enable_hooks", False)
+            or getattr(settings, "enable_context_service", False)
+            or (agent_config and getattr(agent_config, "knowledge_bases", None))
+        )
+        if complex_path:
+            answer, tid, blocks = ask_agent(
+                db=db, user_id=user_id, agent_id=agent_id, message=message,
+                thread_id=thread_id, system_prompt=system_prompt, model_name=model_name,
+                provider_base_url=provider_base_url, provider_type=provider_type,
+                provider_id=provider_id, reference_images=reference_images,
+            )
+            yield ("delta", answer)
+            yield ("done", tid, blocks, answer)
+            return
+
+        # ── Simple default path: stream token-by-token ──
+        if system_prompt is None:
+            if agent_config and agent_config.system_prompt:
+                system_prompt = agent_config.system_prompt
+            else:
+                system_prompt = DEFAULT_SYSTEM_PROMPT
+
+        thread = _get_or_create_thread(db, user_id, agent_id, message, thread_id)
+        db.add(Message(thread_id=thread.id, role="user", content=message))
+        db.flush()
+
+        resolved_config = _resolve_llm_config(
+            user_id=user_id, provider_id=provider_id,
+            provider_base_url=provider_base_url, model_name=model_name,
+            agent_config=agent_config,
+        )
+        if provider_type:
+            resolved_config.provider_type = provider_type
+
+        # Legacy full-history build (same as ask_agent's default branch).
+        stored_messages = list(db.scalars(
+            select(Message).where(Message.thread_id == thread.id).order_by(Message.created_at)
+        ))
+        lc_messages = [{"role": "system", "content": system_prompt or RAG_SYSTEM_PROMPT}]
+        image_blocks = _reference_images_to_blocks(reference_images) if reference_images else []
+        last_user_idx = None
+        for _i, _m in enumerate(stored_messages):
+            if _m.role == "user":
+                last_user_idx = _i
+        for _i, msg in enumerate(stored_messages):
+            if msg.role not in ("user", "assistant"):
+                continue
+            content = msg.content
+            if msg.role == "user" and image_blocks and _i == last_user_idx:
+                content = [{"type": "text", "text": content}, *image_blocks]
+            lc_messages.append({"role": msg.role, "content": content})
+
+        llm = _create_llm_from_config(resolved_config)
+        from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+        _lc = []
+        for m in lc_messages:
+            role = m.get("role", "")
+            content = m.get("content", "")
+            if role == "system":
+                _lc.append(SystemMessage(content=content))
+            elif role == "assistant":
+                _lc.append(AIMessage(content=content))
+            else:
+                _lc.append(HumanMessage(content=content))
+
+        full: list[str] = []
+        for chunk in llm.stream(_lc):
+            text = chunk.content if isinstance(chunk.content, str) else ""
+            if text:
+                full.append(text)
+                yield ("delta", text)
+
+        answer_text, blocks = _extract_blocks("".join(full))
+        db.add(Message(
+            thread_id=thread.id, role="assistant", content=answer_text,
+            extra={"blocks": blocks},
+        ))
+        db.commit()
+        yield ("done", thread.id, blocks, "".join(full))
+    except Exception as e:
+        import traceback
+        logger.error("ask_agent_stream_gen error: %s\n%s", e, traceback.format_exc())
+        yield ("error", f"{type(e).__name__}: {e}")
+    finally:
+        db.close()
+
+
+def _maybe_extract_memories(user_id: int, thread_id: str, resolved_config) -> None:
+    """后台线程：从最近若干轮对话用 LLM 提取候选记忆 → pending 队列（需用户确认）。
+
+    使用独立 SessionLocal（请求会话在 ask_agent 返回后即关闭）。默认关闭；
+    隐式提取非零幻觉，必须经前端确认才落库，防记忆污染（多用户生产硬约束）。
+    """
+    def _job() -> None:
+        try:
+            from app.core.database import SessionLocal
+            from app.memory import MemoryWriter
+            from langchain_core.messages import HumanMessage, SystemMessage
+
+            db2 = SessionLocal()
+            try:
+                recent = list(db2.scalars(
+                    select(Message)
+                    .where(Message.thread_id == thread_id)
+                    .order_by(Message.created_at.desc())
+                    .limit(12)
+                ))
+                convo = "\n".join(f"{m.role}: {m.content}" for m in reversed(recent))
+                if not convo.strip():
+                    return
+
+                def _extractor(text: str) -> list[str]:
+                    llm = _create_llm_from_config(resolved_config)
+                    r = llm.invoke([
+                        SystemMessage(content=(
+                            "从对话中提取用户明确表达的偏好、事实或纠正。每条一行，"
+                            "格式 'key: value'（如 '语言偏好: 简体中文'）。"
+                            "只提取确凿表达的，不要推测。无则回复空行。"
+                        )),
+                        HumanMessage(content=text),
+                    ])
+                    return [ln.strip() for ln in (r.content or "").splitlines() if ln.strip()]
+
+                MemoryWriter(db2).extract_candidates(user_id, convo, _extractor)
+            finally:
+                db2.close()
+        except Exception as exc:
+            logger.warning("implicit memory extraction skipped: %s", exc)
+
+    threading.Thread(target=_job, name="mem-extract", daemon=True).start()

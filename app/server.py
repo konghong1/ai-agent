@@ -48,6 +48,7 @@ def startup() -> None:
     _ensure_gallery_showcase_payload_column()
     _ensure_pillow()
     _start_gallery_worker()
+    _start_memory_enricher()
 
 
 def _start_gallery_worker() -> None:
@@ -63,6 +64,26 @@ def _start_gallery_worker() -> None:
         gallery_worker.start_worker()
     except Exception as e:
         logger.error("startup: 启动 gallery worker 失败: %s", e)
+
+
+def _start_memory_enricher() -> None:
+    """幂等启动记忆富集后台线程（P6）。
+
+    仅启线程，在线程内才连 DB；startup 不联网、不阻塞。默认 enable_memory_enricher
+    关；开启后周期性去重/矛盾检测/显著性衰减/会话摘要 Promotion，失败不影响主服务。
+    """
+    try:
+        from app.memory import MemoryEnricher
+        from app.settings import get_settings
+
+        if not getattr(get_settings(), "enable_memory_enricher", False):
+            logger.info("startup: MemoryEnricher 未启用（enable_memory_enricher=false）")
+            return
+        interval = getattr(get_settings(), "memory_enricher_interval_seconds", 3600)
+        MemoryEnricher.start(interval_seconds=interval)
+        logger.info("startup: MemoryEnricher 已启动（间隔 %ss）", interval)
+    except Exception as e:
+        logger.error("startup: 启动 MemoryEnricher 失败: %s", e)
 
 
 def _ensure_pillow() -> None:

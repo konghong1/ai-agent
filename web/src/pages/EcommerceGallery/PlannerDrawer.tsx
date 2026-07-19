@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Drawer, Empty, Input, Select, message, Modal } from 'antd'
-import type { GalleryOptions, GalleryType, GalleryTemplate, GalleryImageModelsResponse } from '@/services/gallery'
+import type { GalleryOptions, GalleryType, GalleryTemplate, GalleryImageModelsResponse, GalleryPlanItem } from '@/services/gallery'
 
 interface Props {
   open: boolean
@@ -26,6 +26,20 @@ interface Props {
     ratio: string
     count: number
   }) => Promise<void>
+  /** 编辑模式：传入此项时，自定义表单预填其设置，提交走 onUpdateCustomTask */
+  editItem?: GalleryPlanItem | null
+  onUpdateCustomTask: (payload: {
+    name: string
+    description: string
+    files: File[]
+    provider_id: number | null
+    model_name: string | null
+    model_label: string
+    resolution: string
+    ratio: string
+    count: number
+    reference_images: string[]
+  }) => Promise<void>
 }
 
 type Tab = '推荐类型' | '自定义子任务' | '已保存模板'
@@ -35,6 +49,7 @@ const { TextArea } = Input
 export default function PlannerDrawer({
   open, onClose, types, options, templates, imageModels, initialChecked,
   onConfirm, onQuickAdd, onApplyTemplate, onDeleteTemplate, onRenameTemplate, onCreateCustomTask,
+  editItem, onUpdateCustomTask,
 }: Props) {
   const [tab, setTab] = useState<Tab>('推荐类型')
   const [checked, setChecked] = useState<Set<string>>(new Set())
@@ -51,6 +66,8 @@ export default function PlannerDrawer({
   const [count, setCount] = useState<number>(options?.output?.count_default || 1)
   const [files, setFiles] = useState<File[]>([])
   const [previews, setPreviews] = useState<string[]>([])
+  // 编辑模式下保留的已有参考图（URL），可移除；新上传图在 files 中
+  const [existingRefs, setExistingRefs] = useState<string[]>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
   const outputOptions = options?.output || {}
@@ -81,10 +98,26 @@ export default function PlannerDrawer({
   useEffect(() => {
     if (open) {
       setChecked(new Set(initialChecked))
-      setTab('推荐类型')
-      resetCustomForm()
+      if (editItem) {
+        // 编辑模式：切到「自定义子任务」并预填该项现有设置
+        setTab('自定义子任务')
+        setName(editItem.personal_settings?.['任务名称'] || '')
+        setDescription(editItem.note || '')
+        setProviderId((editItem.output_settings?.provider_id as number) ?? null)
+        setModelName((editItem.output_settings?.model_name as string) ?? null)
+        setModelLabel(editItem.output_settings?.model_label || editItem.output_settings?.model || '默认图片模型')
+        setResolution(editItem.output_settings?.resolution || outputOptions.resolution?.[0] || '1K')
+        setRatio(editItem.output_settings?.ratio || outputOptions.ratio?.[0] || '自适应尺寸')
+        setCount(Number(editItem.output_settings?.count) || outputOptions.count_default || 1)
+        setFiles([])
+        setPreviews([])
+        setExistingRefs(editItem.reference_images || [])
+      } else {
+        setTab('推荐类型')
+        resetCustomForm()
+      }
     }
-  }, [open, initialChecked])
+  }, [open, initialChecked, editItem])
 
   const resetCustomForm = () => {
     setName('')
@@ -97,6 +130,7 @@ export default function PlannerDrawer({
     setCount(outputOptions.count_default || 1)
     setFiles([])
     setPreviews([])
+    setExistingRefs([])
   }
 
   const toggle = (id: string) => {
@@ -110,7 +144,8 @@ export default function PlannerDrawer({
 
   const handleFiles = (fileList: FileList | null) => {
     if (!fileList) return
-    const incoming = Array.from(fileList).slice(0, 4 - files.length)
+    const remain = Math.max(0, 4 - files.length - existingRefs.length)
+    const incoming = Array.from(fileList).slice(0, remain)
     if (incoming.length === 0) return
     const next = [...files, ...incoming].slice(0, 4)
     setFiles(next)
@@ -124,6 +159,10 @@ export default function PlannerDrawer({
     setPreviews(next.map((f) => URL.createObjectURL(f)))
   }
 
+  const removeExistingRef = (idx: number) => {
+    setExistingRefs((prev) => prev.filter((_, i) => i !== idx))
+  }
+
   const handleSubmitCustom = async () => {
     const taskName = name.trim() || '自定义子任务'
     if (!description.trim()) {
@@ -132,7 +171,7 @@ export default function PlannerDrawer({
     }
     setSubmitting(true)
     try {
-      await onCreateCustomTask({
+      const basePayload = {
         name: taskName,
         description: description.trim(),
         files,
@@ -142,12 +181,20 @@ export default function PlannerDrawer({
         resolution,
         ratio,
         count: Math.max(1, Math.min(count, 50)),
-      })
-      message.success('已添加自定义子任务')
+      }
+      if (editItem) {
+        await onUpdateCustomTask({ ...basePayload, reference_images: existingRefs })
+        message.success('已更新自定义子任务')
+      } else {
+        await onCreateCustomTask(basePayload)
+        message.success('已添加自定义子任务')
+      }
       resetCustomForm()
       onClose()
     } catch (e) {
-      // 统一错误在父层提示
+      console.error('[gallery] handleSubmitCustom failed:', e)
+      // request.ts 已统一弹错误 toast；此处仅兜底显示一句简短提示，避免静默失败
+      message.error(e instanceof Error ? e.message : (editItem ? '更新自定义子任务失败，请重试' : '添加自定义子任务失败，请重试'))
     } finally {
       setSubmitting(false)
     }
@@ -243,8 +290,14 @@ export default function PlannerDrawer({
                     <span>本地上传</span>
                   </button>
                   <button className="ctf-lib-btn" onClick={() => message.info('图片库功能开发中')}>图片库</button>
+                  {existingRefs.map((url, idx) => (
+                    <div key={`ref-${idx}`} className="ctf-preview">
+                      <img src={url} alt="" />
+                      <button className="ctf-remove" onClick={() => removeExistingRef(idx)} title="移除已有参考图">✕</button>
+                    </div>
+                  ))}
                   {previews.map((url, idx) => (
-                    <div key={idx} className="ctf-preview">
+                    <div key={`new-${idx}`} className="ctf-preview">
                       <img src={url} alt="" />
                       <button className="ctf-remove" onClick={() => removeImage(idx)} title="移除">✕</button>
                     </div>
@@ -301,7 +354,7 @@ export default function PlannerDrawer({
                   <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z" />
                   <path d="M8 12l3 3 5-6" />
                 </svg>
-                确认添加任务
+                {editItem ? '保存修改' : '确认添加任务'}
               </button>
             </div>
           )}

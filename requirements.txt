@@ -44,5 +44,8 @@ pymysql>=1.1.0
 # Database drivers (PostgreSQL)
 psycopg2-binary>=2.9.0
 
-sentence-transformers>=2.2.0
+# [Plan B] sentence-transformers 已移除：业务代码(app/services.py:_get_cross_encoder)
+# 对 CrossEncoder 是 try/except 惰性导入，加载失败自动降级为 RRF 排序，
+# 因此删掉它既不影响功能，也顺带去掉 torch/transformers 这整条重型依赖链。
+# 若日后需要本地重排，改用云端 reranker API 即可。
 numpy>=1.24.0

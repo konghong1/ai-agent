@@ -3,14 +3,13 @@ FROM python:3.12-slim AS builder
 WORKDIR /app
 
 # Configure mirrors for improved reliability (China-friendly)
-# Fall back to official mirrors if mirrors.tuna.tsinghua.edu.cn is slow
 RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' /etc/apt/sources.list.d/debian.sources || true \
     && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install build dependencies (gcc + MariaDB client libs)
+# Install build dependencies (gcc + MariaDB/Postgres client libs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
@@ -25,16 +24,8 @@ RUN pip install --no-cache-dir --prefix=/install \
     --timeout 600 --retries 10 \
     "setuptools>=68.0.0" "wheel>=0.42.0"
 
-# Install CPU-ONLY torch FIRST (version matched to the ML stack) so that
-# sentence-transformers / transformers do NOT pull the multi-GB CUDA 13 build.
-# The container runs on CPU (no `--gpus` / nvidia runtime in compose), so the
-# CUDA libs (nvidia-*-cu13, triton) are pure dead weight. Without this pin, pip
-# resolves `torch` on Linux to the CUDA wheel and the image balloons to ~12.7GB.
-RUN pip install --no-cache-dir --prefix=/install \
-    --timeout 600 --retries 10 \
-    "torch==2.13.0+cpu" --index-url https://download.pytorch.org/whl/cpu
-
-# Then install project requirements (torch already satisfied → no CUDA pull)
+# [Plan B] 不再安装 torch / sentence-transformers —— 业务代码不 import 它们，
+# rerank 已 try/except 降级。这一刀直接去掉 ~1GB+ 的 ML 死重。
 RUN pip install --no-cache-dir --prefix=/install \
     --timeout 600 --retries 10 \
     -r requirements.txt
@@ -53,7 +44,8 @@ RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g' 
 # Install Python packages from builder stage
 COPY --from=builder /install /usr/local
 
-# Copy application code
+# Copy application code. 配合根目录 .dockerignore 排除 .venv/.git/web 等，
+# 不再把 1.5GB 的本地虚拟环境和前端产物塞进镜像。
 COPY . .
 
 EXPOSE 8010

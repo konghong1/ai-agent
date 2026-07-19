@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 
 import { Outlet, useNavigate, useLocation } from "react-router-dom"
 
@@ -8,11 +8,11 @@ import {
 
   DashboardOutlined, RobotOutlined, TeamOutlined,
 
-  SettingOutlined,
+  SettingOutlined, SafetyOutlined,
 
   MenuFoldOutlined, MenuUnfoldOutlined, UserOutlined, LogoutOutlined,
 
-  SunOutlined, MoonOutlined, CloudServerOutlined, AppstoreOutlined,
+  SunOutlined, MoonOutlined, CloudServerOutlined, AppstoreOutlined, DatabaseOutlined,
 
 } from "@ant-design/icons"
 
@@ -54,6 +54,8 @@ const menuItems = [
 
       { key: "/skills", label: "Skills" },
 
+      { key: "/hooks", label: "Hooks" },
+
       { key: "/prompt-templates", label: "提示词模板" },
 
     ],
@@ -79,6 +81,10 @@ const menuItems = [
 
   { key: "/users", icon: <TeamOutlined />, label: "用户管理" },
 
+  { key: "/admin/team-admins", icon: <SettingOutlined />, label: "团队管理员权限" },
+
+  { key: "/teams", icon: <TeamOutlined />, label: "团队" },
+
   {
     key: "/workbench",
     icon: <AppstoreOutlined />,
@@ -88,11 +94,59 @@ const menuItems = [
     ],
   },
 
+  { key: "/memory", icon: <DatabaseOutlined />, label: "长期记忆" },
+
   { key: "/settings", icon: <SettingOutlined />, label: "系统设置" },
 
 ]
 
 
+
+// 菜单项 → 可见性权限码。未列出的项始终可见（如仪表盘/系统设置）。
+const MENU_PERM: Record<string, string> = {
+  "/users": "admin.users.manage",
+  "/admin/team-admins": "admin.permissions.manage",
+  "/teams": "team.view",
+  "/mcp-servers": "mcp.view",
+  "/skills": "skill.view",
+  "/hooks": "hook.view",
+  "/knowledge-bases": "kb.read",
+  "/media-library": "media.use",
+  "/ecommerce-gallery": "gallery.use",
+  "/memory": "memory.use",
+  "/providers": "providers.view",
+  "/prompt-templates": "prompt.view",
+}
+
+function filterMenuByPerm(items: any[], perms: string[]): any[] {
+  const out: any[] = []
+  for (const it of items) {
+    if (it.children) {
+      const kids = it.children.filter((c: any) => !MENU_PERM[c.key] || perms.includes(MENU_PERM[c.key]))
+      if (kids.length > 0) out.push({ ...it, children: kids })
+    } else if (!MENU_PERM[it.key] || perms.includes(MENU_PERM[it.key])) {
+      out.push(it)
+    }
+  }
+  return out
+}
+
+// 动态菜单：后端 resources(type='menu') 驱动。图标名 → 组件映射（未知图标回退 AppstoreOutlined）。
+const ICONS: Record<string, any> = {
+  DashboardOutlined, RobotOutlined, TeamOutlined, SettingOutlined, SafetyOutlined,
+  CloudServerOutlined, AppstoreOutlined, DatabaseOutlined,
+}
+function convertMenus(nodes: any[]): any[] {
+  return (nodes || []).map((n: any) => {
+    const Ico = n.icon && ICONS[n.icon] ? ICONS[n.icon] : null
+    return {
+      key: n.key,
+      label: n.label,
+      icon: Ico ? <Ico /> : undefined,
+      children: n.children && n.children.length ? convertMenus(n.children) : undefined,
+    }
+  })
+}
 
 export default function BasicLayout() {
 
@@ -107,7 +161,30 @@ export default function BasicLayout() {
 
   const { darkMode, toggleDarkMode } = useLayoutStore()
 
-  const { user, logout } = useAuthStore()
+  const { user, logout, permissions, loadPermissions } = useAuthStore()
+
+  // 动态菜单：拉取后端菜单树（resources 驱动）；失败时回退静态菜单（防白屏）
+  const [dynamicMenus, setDynamicMenus] = useState<any[] | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const token = useAuthStore.getState().token
+    if (!token) return
+    fetch("/api/system/menus", { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => { if (!cancelled) setDynamicMenus(convertMenus(d.menus || [])) })
+      .catch(() => { if (!cancelled) setDynamicMenus(null) })
+    return () => { cancelled = true }
+  }, [])
+
+  // 挂载时拉取当前用户的有效权限（用于权限驱动菜单渲染 + 静态 fallback）
+  useEffect(() => {
+    loadPermissions()
+  }, [loadPermissions])
+
+  const visibleMenuItems = useMemo(
+    () => dynamicMenus ?? (user?.is_superuser ? menuItems : filterMenuByPerm(menuItems, permissions)),
+    [user, permissions, dynamicMenus],
+  )
 
   const [mobileOpen, setMobileOpen] = useState(false)
   const [winWidth, setWinWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1280)
@@ -238,7 +315,7 @@ export default function BasicLayout() {
 
             mode="inline"
 
-            items={menuItems}
+            items={visibleMenuItems}
 
             selectedKeys={[location.pathname]}
 

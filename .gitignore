@@ -11,3 +11,4 @@ node_modules/
 uploads/*
 !uploads/.gitkeep
 ai/*
+verify-shots

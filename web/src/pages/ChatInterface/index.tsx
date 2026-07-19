@@ -8,6 +8,7 @@ import {
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useLayoutStore } from "@/stores/layout"
+import { useChatStore } from "@/stores/chatStore"
 import { authHeaders, getToken } from "@/services/auth"
 import { proxyMediaUrl } from "@/services/media"
 import ChatSelector from "@/components/ChatSelector"
@@ -104,6 +105,17 @@ export default function ChatInterface() {
   const oldestIdRef = useRef<number | null>(null)        // cursor for the oldest loaded message
   const scrollPreserveRef = useRef<{ prevHeight: number; prevTop: number } | null>(null)  // restore position after prepend
   const scrollToBottomRef = useRef<"instant" | "smooth" | null>(null)  // controlled auto-scroll request
+
+  // ── Typewriter streaming (visual "字一个一个跳出来" effect) ──
+  // The backend may return the whole answer in a single SSE chunk (provider
+  // buffering), so we reveal arriving characters on a steady cadence here,
+  // independent of how the backend chunks the stream.
+  const typewriterQueueRef = useRef("")                                  // pending chars not yet revealed
+  const typewriterDisplayedRef = useRef("")                              // chars revealed so far
+  const typewriterFinalRef = useRef<string | null>(null)                 // authoritative full answer
+  const typewriterIdRef = useRef<number | null>(null)                    // streaming assistant bubble id
+  const typewriterThreadRef = useRef<string | null>(null)                // thread id of the streaming bubble
+  const typewriterTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // ── Reference images (图生图 / 图生视频) ──
   const [referenceImages, setReferenceImages] = useState<string[]>([])
@@ -225,6 +237,7 @@ export default function ChatInterface() {
         const data = await res.json()
         if (reqId !== fetchMsgIdRef.current) return  // double-check after await
         setMessages(mapMessages(data.messages || []))
+        useChatStore.getState().setMessages(threadId, mapMessages(data.messages || []))
         hasMoreRef.current = !!data.has_more
         setHasMoreHistory(!!data.has_more)
         oldestIdRef.current = (data.oldest_id as number) ?? null
@@ -276,7 +289,12 @@ export default function ChatInterface() {
       }
       const data = await res.json()
       // Prepend older messages; stable ids keep React from re-rendering existing rows.
-      setMessages(prev => [...mapMessages(data.messages || []), ...prev])
+      setMessages(prev => {
+        const merged = [...mapMessages(data.messages || []), ...prev]
+        const tid = activeThreadIdRef.current
+        if (tid) useChatStore.getState().setMessages(tid, merged)
+        return merged
+      })
       hasMoreRef.current = !!data.has_more
       setHasMoreHistory(!!data.has_more)
       oldestIdRef.current = (data.oldest_id as number) ?? null
@@ -475,6 +493,39 @@ export default function ChatInterface() {
     }
   }, [templateId, templates])
 
+  // Reveal characters from the queue into the streaming bubble at a steady
+  // cadence, producing the typewriter effect. Works whether the backend sends
+  // many small token chunks or a single large chunk.
+  const typewriterTick = () => {
+    const q = typewriterQueueRef.current
+    const id = typewriterIdRef.current
+    const tid = typewriterThreadRef.current
+    if (id == null || !tid) return
+    if (q.length === 0) {
+      const finalA = typewriterFinalRef.current
+      if (finalA != null) {
+        // Queue drained — make sure the authoritative full text is shown.
+        typewriterDisplayedRef.current = finalA
+        setMessages(prev => prev.map(m => m.id === id ? { ...m, content: finalA } : m))
+        useChatStore.getState().updateLastAssistant(tid, finalA)
+        if (typewriterTimerRef.current) { clearInterval(typewriterTimerRef.current); typewriterTimerRef.current = null }
+      }
+      return
+    }
+    const step = Math.max(1, Math.ceil(q.length / 28))
+    const take = q.slice(0, step)
+    typewriterQueueRef.current = q.slice(step)
+    typewriterDisplayedRef.current += take
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, content: typewriterDisplayedRef.current } : m))
+    useChatStore.getState().updateLastAssistant(tid, typewriterDisplayedRef.current)
+  }
+
+  const ensureTypewriter = () => {
+    if (!typewriterTimerRef.current) {
+      typewriterTimerRef.current = setInterval(typewriterTick, 24)
+    }
+  }
+
   useEffect(() => { fetchThreads().finally(() => setLoading(false)) }, [])  // Run once on mount
 
   useEffect(() => {
@@ -485,6 +536,10 @@ export default function ChatInterface() {
         skipNextFetchRef.current = false
         return
       }
+      // Hydrate instantly from the in-session cache so switching pages never
+      // blanks the conversation; fetchLatest then reconciles with the DB.
+      const cached = useChatStore.getState().getMessages(activeThreadId)
+      if (cached && cached.length) setMessages(cached)
       fetchLatest(activeThreadId)
     } else {
       setMessages([])
@@ -493,6 +548,14 @@ export default function ChatInterface() {
       oldestIdRef.current = null
     }
   }, [activeThreadId, fetchLatest])
+
+  // Clear the typewriter timer on unmount so a finished/abandoned stream
+  // never touches an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (typewriterTimerRef.current) { clearInterval(typewriterTimerRef.current); typewriterTimerRef.current = null }
+    }
+  }, [])
 
   // Controlled scrolling. This replaces the old "scrollIntoView on every
   // messages change" which caused the screen to keep jumping to the head.
@@ -680,6 +743,7 @@ export default function ChatInterface() {
     // (threadId could differ if user switched during thread creation)
     if (activeThreadIdRef.current === threadId || !activeThreadIdRef.current) {
       setMessages(prev => [...prev, userMsg])
+      useChatStore.getState().appendMessage(threadId, userMsg)
       // The user just sent — pin the view to the bottom so they see their msg.
       scrollToBottomRef.current = "smooth"
     }
@@ -717,6 +781,30 @@ export default function ChatInterface() {
             let assistantBlocks: any = null
 
             if (reader) {
+              // Create a streaming placeholder assistant bubble and render it
+              // incrementally as tokens arrive (typewriter effect). Mirror it
+              // into the in-session chat store so switching pages mid-stream
+              // preserves what's already shown.
+              const assistantId = Date.now() + 1
+              // Reset typewriter state for this new assistant bubble.
+              if (typewriterTimerRef.current) { clearInterval(typewriterTimerRef.current); typewriterTimerRef.current = null }
+              typewriterQueueRef.current = ""
+              typewriterDisplayedRef.current = ""
+              typewriterFinalRef.current = null
+              typewriterIdRef.current = assistantId
+              typewriterThreadRef.current = threadId
+              if (activeThreadIdRef.current === threadId) {
+                const placeholder: Message = {
+                  id: assistantId,
+                  role: "assistant",
+                  content: "",
+                  created_at: new Date().toISOString(),
+                  blocks: null,
+                }
+                setMessages(prev => [...prev, placeholder])
+                useChatStore.getState().appendMessage(threadId, placeholder)
+              }
+
               while (true) {
                 const { done, value } = await reader.read()
                 if (done) break
@@ -725,37 +813,41 @@ export default function ChatInterface() {
                 const lines = chunk.split('\n')
 
                 for (const line of lines) {
-                  if (line.startsWith('data: ')) {
-                    try {
-                      const data = JSON.parse(line.slice(6))
-                      if (data.answer !== undefined) {
-                        // Final response
-                        assistantContent = data.answer
-                        finalThreadId = data.thread_id
-                        if (data.blocks) {
-                          assistantBlocks = data.blocks
-                        }
-                      }
-                    } catch {
-                      // Ignore parse errors for partial SSE messages
+                  if (!line.startsWith('data: ')) continue
+                  try {
+                  const data = JSON.parse(line.slice(6))
+                  if (data.delta !== undefined && data.delta !== "") {
+                      // Feed the delta into the typewriter queue; the ticker
+                      // reveals characters progressively for the typewriter effect.
+                      typewriterQueueRef.current += data.delta
+                      ensureTypewriter()
+                    } else if (data.answer !== undefined) {
+                      // Final (authoritative) full response — keep for finalize.
+                      assistantContent = data.answer
+                      finalThreadId = data.thread_id
+                      if (data.blocks) assistantBlocks = data.blocks
                     }
+                  } catch {
+                    // Ignore parse errors for partial SSE messages
                   }
                 }
               }
 
-              // Send assistant message — but only if user hasn't switched threads
-              if (assistantContent && activeThreadIdRef.current === threadId) {
-                const assistantMsg: Message = {
-                  id: Date.now() + 1,
-                  role: "assistant",
-                  content: assistantContent,
-                  created_at: new Date().toISOString(),
-                  blocks: assistantBlocks,
+              // Finalize with the authoritative full answer. We hand the full
+              // text to the typewriter; if its queue has already drained it
+              // snaps to the complete message, otherwise it keeps revealing
+              // until done — so we never clobber an in-progress animation.
+              if (assistantContent) {
+                typewriterFinalRef.current = assistantContent
+                if (!typewriterQueueRef.current) {
+                  // Nothing left to reveal — finalize immediately.
+                  typewriterDisplayedRef.current = assistantContent
+                  if (typewriterTimerRef.current) { clearInterval(typewriterTimerRef.current); typewriterTimerRef.current = null }
+                  if (activeThreadIdRef.current === threadId && assistantId != null) {
+                    setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: assistantContent, blocks: assistantBlocks } : m))
+                  }
+                  useChatStore.getState().updateLastAssistant(threadId, assistantContent, assistantBlocks)
                 }
-                // Only yank to bottom if the user is already there (don't rip
-                // them out of history they're reading while the reply streams in).
-                if (atBottomRef.current) scrollToBottomRef.current = "smooth"
-                setMessages(prev => [...prev, assistantMsg])
 
                 // Update thread list with new thread if created
                 if (finalThreadId !== threadId) {

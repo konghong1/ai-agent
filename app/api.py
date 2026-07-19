@@ -18,21 +18,24 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.agent import ask_agent, _get_or_create_thread
+from app.agent import ask_agent, _get_or_create_thread, ask_agent_stream_gen
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
-from app.deps import get_current_user, get_current_user_sse
+from app.deps import get_current_user, get_current_user_sse, require_superuser, require_team_admin
 from app.media import MediaService
 from app.storage import get_storage_backend_for_bucket
 from app.models import (
     KBFeedback, RetrievalLog,
 AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBFolder, KBDocument,
 Message, Provider, ProviderModel, Skill, Thread, User, McpServer, SystemSetting,
-PromptTemplate,
+PromptTemplate, UserMemory, PendingMemory, Hook, ToolCallAudit,
+TeamAdminScope, UserPermission, Team, TeamMember, ApprovalLog,
+TeamJoinRequest, TeamInvite, Resource, Role, RolePermission, UserRole,
 )
 from app.schemas import (
     KBStatsResponse,
@@ -43,7 +46,7 @@ KBFolderCreate, KBFolderRead, KBFolderUpdate,
 KBDocumentRead, KBSearchRequest, KBSearchResult, KBUploadResponse,
 McpServerCreate, McpServerRead, McpServerUpdate,
 MessageRead, MessagesPage,
-SkillCreate, SkillRead, SkillUpdate,
+SkillCreate, SkillRead, SkillUpdate, SkillDetailRead,
 ThreadCreate, ThreadRead, ThreadUpdate,
 TokenResponse, UserCreate, UserLogin, UserRead,
 UserUpdate as UserUpdateSchema, UserManagementRead,
@@ -52,13 +55,26 @@ PromptTemplateCreate, PromptTemplateRead, PromptTemplateUpdate,
     ProviderCreate, ProviderRead, ProviderUpdate,
     ProviderModelCreate, ProviderModelRead, ProviderModelUpdate,
     DefaultModelResponse, RemoteModelsResponse, RemoteModelEntry, RemoteModelsFetchRequest,
+    HookCreate, HookUpdate, HookRead, ToolCallAuditRead,
 )
+
+from app.core.crypto import encrypt_secret, encrypt_json
+from app.security_gate import run_security_gate, SecurityReport
+from app.settings import get_settings
 from app.services import (
     HybridRetriever, ContextBuilder, RAG_SYSTEM_PROMPT, QueryRewriter,
 DEFAULT_SYSTEM_PROMPT, authenticate_user, create_user, new_thread_id,
 KnowledgeBaseService, UserService, SystemSettingService, ProviderService,
 )
 from app.settings import get_settings
+from app.memory import MemoryWriter, MemoryStore
+from app.context_service import ContextService, BuildOptions
+from app.permissions import (
+    PERSONAL_DEFAULT,
+    can, get_user_permissions, get_role_permissions, get_team_admin_scope, is_team_admin,
+    ensure_personal_defaults,
+    PERM_ADMIN_PERMISSIONS_MANAGE, PERM_ADMIN_USERS_MANAGE,
+)
 
 
 router = APIRouter(prefix="/api")
@@ -172,12 +188,10 @@ def me(current_user: User = Depends(get_current_user)) -> User:
 def reset_password(
     email: str,
     new_password: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superuser),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Admin-only: reset any user's password."""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+    """Superuser-only: reset any user's password."""
     if len(new_password) < 6:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 6 characters.")
     user = db.scalar(select(User).where(User.email == email.lower()))
@@ -186,6 +200,40 @@ def reset_password(
     user.password_hash = hash_password(new_password)
     db.commit()
     return {"ok": True, "message": f"Password reset for {user.email}"}
+
+
+@router.post("/admin/users/{user_id}/promote")
+def promote_user(
+    user_id: int,
+    current_user: User = Depends(require_superuser),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Superuser-only: grant superuser to a user."""
+    u = db.get(User, user_id)
+    if not u:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    u.is_superuser = True
+    db.commit()
+    return {"ok": True, "user": UserRead.model_validate(u)}
+
+
+@router.post("/admin/users/{user_id}/demote")
+def demote_user(
+    user_id: int,
+    current_user: User = Depends(require_superuser),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Superuser-only: revoke superuser (cannot demote self or the last superuser)."""
+    u = db.get(User, user_id)
+    if not u:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+    if u.id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能降级自己")
+    if not db.scalars(select(User).where(User.is_superuser, User.id != u.id)).first():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="至少保留一位超级管理员")
+    u.is_superuser = False
+    db.commit()
+    return {"ok": True, "user": UserRead.model_validate(u)}
 
 
 # ============================================================
@@ -888,31 +936,44 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
             # For now, we use ask_agent which returns a single response
             # In the future, we can integrate async streaming adapters here
             
-            # ── Run ask_agent in a worker thread that owns its OWN DB session. ──
-            # ask_agent calls llm.invoke() (a blocking network request) which
-            # would freeze the event loop if called directly here, so it must
-            # run in a thread. Crucially, the session is created/closed INSIDE
-            # that thread (see _run_text_chat) rather than in this generator, so
-            # a client disconnect — which cancels this generator — can NEVER
-            # close the session while the worker is committing the messages.
-            # This is what prevents chat messages from being lost when the user
-            # switches tabs or conversations mid-generation.
-            answer, thread_id, blocks = await asyncio.to_thread(
-                _run_text_chat,
-                current_user.id,
-                payload.agent_id,
-                payload.message,
-                request_data.get("thread_id"),
-                system_prompt,
-                model_name,
-                provider_base_url,
-                payload.provider_type,
-                payload.provider_id,
-                payload.reference_images,
-            )
+            # ── Stream tokens via a worker thread that owns its OWN DB session. ──
+            # ask_agent_stream_gen runs in a daemon thread (so a client
+            # disconnect cancelling this generator can never close its session
+            # mid-commit) and pushes ("delta"|"done"|"error") items into a
+            # queue. This generator pulls from the queue and emits SSE events,
+            # giving true token-by-token streaming while keeping messages
+            # persisted. This is what prevents chat messages from being lost
+            # when the user switches tabs or conversations mid-generation.
+            import queue as _queue
+            import threading as _threading
+            _q: "_queue.Queue" = _queue.Queue()
 
-            # Send final answer
-            yield f"data: {json.dumps({'answer': answer, 'thread_id': thread_id, 'blocks': blocks})}\n\n"
+            def _produce() -> None:
+                try:
+                    for _item in ask_agent_stream_gen(
+                        current_user.id, payload.agent_id, payload.message,
+                        request_data.get("thread_id"), system_prompt, model_name,
+                        provider_base_url, payload.provider_type, payload.provider_id,
+                        payload.reference_images,
+                    ):
+                        _q.put(_item)
+                except Exception as _e:  # pragma: no cover - defensive
+                    _q.put(("error", f"{type(_e).__name__}: {_e}"))
+                finally:
+                    _q.put(None)
+
+            _threading.Thread(target=_produce, daemon=True).start()
+            _loop = asyncio.get_event_loop()
+            while True:
+                _item = await _loop.run_in_executor(None, _q.get)
+                if _item is None:
+                    break
+                if _item[0] == "delta":
+                    yield f"data: {json.dumps({'delta': _item[1]})}\n\n"
+                elif _item[0] == "done":
+                    yield f"data: {json.dumps({'answer': _item[3], 'thread_id': _item[1], 'blocks': _item[2]})}\n\n"
+                elif _item[0] == "error":
+                    yield f"data: {json.dumps({'error': _item[1]})}\n\n"
                 
         except Exception as exc:
             import traceback
@@ -1184,30 +1245,54 @@ def get_default_model(current_user: User = Depends(get_current_user), db: Sessio
 # MCP Servers
 # ============================================================
 
+def _to_mcp_read(server: McpServer) -> McpServerRead:
+    return McpServerRead(
+        id=server.id, name=server.name, transport=server.transport,
+        command=server.command, args=server.args, env=server.env, url=server.url,
+        enabled=server.enabled, auth_type=server.auth_type,
+        tool_allowlist=server.tool_allowlist or [],
+        timeout_ms=server.timeout_ms, max_retries=server.max_retries,
+        has_api_key=bool(server.api_key), has_headers=bool(server.headers),
+    )
+
+
 @router.get("/mcp-servers", response_model=list[McpServerRead])
-def list_mcp_servers(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[McpServer]:
-    return list(db.scalars(select(McpServer).where(McpServer.user_id == current_user.id).order_by(McpServer.created_at)))
+def list_mcp_servers(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[McpServerRead]:
+    rows = db.scalars(select(McpServer).where(McpServer.user_id == current_user.id).order_by(McpServer.created_at))
+    return [_to_mcp_read(s) for s in rows]
 
 
 @router.post("/mcp-servers", response_model=McpServerRead)
-def create_mcp_server(payload: McpServerCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> McpServer:
-    server = McpServer(user_id=current_user.id, **payload.model_dump())
+def create_mcp_server(payload: McpServerCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> McpServerRead:
+    data = payload.model_dump()
+    api_key = data.pop("api_key", "")
+    headers = data.pop("headers", {})
+    server = McpServer(user_id=current_user.id, **data)
+    server.api_key = encrypt_secret(api_key)
+    server.headers = encrypt_json(headers)
     db.add(server)
     db.commit()
     db.refresh(server)
-    return server
+    return _to_mcp_read(server)
 
 
 @router.patch("/mcp-servers/{server_id}", response_model=McpServerRead)
-def update_mcp_server(server_id: int, payload: McpServerUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> McpServer:
+def update_mcp_server(server_id: int, payload: McpServerUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> McpServerRead:
     server = db.scalar(select(McpServer).where(McpServer.id == server_id, McpServer.user_id == current_user.id))
     if not server:
         raise HTTPException(status_code=404, detail="MCP server not found.")
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    api_key = data.pop("api_key", None)
+    headers = data.pop("headers", None)
+    for key, value in data.items():
         setattr(server, key, value)
+    if api_key is not None:
+        server.api_key = encrypt_secret(api_key)
+    if headers is not None:
+        server.headers = encrypt_json(headers)
     db.commit()
     db.refresh(server)
-    return server
+    return _to_mcp_read(server)
 
 
 @router.delete("/mcp-servers/{server_id}", status_code=204)
@@ -1219,16 +1304,176 @@ def delete_mcp_server(server_id: int, current_user: User = Depends(get_current_u
     db.commit()
 
 
-@router.post("/mcp-servers/{server_id}/test")
-def test_mcp_server(server_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict[str, str]:
-    server = db.scalar(select(McpServer).where(McpServer.id == server_id, McpServer.user_id == current_user.id))
-    if not server:
+def _get_mcp_owner(server_id: int, current_user: User, db: Session) -> McpServer:
+    s = db.scalar(select(McpServer).where(McpServer.id == server_id, McpServer.user_id == current_user.id))
+    if not s:
         raise HTTPException(status_code=404, detail="MCP server not found.")
-    if server.transport == "stdio" and not server.command:
-        raise HTTPException(status_code=400, detail="stdio MCP server requires a command.")
-    if server.transport in {"sse", "http"} and not server.url:
-        raise HTTPException(status_code=400, detail="remote MCP server requires a url.")
-    return {"status": "configured", "message": "MCP runtime connection will be enabled in the next integration step."}
+    return s
+
+
+@router.post("/mcp-servers/{server_id}/security-check", response_model=SecurityReport)
+def security_check_mcp(server_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> SecurityReport:
+    server = _get_mcp_owner(server_id, current_user, db)
+    return run_security_gate("mcp", server)
+
+
+@router.post("/mcp-servers/{server_id}/enable")
+def enable_mcp_server(server_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    server = _get_mcp_owner(server_id, current_user, db)
+    if get_settings().enable_security_gate:
+        report = run_security_gate("mcp", server)
+        if not report.passed:
+            raise HTTPException(status_code=400, detail={"message": "安全闸门未通过", "report": report.to_dict()})
+    server.enabled = True
+    db.commit()
+    return {"status": "enabled", "id": server.id}
+
+
+# ============================================================
+# Hooks（用户自定义生命周期钩子）
+# ============================================================
+
+def _to_hook_read(hook: Hook) -> HookRead:
+    return HookRead(
+        id=hook.id, user_id=hook.user_id, skill_id=hook.skill_id, event=hook.event,
+        matcher=hook.matcher, command=hook.command, env=hook.env,
+        has_secret_env=bool(hook.secret_env), timeout_ms=hook.timeout_ms,
+        on_error=hook.on_error, enabled=hook.enabled,
+    )
+
+
+@router.get("/hooks", response_model=list[HookRead])
+def list_hooks(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> list[HookRead]:
+    rows = db.scalars(select(Hook).where(Hook.user_id == current_user.id).order_by(Hook.created_at))
+    return [_to_hook_read(h) for h in rows]
+
+
+@router.post("/hooks", response_model=HookRead)
+def create_hook(payload: HookCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> HookRead:
+    data = payload.model_dump()
+    secret_env = data.pop("secret_env", {})
+    hook = Hook(user_id=current_user.id, **data)
+    hook.secret_env = encrypt_json(secret_env)
+    db.add(hook)
+    db.commit()
+    db.refresh(hook)
+    return _to_hook_read(hook)
+
+
+@router.patch("/hooks/{hook_id}", response_model=HookRead)
+def update_hook(hook_id: int, payload: HookUpdate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> HookRead:
+    hook = db.scalar(select(Hook).where(Hook.id == hook_id, Hook.user_id == current_user.id))
+    if not hook:
+        raise HTTPException(status_code=404, detail="Hook not found.")
+    data = payload.model_dump(exclude_unset=True)
+    secret_env = data.pop("secret_env", None)
+    for key, value in data.items():
+        setattr(hook, key, value)
+    if secret_env is not None:
+        hook.secret_env = encrypt_json(secret_env)
+    db.commit()
+    db.refresh(hook)
+    return _to_hook_read(hook)
+
+
+@router.delete("/hooks/{hook_id}", status_code=204)
+def delete_hook(hook_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    hook = db.scalar(select(Hook).where(Hook.id == hook_id, Hook.user_id == current_user.id))
+    if not hook:
+        raise HTTPException(status_code=404, detail="Hook not found.")
+    db.delete(hook)
+    db.commit()
+
+
+@router.post("/hooks/{hook_id}/security-check", response_model=SecurityReport)
+def security_check_hook(hook_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> SecurityReport:
+    hook = db.scalar(select(Hook).where(Hook.id == hook_id, Hook.user_id == current_user.id))
+    if not hook:
+        raise HTTPException(status_code=404, detail="Hook not found.")
+    return run_security_gate("hook", hook)
+
+
+@router.post("/hooks/{hook_id}/enable")
+def enable_hook(hook_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    hook = db.scalar(select(Hook).where(Hook.id == hook_id, Hook.user_id == current_user.id))
+    if not hook:
+        raise HTTPException(status_code=404, detail="Hook not found.")
+    if get_settings().enable_security_gate:
+        report = run_security_gate("hook", hook)
+        if not report.passed:
+            raise HTTPException(status_code=400, detail={"message": "安全闸门未通过", "report": report.to_dict()})
+    hook.enabled = True
+    db.commit()
+    return {"status": "enabled", "id": hook.id}
+
+
+# ============================================================
+# Tool Call Audit（只读）
+# ============================================================
+
+@router.get("/tool-call-audits", response_model=list[ToolCallAuditRead])
+def list_audits(current_user: User = Depends(get_current_user), db: Session = Depends(get_db), limit: int = 100) -> list[ToolCallAuditRead]:
+    rows = db.scalars(
+        select(ToolCallAudit)
+        .where(ToolCallAudit.user_id == current_user.id)
+        .order_by(ToolCallAudit.created_at.desc())
+        .limit(min(limit, 500))
+    )
+    return list(rows)
+
+
+# ============================================================
+# 扩展层可观测性（万级并发容量评估 / 排障）
+# ============================================================
+
+@router.get("/extensions/metrics")
+def extensions_metrics(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    """返回 MCP 连接池、Hook 失败率、审计总量等运行指标（租户隔离）。"""
+    from app.mcp_client import MCPConnectionManager
+
+    # MCP 连接池指标
+    mcp_metrics = MCPConnectionManager.get_metrics()
+
+    # 本租户 Hook 审计聚合（最近 1000 条）
+    audits = db.scalars(
+        select(ToolCallAudit)
+        .where(ToolCallAudit.user_id == current_user.id)
+        .order_by(ToolCallAudit.created_at.desc())
+        .limit(1000)
+    ).all()
+    total = len(audits)
+    blocked = sum(1 for a in audits if a.status == "blocked")
+    errored = sum(1 for a in audits if a.status == "error")
+    hook_failure_rate = round((blocked + errored) / total, 4) if total else 0.0
+
+    # 本租户资源计数
+    mcp_count = db.scalar(
+        select(func.count()).select_from(McpServer).where(McpServer.user_id == current_user.id)
+    ) or 0
+    skill_count = db.scalar(
+        select(func.count()).select_from(Skill).where(Skill.user_id == current_user.id, Skill.enabled.is_(True))
+    ) or 0
+    hook_count = db.scalar(
+        select(func.count()).select_from(Hook).where(Hook.user_id == current_user.id, Hook.enabled.is_(True))
+    ) or 0
+
+    return {
+        "user_id": current_user.id,
+        "deploy_mode": get_settings().deploy_mode,
+        "mcp_pool": mcp_metrics,
+        "hook_audit": {
+            "total": total,
+            "blocked": blocked,
+            "errored": errored,
+            "failure_rate": hook_failure_rate,
+        },
+        "enabled_resources": {
+            "mcp_servers": mcp_count,
+            "skills": skill_count,
+            "hooks": hook_count,
+        },
+        "note": "API 无状态，可 docker compose up --scale api=N 水平扩容；MCP 池按副本分片。",
+    }
 
 
 # ============================================================
@@ -1254,8 +1499,14 @@ def update_skill(skill_id: int, payload: SkillUpdate, current_user: User = Depen
     skill = db.scalar(select(Skill).where(Skill.id == skill_id, Skill.user_id == current_user.id))
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found.")
+    enabled_toggle = payload.enabled if "enabled" in payload.model_dump(exclude_unset=True) else None
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(skill, key, value)
+    # 启用/停用切换时同步声明式 Hook（声明钩子随技能一并激活/休眠）。
+    if enabled_toggle is not None:
+        from app.skill_runtime import apply_skill_enabled
+
+        apply_skill_enabled(db, skill, bool(enabled_toggle))
     db.commit()
     db.refresh(skill)
     return skill
@@ -1268,6 +1519,40 @@ def delete_skill(skill_id: int, current_user: User = Depends(get_current_user), 
         raise HTTPException(status_code=404, detail="Skill not found.")
     db.delete(skill)
     db.commit()
+
+
+@router.get("/skills/{skill_id}", response_model=SkillDetailRead)
+def get_skill(skill_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> Skill:
+    skill = db.scalar(select(Skill).where(Skill.id == skill_id, Skill.user_id == current_user.id))
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found.")
+    return skill
+
+
+@router.post("/skills/{skill_id}/security-check", response_model=SecurityReport)
+def security_check_skill(skill_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> SecurityReport:
+    skill = db.scalar(select(Skill).where(Skill.id == skill_id, Skill.user_id == current_user.id))
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found.")
+    return run_security_gate("skill", skill)
+
+
+@router.post("/skills/{skill_id}/enable")
+def enable_skill(skill_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    skill = db.scalar(select(Skill).where(Skill.id == skill_id, Skill.user_id == current_user.id))
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found.")
+    if get_settings().enable_security_gate:
+        report = run_security_gate("skill", skill)
+        if not report.passed:
+            raise HTTPException(status_code=400, detail={"message": "安全闸门未通过", "report": report.to_dict()})
+    # 启用技能并同步其声明式 Hook（声明钩子随技能一并激活）。
+    from app.skill_runtime import apply_skill_enabled
+
+    apply_skill_enabled(db, skill, True)
+    linked = db.scalars(select(Hook).where(Hook.skill_id == skill.id, Hook.enabled.is_(True))).all()
+    db.commit()
+    return {"status": "enabled", "id": skill.id, "linked_hooks": len(linked)}
 
 
 # ============================================================
@@ -2014,3 +2299,976 @@ def update_kb_rag_config(
     db.commit()
     db.refresh(kb)
     return {"status": "ok", "rag_config": kb.rag_config}
+
+
+# ============================================================
+# Memory API（ADR-022 / 023：跨会话长期记忆 + 隐式候选）
+# ============================================================
+from pydantic import BaseModel
+
+
+def _memory_to_dict(m: "UserMemory") -> dict:
+    return {
+        "id": m.id, "user_id": m.user_id, "layer": m.layer,
+        "mem_type": m.mem_type, "key": m.key, "value": m.value,
+        "importance": m.importance, "confidence": m.confidence,
+        "status": m.status, "source": m.source,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+    }
+
+
+def _pending_to_dict(p: "PendingMemory") -> dict:
+    return {
+        "id": p.id, "user_id": p.user_id, "candidate": p.candidate,
+        "status": p.status,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
+class MemoryCreate(BaseModel):
+    key: str
+    value: str
+    layer: int = 1
+    mem_type: str = "preference"
+    importance: float = 0.5
+    confidence: float = 1.0
+
+
+class MemoryUpdate(BaseModel):
+    key: str | None = None
+    value: str | None = None
+    layer: int | None = None
+    mem_type: str | None = None
+    importance: float | None = None
+    confidence: float | None = None
+
+
+@router.get("/memories")
+def list_memories(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """列出当前用户的 active 长期记忆。"""
+    return [_memory_to_dict(m) for m in MemoryWriter(db).list_memories(current_user.id, status="active")]
+
+
+@router.post("/memories")
+def create_memory(
+    payload: MemoryCreate,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """显式写入一条记忆（零幻觉，优先路径）。实体归一：同 key 自动合并。"""
+    if not payload.key.strip() or not payload.value.strip():
+        raise HTTPException(status_code=400, detail="key 与 value 均不可为空")
+    m = MemoryWriter(db).add_explicit(
+        current_user.id, payload.key.strip(), payload.value.strip(),
+        layer=payload.layer, mem_type=payload.mem_type,
+        importance=payload.importance, confidence=payload.confidence,
+    )
+    return _memory_to_dict(m)
+
+
+@router.put("/memories/{mem_id}")
+def update_memory(
+    mem_id: int, payload: MemoryUpdate,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    m = MemoryWriter(db).update_memory(mem_id, current_user.id, **payload.model_dump(exclude_unset=True))
+    if m is None:
+        raise HTTPException(status_code=404, detail="记忆不存在或无权限")
+    return _memory_to_dict(m)
+
+
+@router.delete("/memories/{mem_id}")
+def delete_memory(
+    mem_id: int,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """软删除（status=archived），绝不硬删（项目铁律）。"""
+    if not MemoryWriter(db).delete_memory(mem_id, current_user.id):
+        raise HTTPException(status_code=404, detail="记忆不存在或无权限")
+    return {"status": "ok"}
+
+
+@router.get("/memories/pending")
+def list_pending(
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    """列出待确认的隐式提取候选。"""
+    return [_pending_to_dict(p) for p in MemoryWriter(db).list_pending(current_user.id)]
+
+
+@router.post("/memories/pending/{pending_id}/accept")
+def accept_pending(
+    pending_id: int,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    mem = MemoryWriter(db).promote(pending_id, current_user.id)
+    if mem is None:
+        raise HTTPException(status_code=404, detail="候选不存在或已处理")
+    return _memory_to_dict(mem)
+
+
+@router.post("/memories/pending/{pending_id}/reject")
+def reject_pending(
+    pending_id: int,
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    if not MemoryWriter(db).reject_pending(pending_id, current_user.id):
+        raise HTTPException(status_code=404, detail="候选不存在")
+    return {"status": "ok"}
+
+
+@router.get("/memories/preview")
+def preview_memory(
+    text: str = "",
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_db),
+):
+    """诊断：返回各记忆块文本（无需 LLM），验证注入是否正确。"""
+    s = get_settings()
+    opts = BuildOptions(
+        recent_turns=s.context_service_recent_turns,
+        reflex_cap=s.context_service_reflex_cap,
+        recall_k=s.context_service_recall_k,
+        enable_reflex=getattr(s, "enable_retrieval_reflex", False),
+        enable_memory_recall=getattr(s, "enable_memory_recall", False),
+        enable_gap_analysis=getattr(s, "enable_gap_analysis", False),
+        enable_rrf=getattr(s, "enable_rrf", False),
+    )
+    return ContextService(db).preview_memory(current_user.id, text or "", opts)
+
+
+# ============================================================
+# Permission System — 两级委派（超管 → 团队管理员 → 用户）
+# ============================================================
+from pydantic import BaseModel
+
+class PermissionAssignRequest(BaseModel):
+    permission_codes: list[str]
+
+class TeamAdminSetRequest(BaseModel):
+    user_id: int
+    permission_codes: list[str]
+
+
+@router.get("/permissions/catalog")
+def get_permission_catalog(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """权限目录（最细粒度）。超管见全部；团队管理员另标 grantable（自己 scope 内可授予项）。"""
+    held = get_user_permissions(current_user.id, None, db)
+    scope = get_team_admin_scope(current_user.id, db) if is_team_admin(current_user, db) else set()
+    items = []
+    for r in db.query(Resource).filter_by(type="permission").order_by(Resource.sort_order, Resource.code).all():
+        items.append({
+            "code": r.code,
+            "name": r.name,
+            "category": r.category,
+            "description": r.description or "",
+            "sort_order": r.sort_order,
+            "is_system": r.is_system,
+            "held": r.code in held,
+            "grantable": bool(current_user.is_superuser) or (r.code in scope),
+        })
+    return {"items": items}
+
+
+@router.get("/me/permissions")
+def get_my_permissions(
+    team_id: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """当前用户在指定空间的有效权限码（前端菜单/按钮过滤用）。
+
+    返回 角色权限 ∪ 个人/团队显式授权 的加性并集。
+    """
+    perms = get_user_permissions(current_user.id, team_id, db)
+    perms |= get_role_permissions(current_user.id, db)
+    # 超管恒有全部权限（与 can() 的 is_superuser 短路一致，权限列表也反映全集）
+    if current_user.is_superuser:
+        perms |= _perm_resource_codes(db)
+    return {
+        "permissions": sorted(perms),
+        "is_superuser": current_user.is_superuser,
+        "is_team_admin": is_team_admin(current_user, db),
+    }
+
+
+@router.get("/system/menus")
+def get_system_menus(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """当前用户可见的菜单树（动态菜单，由 resources(type='menu') 驱动）。
+
+    - 菜单可见性由节点的 permission_code 决定：超管全可见；其他用户需持有该权限码，
+      或无权限码（始终可见），或含有可见子节点。
+    - 返回 antd Menu 可直接消费的树形结构。
+    """
+    menus = db.query(Resource).filter_by(type="menu", is_visible=True).all()
+
+    if current_user.is_superuser:
+        perms = _perm_resource_codes(db)
+    else:
+        perms = get_user_permissions(current_user.id, None, db) | get_role_permissions(current_user.id, db)
+
+    children: dict = {}
+    perm_by_code = {m.code: m.permission_code for m in menus}
+    for m in menus:
+        node = {
+            "key": m.path or m.code,
+            "label": m.name,
+            "icon": m.icon,
+            "path": m.path,
+            "code": m.code,
+            "sort_order": m.sort_order or 0,
+            "_perm": perm_by_code.get(m.code),
+            "children": [],
+        }
+        children.setdefault(m.parent_code, []).append(node)
+
+    def build(parent_code):
+        out = []
+        for n in sorted(children.get(parent_code, []), key=lambda x: x["sort_order"]):
+            n["children"] = build(n["code"])
+            has_visible_child = len(n["children"]) > 0
+            pc = n.get("_perm")
+            own_visible = (pc is None) or (pc in perms)
+            if not has_visible_child and not own_visible:
+                continue
+            n.pop("_perm", None)
+            out.append(n)
+        return out
+
+    tree = build(None)
+    return {"menus": tree}
+
+
+# ============================================================
+# 系统管理：资源 / 角色 / 用户-角色（RBAC v2 管理面）
+# 守卫：资源与角色管理需 admin.permissions.manage（仅超管持有）；
+#       用户-角色分配需 admin.users.manage（仅超管持有）。
+# ============================================================
+
+def _require_perm(user: User, db: Session, perm: str) -> None:
+    if not can(user, perm, db=db):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "权限不足，需要管理员权限。")
+
+
+def _perm_resource_codes(db: Session) -> set[str]:
+    """权限码统一真源：resources(type='permission')（ADR-031）。"""
+    return {r.code for r in db.query(Resource).filter_by(type="permission").all()}
+
+
+def _system_perm_codes(db: Session) -> set[str]:
+    """系统级（仅超管可授）权限码集合。"""
+    return {r.code for r in db.query(Resource).filter_by(type="permission", is_system=True).all()}
+
+
+def _resource_json(r: Resource) -> dict:
+    return {
+        "id": r.id, "code": r.code, "name": r.name, "type": r.type,
+        "category": r.category, "parent_code": r.parent_code, "path": r.path,
+        "component": r.component, "icon": r.icon, "sort_order": r.sort_order,
+        "permission_code": r.permission_code, "is_visible": r.is_visible,
+        "is_system": r.is_system, "description": r.description,
+    }
+
+
+def _role_json(r: Role, db: Session) -> dict:
+    perms = sorted(db.scalars(
+        select(RolePermission.permission_code).where(RolePermission.role_id == r.id)
+    ).all())
+    return {
+        "id": r.id, "code": r.code, "name": r.name, "description": r.description,
+        "is_system": r.is_system, "is_default": r.is_default, "sort_order": r.sort_order,
+        "permissions": perms, "permission_count": len(perms),
+    }
+
+
+class ResourceCreate(BaseModel):
+    code: str
+    name: str
+    description: str | None = None
+    type: str = "menu"                       # 'menu' | 'permission' | 'api'
+    category: str = "general"
+    parent_code: str | None = None
+    path: str | None = None
+    component: str | None = None
+    icon: str | None = None
+    sort_order: int = 0
+    permission_code: str | None = None
+    is_visible: bool = True
+
+
+class ResourceUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    type: str | None = None
+    category: str | None = None
+    parent_code: str | None = None
+    path: str | None = None
+    component: str | None = None
+    icon: str | None = None
+    sort_order: int | None = None
+    permission_code: str | None = None
+    is_visible: bool | None = None
+
+
+class RoleCreate(BaseModel):
+    code: str
+    name: str
+    description: str = ""
+    is_default: bool = False
+
+
+class RoleUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    is_default: bool | None = None
+
+
+class RolePermSet(BaseModel):
+    codes: list[str]
+
+
+class UserRoleAssign(BaseModel):
+    role_id: int
+    team_id: int | None = None
+
+
+@router.get("/system/resources")
+def list_system_resources(
+    type: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """资源列表（菜单/权限/API）。超管可见全部。"""
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    q = select(Resource)
+    if type:
+        q = q.where(Resource.type == type)
+    rows = db.scalars(q.order_by(Resource.type, Resource.sort_order, Resource.code)).all()
+    return {"items": [_resource_json(r) for r in rows]}
+
+
+@router.post("/system/resources", status_code=201)
+def create_system_resource(
+    payload: ResourceCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    if db.query(Resource).filter_by(code=payload.code).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, "资源 code 已存在。")
+    r = Resource(
+        code=payload.code, name=payload.name, type=payload.type,
+        category=payload.category, parent_code=payload.parent_code, path=payload.path,
+        component=payload.component, icon=payload.icon, sort_order=payload.sort_order,
+        permission_code=payload.permission_code, is_visible=payload.is_visible,
+        is_system=False, description=payload.description,
+    )
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return {"item": _resource_json(r)}
+
+
+@router.put("/system/resources/{code}")
+def update_system_resource(
+    code: str,
+    payload: ResourceUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    r = db.query(Resource).filter_by(code=code).first()
+    if not r:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "资源不存在。")
+    data = payload.model_dump(exclude_unset=True)
+    # 系统资源：禁止改类型（菜单/权限分类不可变），仅允许调名称/层级/可见性等展示字段
+    if r.is_system and "type" in data and data["type"] != r.type:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "系统资源不可更改类型。")
+    for k, v in data.items():
+        setattr(r, k, v)
+    db.commit()
+    db.refresh(r)
+    return {"item": _resource_json(r)}
+
+
+@router.delete("/system/resources/{code}")
+def delete_system_resource(
+    code: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    r = db.query(Resource).filter_by(code=code).first()
+    if not r:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "资源不存在。")
+    if r.is_system:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "系统资源不可删除。")
+    if db.query(Resource).filter_by(parent_code=code).first():
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "该资源下仍有子项，请先删除子项。")
+    db.delete(r)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/system/roles")
+def list_system_roles(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """角色列表（含各自权限码）。超管可见全部。"""
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    roles = db.scalars(select(Role).order_by(Role.sort_order, Role.id)).all()
+    return {"items": [_role_json(r, db) for r in roles]}
+
+
+@router.post("/system/roles", status_code=201)
+def create_system_role(
+    payload: RoleCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    if db.query(Role).filter_by(code=payload.code).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, "角色 code 已存在。")
+    r = Role(
+        code=payload.code, name=payload.name, description=payload.description,
+        is_default=payload.is_default, is_system=False, sort_order=100,
+    )
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    # 设为默认角色：即时授予所有既有用户（新注册用户由 create_user 自动授予）
+    if r.is_default:
+        for u in db.query(User).all():
+            from app.rbac_seed import assign_default_roles_to_user
+            assign_default_roles_to_user(db, u.id)
+        db.commit()
+    return {"item": _role_json(r, db)}
+
+
+@router.put("/system/roles/{role_id}")
+def update_system_role(
+    role_id: int,
+    payload: RoleUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    r = db.get(Role, role_id)
+    if not r:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "角色不存在。")
+    data = payload.model_dump(exclude_unset=True)
+    if r.is_system and ("code" in data or "is_system" in data):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "系统角色不可更改 code / is_system。")
+    was_default = r.is_default
+    for k, v in data.items():
+        setattr(r, k, v)
+    if r.is_default and not was_default:
+        for u in db.query(User).all():
+            from app.rbac_seed import assign_default_roles_to_user
+            assign_default_roles_to_user(db, u.id)
+    db.commit()
+    db.refresh(r)
+    return {"item": _role_json(r, db)}
+
+
+@router.delete("/system/roles/{role_id}")
+def delete_system_role(
+    role_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    r = db.get(Role, role_id)
+    if not r:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "角色不存在。")
+    if r.is_system:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "系统角色不可删除。")
+    # role_permissions / user_roles 通过外键 ON DELETE CASCADE 级联清理
+    db.delete(r)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/system/roles/{role_id}/permissions")
+def get_role_permissions_endpoint(
+    role_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    r = db.get(Role, role_id)
+    if not r:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "角色不存在。")
+    perms = sorted(db.scalars(
+        select(RolePermission.permission_code).where(RolePermission.role_id == role_id)
+    ).all())
+    return {"role_id": role_id, "permissions": perms}
+
+
+@router.put("/system/roles/{role_id}/permissions")
+def set_role_permissions_endpoint(
+    role_id: int,
+    payload: RolePermSet,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _require_perm(current_user, db, PERM_ADMIN_PERMISSIONS_MANAGE)
+    r = db.get(Role, role_id)
+    if not r:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "角色不存在。")
+    valid = _perm_resource_codes(db)
+    invalid = [c for c in payload.codes if c not in valid]
+    if invalid:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"未知权限码：{invalid}")
+    # 整集替换（纯加性模型下，收回=删关联行）
+    db.query(RolePermission).where(RolePermission.role_id == role_id).delete()
+    for code in payload.codes:
+        db.add(RolePermission(role_id=role_id, permission_code=code, granted_by_user_id=current_user.id))
+    db.commit()
+    return {"role_id": role_id, "permissions": sorted(payload.codes)}
+
+
+@router.get("/users/{user_id}/roles")
+def get_user_roles_endpoint(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """取某用户已分配的角色（global: team_id 恒 NULL）。"""
+    _require_perm(current_user, db, PERM_ADMIN_USERS_MANAGE)
+    u = db.get(User, user_id)
+    if not u:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在。")
+    rows = db.scalars(select(UserRole).where(UserRole.user_id == user_id)).all()
+    out = []
+    for ur in rows:
+        role = db.get(Role, ur.role_id)
+        out.append({
+            "role_id": ur.role_id,
+            "role_code": role.code if role else None,
+            "role_name": role.name if role else None,
+            "is_system": role.is_system if role else False,
+            "team_id": ur.team_id,
+        })
+    return {"user_id": user_id, "roles": out}
+
+
+@router.post("/users/{user_id}/roles")
+def assign_user_role_endpoint(
+    user_id: int,
+    payload: UserRoleAssign,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """给用户分配角色（当前仅全局角色，team_id 必须为 NULL）。"""
+    _require_perm(current_user, db, PERM_ADMIN_USERS_MANAGE)
+    u = db.get(User, user_id)
+    if not u:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "用户不存在。")
+    role = db.get(Role, payload.role_id)
+    if not role:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "角色不存在。")
+    if payload.team_id is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "当前角色为全局角色，team_id 必须为 NULL。")
+    existing = db.query(UserRole).filter_by(user_id=user_id, role_id=payload.role_id, team_id=None).first()
+    if existing:
+        raise HTTPException(status.HTTP_409_CONFLICT, "用户已拥有该角色。")
+    db.add(UserRole(
+        user_id=user_id, role_id=payload.role_id, team_id=None,
+        granted_by_user_id=current_user.id,
+    ))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/users/{user_id}/roles/{role_id}")
+def unassign_user_role_endpoint(
+    user_id: int,
+    role_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """撤销用户角色。base 角色可被撤销（但不影响该用户既有 user_permissions override）。"""
+    _require_perm(current_user, db, PERM_ADMIN_USERS_MANAGE)
+    ur = db.query(UserRole).filter_by(user_id=user_id, role_id=role_id, team_id=None).first()
+    if not ur:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "用户未持有该角色。")
+    db.delete(ur)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/admin/team-admins")
+def list_team_admins(current_user: User = Depends(require_superuser), db: Session = Depends(get_db)):
+    """列出所有团队管理员及其可授予范围(scope)。"""
+    admins = db.scalars(select(User).where(User.is_team_admin.is_(True))).all()
+    result = []
+    for u in admins:
+        result.append({
+            "user_id": u.id,
+            "email": u.email,
+            "username": u.username,
+            "is_team_admin": u.is_team_admin,
+            "scope": sorted(get_team_admin_scope(u.id, db)),
+        })
+    return {"team_admins": result}
+
+
+@router.get("/admin/team-admins/{uid}/scope")
+def get_team_admin_scope_endpoint(uid: int, current_user: User = Depends(require_superuser), db: Session = Depends(get_db)):
+    target = db.get(User, uid)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
+    return {"user_id": uid, "is_team_admin": target.is_team_admin, "scope": sorted(get_team_admin_scope(uid, db))}
+
+
+@router.post("/admin/team-admins")
+def set_team_admin(req: TeamAdminSetRequest, current_user: User = Depends(require_superuser), db: Session = Depends(get_db)):
+    """将某用户设为团队管理员，并分配其可授予范围(scope)。
+
+    - scope 中权限码必须合法且非系统级（团队管理员不可授予 admin.*）。
+    - 同步将其个人空间权限对齐为 PERSONAL_DEFAULT ∪ scope（能管即能用）。
+    """
+    target = db.get(User, req.user_id)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
+    if target.id == current_user.id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "不能对自己执行该操作")
+    valid = _perm_resource_codes(db)
+    invalid = [c for c in req.permission_codes if c not in valid]
+    if invalid:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"无效权限码: {invalid}")
+    system_codes = _system_perm_codes(db)
+    forbidden = [c for c in req.permission_codes if c in system_codes]
+    if forbidden:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"团队管理员不可授予系统级权限: {forbidden}")
+
+    # 替换 scope
+    for s in db.scalars(select(TeamAdminScope).where(TeamAdminScope.team_admin_user_id == target.id)).all():
+        db.delete(s)
+    for code in req.permission_codes:
+        db.add(TeamAdminScope(team_admin_user_id=target.id, team_id=None, permission_code=code, granted_by_user_id=current_user.id))
+
+    # 对齐个人空间权限 = PERSONAL_DEFAULT ∪ scope
+    ensure_personal_defaults(target.id, db)
+    desired = set(PERSONAL_DEFAULT) | set(req.permission_codes)
+    current_personal = get_user_permissions(target.id, None, db)
+    for code in desired:
+        if code not in current_personal:
+            db.add(UserPermission(user_id=target.id, team_id=None, permission_code=code, granted_by_user_id=current_user.id))
+    for up in db.scalars(select(UserPermission).where(UserPermission.user_id == target.id, UserPermission.team_id.is_(None))).all():
+        if up.permission_code not in desired and up.permission_code not in system_codes:
+            db.delete(up)
+
+    target.is_team_admin = True
+    db.commit()
+    return {"ok": True, "user_id": target.id, "scope": sorted(req.permission_codes), "is_team_admin": True}
+
+
+@router.delete("/admin/team-admins/{uid}")
+def remove_team_admin(uid: int, current_user: User = Depends(require_superuser), db: Session = Depends(get_db)):
+    """撤销某用户的团队管理员身份（仅移除 scope 与标志，保留其已有 user_permissions）。"""
+    target = db.get(User, uid)
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found.")
+    for s in db.scalars(select(TeamAdminScope).where(TeamAdminScope.team_admin_user_id == uid)).all():
+        db.delete(s)
+    target.is_team_admin = False
+    db.commit()
+    return {"ok": True, "user_id": uid}
+
+
+@router.get("/teams/{tid}/members/{uid}/permissions")
+def get_member_permissions(tid: int, uid: int, current_user: User = Depends(require_team_admin), db: Session = Depends(get_db)):
+    """查看团队成员在某团队内的权限。"""
+    team = db.get(Team, tid)
+    if not team:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found.")
+    member = db.scalar(select(TeamMember).where(TeamMember.team_id == tid, TeamMember.user_id == uid, TeamMember.status == "active"))
+    if not member:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "该用户不是团队活跃成员")
+    return {"user_id": uid, "team_id": tid, "permissions": sorted(get_user_permissions(uid, tid, db))}
+
+
+@router.post("/teams/{tid}/members/{uid}/permissions")
+def set_member_permissions(tid: int, uid: int, req: PermissionAssignRequest, current_user: User = Depends(require_team_admin), db: Session = Depends(get_db)):
+    """团队管理员在自身 scope 内为成员分配团队权限（超管无限制）。"""
+    team = db.get(Team, tid)
+    if not team:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found.")
+    member = db.scalar(select(TeamMember).where(TeamMember.team_id == tid, TeamMember.user_id == uid, TeamMember.status == "active"))
+    if not member:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "该用户不是团队活跃成员，无法分配权限（请先将其加入团队）")
+    valid = _perm_resource_codes(db)
+    bad = [c for c in req.permission_codes if c not in valid]
+    if bad:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"无效权限码: {bad}")
+    if not current_user.is_superuser:
+        scope = get_team_admin_scope(current_user.id, db)
+        over = [c for c in req.permission_codes if c not in scope]
+        if over:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"超出你的可授予范围: {over}")
+
+    for up in db.scalars(select(UserPermission).where(UserPermission.user_id == uid, UserPermission.team_id == tid)).all():
+        db.delete(up)
+    for code in req.permission_codes:
+        db.add(UserPermission(user_id=uid, team_id=tid, permission_code=code, granted_by_user_id=current_user.id))
+    db.commit()
+    return {"ok": True, "user_id": uid, "team_id": tid, "permissions": sorted(req.permission_codes)}
+
+
+@router.delete("/teams/{tid}/members/{uid}/permissions")
+def clear_member_permissions(tid: int, uid: int, current_user: User = Depends(require_team_admin), db: Session = Depends(get_db)):
+    """清空成员在该团队的权限。"""
+    for up in db.scalars(select(UserPermission).where(UserPermission.user_id == uid, UserPermission.team_id == tid)).all():
+        db.delete(up)
+    db.commit()
+    return {"ok": True, "user_id": uid, "team_id": tid}
+
+
+@router.get("/teams")
+def list_teams(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """列出当前用户可见的团队。
+
+    - 超管：全部团队。
+    - 团队管理员：全部团队（可管理任意团队成员权限）。
+    - 普通成员：仅自己所在的团队。
+    """
+    if current_user.is_superuser or is_team_admin(current_user, db):
+        teams = db.scalars(select(Team)).all()
+    else:
+        ids = db.scalars(select(TeamMember.team_id).where(TeamMember.user_id == current_user.id, TeamMember.status == "active")).all()
+        teams = db.scalars(select(Team).where(Team.id.in_(ids))).all() if ids else []
+    return {"teams": [
+        {"id": t.id, "name": t.name, "slug": t.slug, "description": t.description, "owner_id": t.owner_id, "enabled": t.enabled}
+        for t in teams
+    ]}
+
+
+@router.get("/teams/{tid}/members")
+def list_team_members(tid: int, current_user: User = Depends(require_team_admin), db: Session = Depends(get_db)):
+    """列出团队成员及其在该团队内的权限。"""
+    team = db.get(Team, tid)
+    if not team:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found.")
+    members = db.scalars(select(TeamMember).where(TeamMember.team_id == tid, TeamMember.status == "active")).all()
+    out = []
+    for m in members:
+        u = db.get(User, m.user_id)
+        out.append({
+            "user_id": m.user_id,
+            "username": u.username if u else "?",
+            "email": u.email if u else "?",
+            "role": m.role,
+            "permissions": sorted(get_user_permissions(m.user_id, tid, db)),
+        })
+    return {"team_id": tid, "members": out}
+
+
+# ============================================================
+# Phase B — 入团审批流（用户自申请需管理员审批 / 管理员拉人需用户本人同意）
+# 设计见 designs/plan-permission-rbac.md §5。审批全程写入 approval_logs 留痕。
+# ============================================================
+
+def _ensure_team_member(db: Session, team_id: int, user_id: int, role: str = "member") -> TeamMember:
+    """幂等建立/恢复活跃团队成员。已存在则恢复 active。"""
+    existing = db.scalar(select(TeamMember).where(
+        TeamMember.team_id == team_id, TeamMember.user_id == user_id))
+    if existing:
+        if existing.status != "active":
+            existing.status = "active"
+            existing.role = role
+            db.flush()
+        return existing
+    m = TeamMember(team_id=team_id, user_id=user_id, role=role, status="active")
+    db.add(m)
+    db.flush()
+    return m
+
+
+def _grant_base_team_perms(db: Session, team_id: int, user_id: int, actor_id: int) -> None:
+    """给新成员授基础团队权限（PERSONAL_DEFAULT），团队管理员后续可在控制台调整。幂等。"""
+    existing = set(db.scalars(select(UserPermission.permission_code).where(
+        UserPermission.user_id == user_id, UserPermission.team_id == team_id)).all())
+    for code in PERSONAL_DEFAULT:
+        if code not in existing:
+            db.add(UserPermission(user_id=user_id, team_id=team_id, permission_code=code, granted_by_user_id=actor_id))
+    db.flush()
+
+
+class JoinRequestCreate(BaseModel):
+    message: str = ""
+
+
+class JoinRequestReview(BaseModel):
+    action: str  # approve | reject
+    comment: str = ""
+
+
+class InviteCreate(BaseModel):
+    email: str
+    role: str = "member"
+    message: str = ""
+
+
+class InviteRespond(BaseModel):
+    action: str  # accept | decline
+    comment: str = ""
+
+
+@router.post("/teams/{tid}/join-requests")
+def create_join_request(tid: int, req: JoinRequestCreate,
+                        current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """用户自申请加入团队。已是活跃成员 / 已有 pending 申请则拒绝（幂等）。"""
+    team = db.get(Team, tid)
+    if not team or not team.enabled:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "团队不存在或已禁用")
+    if db.scalar(select(TeamMember).where(TeamMember.team_id == tid, TeamMember.user_id == current_user.id, TeamMember.status == "active")):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "你已是该团队活跃成员")
+    if db.scalar(select(TeamJoinRequest).where(TeamJoinRequest.team_id == tid, TeamJoinRequest.user_id == current_user.id, TeamJoinRequest.status == "pending")):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "你已提交过加入申请，请等待审批")
+    jr = TeamJoinRequest(team_id=tid, user_id=current_user.id, message=req.message, status="pending")
+    db.add(jr)
+    db.commit()
+    return {"ok": True, "id": jr.id, "status": "pending"}
+
+
+@router.get("/teams/discover")
+def discover_teams(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """列出当前用户可申请的团队（启用且非其活跃成员）。"""
+    member_ids = db.scalars(select(TeamMember.team_id).where(
+        TeamMember.user_id == current_user.id, TeamMember.status == "active")).all()
+    conds = [Team.enabled.is_(True)]
+    if member_ids:
+        conds.append(Team.id.notin_(member_ids))
+    teams = db.scalars(select(Team).where(*conds)).all()
+    return {"teams": [{"id": t.id, "name": t.name, "slug": t.slug, "description": t.description} for t in teams]}
+
+
+@router.get("/me/join-requests")
+def my_join_requests(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """我的加入申请列表（含团队名与状态）。"""
+    rows = db.scalars(select(TeamJoinRequest).where(TeamJoinRequest.user_id == current_user.id)).all()
+    out = []
+    for r in rows:
+        t = db.get(Team, r.team_id)
+        out.append({"id": r.id, "team_id": r.team_id, "team_name": t.name if t else "?",
+                    "status": r.status, "message": r.message, "review_comment": r.review_comment,
+                    "created_at": r.created_at.isoformat() if r.created_at else None})
+    return {"join_requests": out}
+
+
+@router.get("/teams/{tid}/join-requests")
+def list_join_requests(tid: int, current_user: User = Depends(require_team_admin), db: Session = Depends(get_db)):
+    """团队管理员查看该团队的待审加入申请（含申请人信息）。"""
+    team = db.get(Team, tid)
+    if not team:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found.")
+    rows = db.scalars(select(TeamJoinRequest).where(TeamJoinRequest.team_id == tid, TeamJoinRequest.status == "pending")).all()
+    out = []
+    for r in rows:
+        u = db.get(User, r.user_id)
+        out.append({"id": r.id, "user_id": r.user_id, "username": u.username if u else "?",
+                    "email": u.email if u else "?", "message": r.message,
+                    "status": r.status, "created_at": r.created_at.isoformat() if r.created_at else None})
+    return {"join_requests": out}
+
+
+@router.post("/teams/{tid}/join-requests/{rid}/review")
+def review_join_request(tid: int, rid: int, req: JoinRequestReview,
+                        current_user: User = Depends(require_team_admin), db: Session = Depends(get_db)):
+    """团队管理员审批加入申请。approve → 建成员 + 授基础团队权限；写审批审计。"""
+    team = db.get(Team, tid)
+    if not team:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found.")
+    jr = db.get(TeamJoinRequest, rid)
+    if not jr or jr.team_id != tid:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "申请不存在")
+    if jr.status != "pending":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"该申请已处理（{jr.status}）")
+    if req.action not in ("approve", "reject"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "action 必须为 approve 或 reject")
+    jr.status = "approved" if req.action == "approve" else "rejected"
+    jr.reviewed_by = current_user.id
+    jr.reviewed_at = datetime.utcnow()
+    jr.review_comment = req.comment
+    db.add(ApprovalLog(team_id=tid, target_type="join_request", target_id=jr.id,
+                       action=req.action, actor_id=current_user.id, comment=req.comment))
+    if req.action == "approve":
+        _ensure_team_member(db, tid, jr.user_id, "member")
+        _grant_base_team_perms(db, tid, jr.user_id, current_user.id)
+    db.commit()
+    return {"ok": True, "status": jr.status}
+
+
+@router.post("/teams/{tid}/invites")
+def create_invite(tid: int, req: InviteCreate,
+                  current_user: User = Depends(require_team_admin), db: Session = Depends(get_db)):
+    """团队管理员拉人（按邮箱）。邀请 pending，需被邀请用户本人同意。"""
+    team = db.get(Team, tid)
+    if not team:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found.")
+    email = (req.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "邮箱不能为空")
+    dup = db.scalar(select(TeamInvite).where(TeamInvite.team_id == tid, TeamInvite.email == email, TeamInvite.status == "pending"))
+    if dup:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "已向该邮箱发送过待接受邀请")
+    inv = TeamInvite(team_id=tid, email=email, token=uuid.uuid4().hex, role=req.role,
+                     invited_by=current_user.id, status="pending", message=req.message or None)
+    db.add(inv)
+    db.commit()
+    return {"ok": True, "id": inv.id, "status": "pending", "email": email}
+
+
+@router.get("/teams/{tid}/invites")
+def list_invites(tid: int, current_user: User = Depends(require_team_admin), db: Session = Depends(get_db)):
+    team = db.get(Team, tid)
+    if not team:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Team not found.")
+    rows = db.scalars(select(TeamInvite).where(TeamInvite.team_id == tid)).all()
+    return {"invites": [{"id": r.id, "email": r.email, "role": r.role, "status": r.status,
+                         "message": r.message, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]}
+
+
+@router.get("/me/invites")
+def my_invites(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """我收到的待接受邀请（按当前用户邮箱匹配）。"""
+    rows = db.scalars(select(TeamInvite).where(TeamInvite.email == current_user.email.lower(), TeamInvite.status == "pending")).all()
+    out = []
+    for r in rows:
+        t = db.get(Team, r.team_id)
+        out.append({"id": r.id, "team_id": r.team_id, "team_name": t.name if t else "?",
+                    "role": r.role, "message": r.message, "status": r.status,
+                    "created_at": r.created_at.isoformat() if r.created_at else None})
+    return {"invites": out}
+
+
+@router.post("/invites/{iid}/respond")
+def respond_invite(iid: int, req: InviteRespond,
+                   current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """被邀请用户本人响应（同意/拒绝）。accept → 建成员 + 授基础团队权限；写审计。"""
+    inv = db.get(TeamInvite, iid)
+    if not inv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "邀请不存在")
+    if inv.email != current_user.email.lower():
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "只能响应发给本人的邀请")
+    if inv.status != "pending":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"该邀请已处理（{inv.status}）")
+    if req.action not in ("accept", "decline"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "action 必须为 accept 或 decline")
+    inv.status = "accepted" if req.action == "accept" else "declined"
+    inv.responded_at = datetime.utcnow()
+    inv.comment = req.comment
+    db.add(ApprovalLog(team_id=inv.team_id, target_type="invite", target_id=inv.id,
+                       action=req.action, actor_id=current_user.id, comment=req.comment))
+    if req.action == "accept":
+        _ensure_team_member(db, inv.team_id, current_user.id, inv.role or "member")
+        _grant_base_team_perms(db, inv.team_id, current_user.id, current_user.id)
+    db.commit()
+    return {"ok": True, "status": inv.status}

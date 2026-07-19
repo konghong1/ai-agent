@@ -276,3 +276,19 @@ html, body, #root {
     width: calc(100vw - 16px) !important;
   }
 }
+
+/* 修复 antd v5 + React 19 下 message/notification toast 进场动画卡在
+   translateY(-100%)，导致 toast 被定位到视口外（约 top:-32px）不可见。
+   强制终态 transform 与顶部留白，保证所有 toasts 始终可见（仅禁用滑入动画）。 */
+.ant-message {
+  top: 8px !important;
+}
+.ant-message-notice {
+  transform: translateY(0) !important;
+}
+.ant-notification {
+  top: 24px !important;
+}
+.ant-notification-notice {
+  transform: translateY(0) !important;
+}

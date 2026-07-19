@@ -53,7 +53,10 @@ def wait_for_database(max_retries: int = 30, retry_delay: int = 2) -> bool:
 
     for i in range(max_retries):
         try:
-            engine = create_engine(db_url, pool_pre_ping=True)
+            if "mysql" in db_url.lower():
+                engine = create_engine(db_url, pool_pre_ping=True, connect_args={"charset": "utf8mb4"})
+            else:
+                engine = create_engine(db_url, pool_pre_ping=True)
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
             logger.info("%s database is ready!", db_type.upper())
@@ -84,22 +87,45 @@ def seed_database():
     # Password: admin123 (hashed with the same pbkdf2_sha256 context the
     # app uses at runtime — the previous hardcoded bcrypt hash could never
     # be verified, making the default admin account unloginable).
-    admin_pw_hash = hash_password("admin123")
+    init_pw = os.getenv("INIT_SUPERUSER_PASSWORD", "admin123")
+    admin_pw_hash = hash_password(init_pw)
 
     db = SessionLocal()
     try:
+        init_email = os.getenv("INIT_SUPERUSER_EMAIL", "admin@example.com")
         admin = db.query(User).filter_by(username="admin").first()
         if admin is None:
             admin = User(
                 username="admin",
-                email="admin@example.com",
+                email=init_email,
                 password_hash=admin_pw_hash,
                 role="admin",
+                is_superuser=True,
                 enabled=True,
             )
             db.add(admin)
             db.flush()
             logger.info("Created default admin user (username: admin, password: admin123)")
+        else:
+            # 历史库已存在 username="admin" 记录（旧 seed / 手工创建的残留）。
+            # ADR-028：保证平台主管理员（bootstrap admin）始终为超级管理员，且凭据
+            # 对齐到 .env 的 INIT_SUPERUSER_EMAIL / INIT_SUPERUSER_PASSWORD
+            # （默认值 admin@example.com / admin123）。仅影响这一条 bootstrap 账号，
+            # 绝不触碰其他用户；若管理员已为超级管理员且邮箱已对齐，则保持原密码不变。
+            target_email = os.getenv("INIT_SUPERUSER_EMAIL", "admin@example.com")
+            align = False
+            if not admin.is_superuser:
+                admin.is_superuser = True
+                align = True  # 首次补提时一并对齐凭据，确保可用 admin@example.com / 配置密码登录
+                logger.info("Promoted existing username=admin to superuser (is_superuser=True)")
+            if admin.email != target_email:
+                admin.email = target_email
+                align = True
+                logger.info("Aligned bootstrap admin email -> %s", target_email)
+            if align:
+                # admin_pw_hash 已在上方按 INIT_SUPERUSER_PASSWORD 计算
+                admin.password_hash = admin_pw_hash
+                logger.info("Aligned bootstrap admin password to INIT_SUPERUSER_PASSWORD")
 
         provider_exists = (
             db.query(Provider).filter_by(name="Agnes AI").first() is not None
@@ -184,6 +210,27 @@ def seed_database():
         added = seed_gallery_config(db)
         if added:
             logger.info("Seeded %d gallery config rows into gallery_configs", added)
+
+        # 为所有现有用户补齐个人空间基础权限（PERSONAL_DEFAULT）。
+        # 用 backfill_base_permissions 保证基础码（含新增 hook.view/providers.view/prompt.view）
+        # 始终存在，避免「权限驱动菜单」切换或默认集扩展后既有用户缺菜单。
+        # 权限码统一真源为 resources(type='permission')，由 rbac_seed.seed_rbac_resources
+        # 从 CATALOG 常量种子化（见 ADR-031），不再单独维护 permission_catalog 表。
+        from app.permissions import backfill_base_permissions
+        all_users = db.query(User).all()
+        for u in all_users:
+            backfill_base_permissions(u.id, db)
+        logger.info(
+            "Seeded permission catalog and backfilled base permissions for %d users", len(all_users)
+        )
+
+        # RBAC v2 地基种子：资源(菜单+权限) / 角色 / 用户-角色回填（幂等）。
+        from app.rbac_seed import seed_rbac_resources, seed_rbac_roles, backfill_user_roles
+
+        seed_rbac_resources(db)
+        seed_rbac_roles(db)
+        backfill_user_roles(db)
+        logger.info("Seeded RBAC v2 resources/roles and backfilled user roles")
 
         db.commit()
     finally:

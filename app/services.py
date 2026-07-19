@@ -414,7 +414,7 @@ class UserService:
     def list_users(db: Session, user_id: int) -> list[User]:
         """Admin can list all users. Regular users can only see themselves."""
         admin_user = db.get(User, user_id)
-        if admin_user and admin_user.role == "admin":
+        if admin_user and admin_user.is_superuser:
             return list(db.scalars(select(User).order_by(User.created_at)).all())
         return [db.get(User, user_id)]
 
@@ -422,7 +422,7 @@ class UserService:
     def update_user(db: Session, target_user: User, current_user_id: int, **kwargs) -> User:
         """Only admins can modify other users."""
         current = db.get(User, current_user_id)
-        if current.role != "admin" and current.id != target_user.id:
+        if not current.is_superuser and current.id != target_user.id:
             raise PermissionError("Only admins can modify other users.")
         for k, v in kwargs.items():
             if v is not None and hasattr(target_user, k):
@@ -434,7 +434,7 @@ class UserService:
     @staticmethod
     def delete_user(db: Session, target_user: User, current_user_id: int) -> None:
         current = db.get(User, current_user_id)
-        if current.role != "admin":
+        if not current.is_superuser:
             raise PermissionError("Only admins can delete users.")
         db.delete(target_user)
         db.commit()
@@ -524,6 +524,12 @@ def create_user(db: Session, email: str, username: str, password: str) -> User:
     db.add(user)
     db.flush()
     create_default_agent(db, user.id)
+    # 注册即补基础角色权限（自动注册用户应看到基础菜单），否则权限驱动菜单下新用户几乎空白。
+    from app.permissions import ensure_personal_defaults
+    ensure_personal_defaults(user.id, db)
+    # 自动授予所有默认角色（含 base 与后续新建的默认角色）——"设为默认角色→新用户自动获得"语义闭环。
+    from app.rbac_seed import assign_default_roles_to_user
+    assign_default_roles_to_user(db, user.id)
     db.commit()
     db.refresh(user)
     return user
