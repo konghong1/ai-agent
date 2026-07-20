@@ -4,6 +4,7 @@ import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
   RobotOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
   PictureOutlined, ControlOutlined, CopyOutlined, StopOutlined,
+  LoadingOutlined,
 } from "@ant-design/icons"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
@@ -108,6 +109,8 @@ export default function ChatInterface() {
   const PAGE_SIZE = 20
   const [hasMoreHistory, setHasMoreHistory] = useState(false)
   const [loadingHistory, setLoadingHistory] = useState(false)
+  // P0：后端重型路径（MCP/工具/联网检索）流式期间推送的状态提示，渲染在等待气泡中
+  const [streamStatus, setStreamStatus] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)          // messages scroll container
   const atBottomRef = useRef(true)                        // is the view currently at the bottom?
   const loadingHistoryRef = useRef(false)                 // guard against duplicate history fetches
@@ -893,6 +896,7 @@ export default function ChatInterface() {
               // preserves what's already shown.
               const assistantId = Date.now() + 1
               // Reset typewriter state for this new assistant bubble.
+              setStreamStatus(null)  // P0：新回合开始时清空上一次的状态提示
               if (typewriterTimerRef.current) { clearInterval(typewriterTimerRef.current); typewriterTimerRef.current = null }
               typewriterQueueRef.current = ""
               typewriterDisplayedRef.current = ""
@@ -926,8 +930,12 @@ export default function ChatInterface() {
                   if (data.delta !== undefined && data.delta !== "") {
                       // Feed the delta into the typewriter queue; the ticker
                       // reveals characters progressively for the typewriter effect.
+                      setStreamStatus(null)  // 首字到达，状态提示让位给打字机
                       typewriterQueueRef.current += data.delta
                       ensureTypewriter()
+                    } else if (data.status !== undefined && data.status) {
+                      // P0：后端推送的进度提示（如「正在调用工具查询实时数据…」）
+                      setStreamStatus(String(data.status))
                     } else if (data.answer !== undefined) {
                       // Final (authoritative) full response — keep for finalize.
                       assistantContent = data.answer
@@ -945,6 +953,7 @@ export default function ChatInterface() {
               // snaps to the complete message, otherwise it keeps revealing
               // until done — so we never clobber an in-progress animation.
               // Always clear pending so empty answers don't stay stuck loading.
+              setStreamStatus(null)  // P0：收尾时清除状态提示
               typewriterFinalRef.current = assistantContent
               if (!typewriterQueueRef.current) {
                 // Nothing left to reveal — finalize immediately.
@@ -1008,6 +1017,7 @@ export default function ChatInterface() {
       // Unregister from the StreamManager regardless of outcome. The controller
       // is also cleared on explicit stop via stopStream → abort → catch above.
       if (threadId) unregisterStream(threadId)
+      setStreamStatus(null)  // P0：无论成败，结束本轮状态提示
       setSending(false)
     }
   }
@@ -1718,11 +1728,18 @@ export default function ChatInterface() {
                           )}
                           {/* Text / markdown content */}
                           {msg.pending && !msg.content ? (
+                            streamStatus ? (
+                              <span style={{ fontSize: 13, color: 'rgba(0,0,0,0.55)' }}>
+                                <LoadingOutlined spin style={{ marginRight: 6 }} />
+                                {streamStatus}
+                              </span>
+                            ) : (
                             <span className="chat-loading-dots" aria-label="正在等待回复">
                               <span />
                               <span />
                               <span />
                             </span>
+                            )
                           ) : msg.stopped ? (
                             <Text type="secondary" style={{ fontSize: 13, opacity: 0.7 }}>
                               已停止生成

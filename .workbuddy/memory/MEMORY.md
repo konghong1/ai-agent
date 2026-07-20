@@ -50,6 +50,9 @@
 
 ## 出网代理韧性（app/http_client.py）
 Docker 注入 `HTTPS_PROXY=host.docker.internal:33210`(可能不可达)；`ensure_proxy_strategy()` 探测不可达走直连；`request/download_with_fallback()` 每次直连兜底。设 `DISABLE_PROXY_AUTOFALLBACK=1` 保留强制代理。图片生成超时 300s/视频提交120s/轮询60s/下载120s。
+- **🔥 代理的来历(2026-07-09 commit 7dd540d「新增商品」)**：为**电商套图媒体生成下载**加的——把外部 AI 生成的图/视频结果拉回容器存 MinIO(`media.py/media_new.py/media_retry.py/gallery_service.py` 调用 `request/download_bytes_with_fallback`)。**聊天并不需要代理、直连就行**，只是继承了整个容器注入的 `HTTPS_PROXY` 环境变量；`app/agent.py` 的 `_make_chat_http_client()` 只借 http_client 的 `_proxy_url/_proxy_reachable` 做 2s 探测，**没用 `request_with_fallback` 兜底**→代理 flaky 时聊天卡 60s+ 空白(2026-07-20 排查确认)。根因=代理时通时断 + 聊天路径无兜底。
+- **✅ 已修复并验证(2026-07-20)**：`app/agent.py` 的 `_make_chat_http_client()` 改为**默认直连**(`httpx.Client(trust_env=False)` 无视注入代理)、`force_proxy=True` 才走代理兜底；`_create_llm_from_config(config, force_proxy=False)` 加 `max_retries=2` + `http_socket_options=()`；`ask_agent_stream_gen` 加 `_stream_once` 生成器 + `yield from`：流式异常→**先重试直连**、最后才试代理；空响应→**重试直连**(绝不碰死代理)。容器内实测：HTTPS_PROXY 仍注入且可达的最坏情况下，默认客户端 `trust_env=False`(直连)，流式 ~12s 稳定出内容。媒体生成路径零影响(独立 http_client)。`DISABLE_PROXY_AUTOFALLBACK=1` 强制代理语义保留。
+- **🔥 聊天"慢"的第二个根因(2026-07-20 实测 konghong 发"查车次余票"确认)**：部署 `docker-compose.yml` 把 `ENABLE_CONTEXT_SERVICE/ENABLE_MCP_TOOLS/ENABLE_SKILL_TOOLS/ENABLE_HOOKS` **全设为 true** → `ask_agent_stream_gen` 里 `complex_path` 恒 True → **每条聊天(哪怕无 agent)都走重型非流式 `ask_agent`**(上下文检索 + 加载 MCP/Skill 工具 + 对实时问题调联网搜索工具 + 末次生成)，耗时 70–100s 且整段一次性返回(无 token 流式，前端空白屏)。对照：同 query 直连 `llm.stream` 仅 9–32s。这是**配置行为非代码 bug**；要简单聊天快需关部分开关回落轻量流式，但会失去联网/记忆能力。诊断埋点已清除、A+B 重试修复保留。
 
 ## 🔥 LLM 模型解析来源（2026-07-17 用户纠正）
 聊天模型来自「AI 提供商模块」非全局 settings 兜底。`ChatRequest` 带 `provider_id`+`model_name`；未带取用户默认提供商(`Provider.is_default && enabled`)的 `is_default_chat` 模型。`settings.openai_model` 仅 `_resolve_llm_config` 第4步兜底。

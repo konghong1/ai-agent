@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     # 安全闸门：MCP/Skill/Hook 启用前强制安全扫描；默认开。
     enable_security_gate: bool = Field(default=True, alias="ENABLE_SECURITY_GATE")
     mcp_default_timeout_ms: int = Field(default=30000, alias="MCP_DEFAULT_TIMEOUT_MS")
+    # 单条 MCP 工具调用的最长耗时上限（毫秒）。用于在服务端 timeout_ms 设得过高时
+    # 收敛最坏延迟（避免一次搜索卡 70-120s）。正常搜索 < 该上限，不损功能。
+    mcp_tool_max_timeout_ms: int = Field(default=60000, alias="MCP_TOOL_MAX_TIMEOUT_MS")
+    # 工具结果缓存 TTL（秒）。相同 (user, server, tool, args) 命中后直接返回，零延迟；
+    # 不缓存变更类工具（create/send/delete/...）与失败结果。避免重复实时查询耗时。
+    mcp_tool_cache_ttl_sec: int = Field(default=300, alias="MCP_TOOL_CACHE_TTL_SEC")
     # 单 MCP server 最大并发调用（信号量限流，防万级会话下连接/资源耗尽）。
     mcp_max_concurrency: int = Field(default=8, alias="MCP_MAX_CONCURRENCY")
     # 熔断：连续失败达阈值→熔断 cooldown；cooldown 后首次调用为探测（半开）。

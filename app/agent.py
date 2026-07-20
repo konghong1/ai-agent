@@ -167,43 +167,63 @@ def _resolve_llm_config(
     )
 
 
-def _make_chat_http_client():
+def _make_chat_http_client(force_proxy: bool = False):
     """Proxy-resilient httpx client for the OpenAI-compatible chat client.
 
-    Mirrors :func:`app.http_client.ensure_proxy_strategy`: if the injected
-    egress proxy (``HTTPS_PROXY``) is unreachable we connect directly, so a
-    dead sandbox proxy does not break every chat / memory-extraction /
-    summarization call. The ``openai`` SDK used by langchain has no per-call
-    fallback of its own, unlike ``app.http_client``.
+    Egress resilience strategy
+    --------------------------
+    The container is injected with ``HTTPS_PROXY=host.docker.internal:33210``
+    (a host-side sandbox proxy). That proxy is *flaky* in some environments: a
+    "half-dead" proxy accepts the TCP connect but never forwards, which hangs
+    chat requests for 60-120s with no content. Direct egress to the LLM
+    provider is verified working, so we go DIRECT by default and only use the
+    proxy as a fallback (or when ``DISABLE_PROXY_AUTOFALLBACK=1`` mandates it).
+
+    ``force_proxy=True`` returns a proxy-routed client — used by the one-shot
+    retry after a direct attempt fails.
     """
     import httpx
     from app.http_client import _proxy_url, _proxy_reachable
 
-    if os.environ.get("DISABLE_PROXY_AUTOFALLBACK"):
-        proxy = _proxy_url()
-        return httpx.Client(proxy=proxy, timeout=120.0) if proxy else httpx.Client(timeout=120.0)
-
     proxy = _proxy_url()
-    if proxy and _proxy_reachable():
-        logging.getLogger(__name__).info("Chat client using egress proxy %s", proxy)
+
+    # Mandatory-proxy mode: keep the original behaviour (proxy when present).
+    if os.environ.get("DISABLE_PROXY_AUTOFALLBACK"):
+        if proxy and _proxy_reachable():
+            logging.getLogger(__name__).info("Chat client forced via egress proxy %s", proxy)
+            return httpx.Client(proxy=proxy, timeout=120.0)
+        return httpx.Client(timeout=120.0)
+
+    if force_proxy and proxy:
         return httpx.Client(proxy=proxy, timeout=120.0)
-    return httpx.Client(timeout=120.0)
+
+    # Default: DIRECT. Do NOT read env proxy auto-detection (trust_env=False),
+    # so a flaky/dead injected proxy can never hang the chat stream.
+    return httpx.Client(trust_env=False, timeout=120.0)
 
 
-def _create_llm_from_config(config: LLMConfig):
-    """Create an LLM instance (either via factory or legacy ChatOpenAI)."""
+def _create_llm_from_config(config: LLMConfig, force_proxy: bool = False):
+    """Create an LLM instance (either via factory or legacy ChatOpenAI).
+
+    ``force_proxy`` is forwarded to :func:`_make_chat_http_client`; see its
+    docstring for the egress strategy. SDK-level ``max_retries`` adds resilience
+    against transient 5xx / connection resets, and ``http_socket_options=()``
+    suppresses langchain-openai's proxy-injection warning.
+    """
     import logging
     _log = logging.getLogger(__name__)
     _log.info("Creating LLM — model=%s base_url=%s provider_type=%s api_key=%s...",
               config.model_name, config.base_url, config.provider_type,
               (config.api_key or "")[:8])
-    
+
     # Keep OpenAI/httpx quiet — DEBUG produces huge volume of request logs
     _openai_log = logging.getLogger("openai")
     _openai_log.setLevel(logging.WARNING)
     _httpx_log = logging.getLogger("httpx")
     _httpx_log.setLevel(logging.WARNING)
-    
+
+    chat_client = _make_chat_http_client(force_proxy=force_proxy)
+
     # Try factory first
     try:
         adapter = LLMFactory.create(config)
@@ -215,7 +235,9 @@ def _create_llm_from_config(config: LLMConfig):
             temperature=config.temperature,
             api_key=config.api_key,
             base_url=config.base_url,
-            http_client=_make_chat_http_client(),
+            http_client=chat_client,
+            max_retries=2,
+            http_socket_options=(),
         )
     except Exception as e:
         _log.error("Factory create failed: %s, falling back to ChatOpenAI directly", e)
@@ -226,7 +248,9 @@ def _create_llm_from_config(config: LLMConfig):
             temperature=config.temperature,
             api_key=config.api_key,
             base_url=config.base_url,
-            http_client=_make_chat_http_client(),
+            http_client=chat_client,
+            max_retries=2,
+            http_socket_options=(),
         )
 
 
@@ -281,7 +305,18 @@ def ask_agent(
     provider_id: int | None = None,
     temperature: float | None = None,
     reference_images: list[str] | None = None,
-) -> tuple[str, str, dict]:
+):
+    """Run an agent turn.
+
+    This is a **generator**: it yields streaming events
+      ``("status", text)`` — progress hint (e.g. "正在调用工具查询实时数据…")
+      ``("delta", text)``  — one incremental answer chunk
+      ``("done", thread_id, blocks, full_text)`` — turn finished (assistant
+        message already committed to ``db``)
+    Callers that only need the final tuple should use :func:`ask_agent_sync`,
+    which drains the generator and returns ``(answer_text, thread_id, blocks)``
+    — keeping a single implementation for both streaming and non-streaming use.
+    """
     settings = get_settings()
     
     # If agent_id is provided and no system_prompt from template, load agent config
@@ -538,6 +573,58 @@ def ask_agent(
         last_resp = None
         any_tool_called = False
         nudge_count = 0
+
+        # ── Hook 封装（串行、DB 安全）──
+        def _pre_hook(_tname, _targs):
+            if not getattr(settings, "enable_hooks", False):
+                return (False, "", _targs)
+            try:
+                from app.hook_runner import run_hooks, first_blocking
+
+                pre = run_hooks("PreToolUse", user_id, db,
+                                {"session_id": thread.id, "tool_name": _tname, "tool_args": _targs},
+                                matcher=_tname)
+                blk = first_blocking(pre)
+                if blk:
+                    return (True, blk.reason, _targs)
+                mod = next((o for o in pre
+                            if o.decision == "modify" and isinstance(o.data.get("tool_args"), dict)), None)
+                if mod:
+                    return (False, "", mod.data["tool_args"])
+            except Exception as e:
+                logger.warning("PreToolUse Hook 失败（放行）: %s", e)
+            return (False, "", _targs)
+
+        def _post_hook(_tname, _result):
+            if not getattr(settings, "enable_hooks", False):
+                return _result
+            try:
+                from app.hook_runner import run_hooks
+
+                post = run_hooks("PostToolUse", user_id, db,
+                                 {"session_id": thread.id, "tool_name": _tname, "tool_result": _result},
+                                 matcher=_tname)
+                mod = next((o for o in post
+                            if o.decision == "modify" and "tool_result" in o.data), None)
+                if mod:
+                    return mod.data["tool_result"]
+            except Exception as e:
+                logger.warning("PostToolUse Hook 失败（保留原结果）: %s", e)
+            return _result
+
+        # 并行执行 MCP 工具（call_tool 内部用自带连接池，线程安全；不碰聊天 db 会话）
+        def _exec_mcp(_tool, _targs):
+            from app.mcp_client import MCPConnectionManager
+
+            srv = getattr(_tool, "_mcp_server", None)
+            mcp_name = getattr(_tool, "_mcp_tool_name", None) or _tool.name
+            if srv is None:
+                return f"[error] unknown MCP server for tool {_tool.name}"
+            res, _lat, err = MCPConnectionManager.call_tool(user_id, srv, mcp_name, _targs)
+            if err:
+                return f"[MCP error] {err}"
+            return res or ""
+
         for _step in range(getattr(settings, "mcp_max_iterations", 5)):
             try:
                 resp = llm_with_tools.invoke(messages)
@@ -550,48 +637,51 @@ def ask_agent(
             tool_calls = getattr(resp, "tool_calls", None) or []
             if tool_calls:
                 any_tool_called = True
+                yield ("status", "正在调用工具查询实时数据…")
+                # 1) PreToolUse（串行）
+                planned = []
                 for tc in tool_calls:
                     tname = tc.get("name")
                     targs = tc.get("args", {}) or {}
-                    # PreToolUse Hook：可拦截或改写工具参数
-                    if getattr(settings, "enable_hooks", False):
-                        try:
-                            from app.hook_runner import run_hooks, first_blocking
-
-                            pre = run_hooks("PreToolUse", user_id, db,
-                                            {"session_id": thread.id, "tool_name": tname, "tool_args": targs},
-                                            matcher=tname)
-                            blk = first_blocking(pre)
-                            if blk:
-                                messages.append(ToolMessage(
-                                    content=f"[blocked by hook] {blk.reason}", tool_call_id=tc.get("id")))
-                                continue
-                            mod = next((o for o in pre
-                                        if o.decision == "modify" and isinstance(o.data.get("tool_args"), dict)), None)
-                            if mod:
-                                targs = mod.data["tool_args"]
-                        except Exception as e:
-                            logger.warning("PreToolUse Hook 失败（放行）: %s", e)
+                    blocked, reason, targs = _pre_hook(tname, targs)
+                    planned.append((tc, tname, targs, blocked, reason))
+                # 2) 并行执行：MCP 走 call_tool（线程安全）；非 MCP（如 use_skill）串行走 tool.func
+                results: dict = {}
+                mcp_jobs = []
+                serial_jobs = []
+                for (tc, tname, targs, blocked, reason) in planned:
+                    if blocked:
+                        results[tc.get("id")] = ("[blocked by hook] " + reason, tname)
+                        continue
                     tool = next((t for t in tools if t.name == tname), None)
-                    try:
-                        result = tool.func(**targs) if tool else f"[error] unknown tool: {tname}"
-                    except Exception as ex:
-                        result = f"[error] {ex}"
-                    # PostToolUse Hook：可改写工具结果
-                    if getattr(settings, "enable_hooks", False):
-                        try:
-                            from app.hook_runner import run_hooks
+                    if tool and getattr(tool, "_mcp_server", None) is not None:
+                        mcp_jobs.append((tc, tool, targs))
+                    else:
+                        serial_jobs.append((tc, tool, targs, tname))
+                if mcp_jobs:
+                    import concurrent.futures as _cf
 
-                            post = run_hooks("PostToolUse", user_id, db,
-                                             {"session_id": thread.id, "tool_name": tname, "tool_result": result},
-                                             matcher=tname)
-                            mod = next((o for o in post
-                                        if o.decision == "modify" and "tool_result" in o.data), None)
-                            if mod:
-                                result = mod.data["tool_result"]
-                        except Exception as e:
-                            logger.warning("PostToolUse Hook 失败（保留原结果）: %s", e)
-                    messages.append(ToolMessage(content=str(result), tool_call_id=tc.get("id")))
+                    _maxw = max(1, min(len(mcp_jobs), getattr(settings, "mcp_max_concurrency", 8) or 8))
+                    with _cf.ThreadPoolExecutor(max_workers=_maxw) as ex:
+                        fut_map = {ex.submit(_exec_mcp, tool, targs): tc for (tc, tool, targs) in mcp_jobs}
+                        for fut in _cf.as_completed(fut_map):
+                            tc = fut_map[fut]
+                            try:
+                                res = fut.result()
+                            except Exception as _e:
+                                res = f"[error] {_e}"
+                            results[tc.get("id")] = (res, tc.get("name"))
+                for (tc, tool, targs, tname) in serial_jobs:
+                    try:
+                        res = tool.func(**targs) if tool else f"[error] unknown tool: {tname}"
+                    except Exception as _e:
+                        res = f"[error] {_e}"
+                    results[tc.get("id")] = (res, tname)
+                # 3) PostToolUse（串行）+ 追加 ToolMessage
+                for (tc, tname, targs, blocked, reason) in planned:
+                    res, _ = results.get(tc.get("id"), ("", tname))
+                    res = _post_hook(tname, res)
+                    messages.append(ToolMessage(content=str(res), tool_call_id=tc.get("id")))
                 # 工具已调用：携带结果继续循环，让模型整合答案
                 continue
             # 本轮没有工具调用
@@ -599,13 +689,14 @@ def ask_agent(
             _is_stub = not _text.strip()
             if not any_tool_called and _is_stub and nudge_count < 2:
                 # 模型未给出实质回答（空内容或仅 <blocks> 选择桩）且未调用任何工具：
-                # 强制引导其使用 MCP 工具（最多两次，措辞逐步加强）
+                # 强制引导其使用 MCP 工具（最多两次，措辞逐步加强）。P2：强化首轮工具调用提示。
                 nudge_count += 1
                 if nudge_count == 1:
                     hint = (
                         "你没有调用任何工具，也没有给出实质性回答（只是返回了选项或空内容）。"
                         "如果用户的请求可以由已提供的 MCP 工具解答，你必须调用对应的 MCP 工具来获取真实数据，"
                         "不要凭空作答、不要返回选项桩、也不要反问用户如何选择。"
+                        "⚠️ 你已被提供 MCP 工具，对于实时/数据类问题必须在第一轮就调用工具。"
                     )
                 else:
                     hint = (
@@ -614,7 +705,15 @@ def ask_agent(
                     )
                 messages.append(HumanMessage(content=hint))
                 continue
-            answer_raw = resp.content or ""
+            # 最终回答：流式生成（P0）+ 状态事件
+            yield ("status", "已获取实时数据，正在生成回答…")
+            _full = []
+            for chunk in llm.stream(messages):
+                text = chunk.content if isinstance(chunk.content, str) else ""
+                if text:
+                    _full.append(text)
+                    yield ("delta", text)
+            answer_raw = "".join(_full)
             break
         if answer_raw is None:
             answer_raw = last_resp.content if last_resp is not None else ""
@@ -630,8 +729,16 @@ def ask_agent(
             except Exception as e:
                 logger.warning("Stop Hook 失败（保留原答案）: %s", e)
     else:
-        response = llm.invoke(lc_messages)
-        answer_raw = response.content or ""
+        # 无工具：直接流式生成（P0）
+        yield ("status", "正在生成回答…")
+        _full = []
+        for chunk in llm.stream(lc_messages):
+            text = chunk.content if isinstance(chunk.content, str) else ""
+            if text:
+                _full.append(text)
+                yield ("delta", text)
+        answer_raw = "".join(_full)
+
     answer_text, blocks = _extract_blocks(answer_raw)
 
     msg = Message(
@@ -645,7 +752,26 @@ def ask_agent(
     if getattr(settings, "enable_implicit_extraction", False):
         _maybe_extract_memories(user_id, thread.id, resolved_config)
 
-    return answer_text, thread.id, blocks
+    # 作为生成器：以 done 事件收尾（同步调用方用 ask_agent_sync 抽取）
+    yield ("done", thread.id, blocks, answer_text)
+
+
+def ask_agent_sync(db, user_id, agent_id, message, **kwargs) -> tuple[str, str, dict]:
+    """Drain :func:`ask_agent` (a generator) and return the final tuple.
+
+    Used by the two non-streaming call sites (synchronous ``/chat`` and
+    ``_run_text_chat``) so there is a single implementation shared with the
+    streaming path. The assistant message is committed inside ``ask_agent``
+    before the ``("done", ...)`` event, so by the time we return it is persisted.
+    """
+    last = None
+    for ev in ask_agent(db, user_id, agent_id, message, **kwargs):
+        if ev[0] == "done":
+            last = ev
+    if last is None:
+        return "", None, {}
+    # ev = ("done", thread_id, blocks, full_text) -> (answer_text, thread_id, blocks)
+    return last[3], last[1], last[2]
 
 
 def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, model_name,
@@ -686,14 +812,20 @@ def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, m
             or (agent_config and getattr(agent_config, "knowledge_bases", None))
         )
         if complex_path:
-            answer, tid, blocks = ask_agent(
+            # P0：转发 ask_agent 生成器的流式事件（status / delta / done），
+            # 不再把整段答案当一个 delta 一次性吐出。
+            for ev in ask_agent(
                 db=db, user_id=user_id, agent_id=agent_id, message=message,
                 thread_id=thread_id, system_prompt=system_prompt, model_name=model_name,
                 provider_base_url=provider_base_url, provider_type=provider_type,
                 provider_id=provider_id, reference_images=reference_images,
-            )
-            yield ("delta", answer)
-            yield ("done", tid, blocks, answer)
+            ):
+                if ev[0] == "status":
+                    yield ("status", ev[1])
+                elif ev[0] == "delta":
+                    yield ("delta", ev[1])
+                elif ev[0] == "done":
+                    yield ("done", ev[1], ev[2], ev[3])
             return
 
         # ── Simple default path: stream token-by-token ──
@@ -746,12 +878,47 @@ def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, m
             else:
                 _lc.append(HumanMessage(content=content))
 
+        def _stream_once(_llm, _msgs):
+            """Stream one attempt; yields ('delta', text) and returns collected chunks."""
+            collected: list[str] = []
+            for chunk in _llm.stream(_msgs):
+                text = chunk.content if isinstance(chunk.content, str) else ""
+                if text:
+                    collected.append(text)
+                    yield ("delta", text)
+            return collected
+
         full: list[str] = []
-        for chunk in llm.stream(_lc):
-            text = chunk.content if isinstance(chunk.content, str) else ""
-            if text:
-                full.append(text)
-                yield ("delta", text)
+        try:
+            full = yield from _stream_once(llm, _lc)
+        except Exception as _stream_err:  # connectivity / transient failure
+            # Direct egress is the reliable path in this deployment. Retry DIRECT
+            # first (transient errors usually clear on a fresh connection); only
+            # fall back to the injected proxy as a LAST resort for environments
+            # where direct egress is genuinely blocked. Never route to the proxy
+            # as the primary retry — the sandbox proxy is flaky and would just
+            # hang the chat for 60-120s.
+            logger.warning(
+                "ask_agent_stream_gen: direct stream failed (%s); retrying direct once",
+                _stream_err,
+            )
+            try:
+                full = yield from _stream_once(_create_llm_from_config(resolved_config), _lc)
+            except Exception:
+                logger.warning("ask_agent_stream_gen: direct retry failed; trying proxy once")
+                full = yield from _stream_once(
+                    _create_llm_from_config(resolved_config, force_proxy=True), _lc
+                )
+
+        # Empty-response resume: agnes-2.0-flash occasionally returns no content
+        # (the "no output" symptom). Retry DIRECT only — the injected proxy is
+        # flaky and would only add latency, never recover an empty body.
+        if not "".join(full).strip():
+            logger.warning("ask_agent_stream_gen: empty stream response; retrying direct once")
+            try:
+                full = yield from _stream_once(_create_llm_from_config(resolved_config), _lc)
+            except Exception as _empty_err:
+                logger.error("ask_agent_stream_gen: empty-retry also failed: %s", _empty_err)
 
         answer_text, blocks = _extract_blocks("".join(full))
         db.add(Message(

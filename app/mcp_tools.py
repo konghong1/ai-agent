@@ -55,12 +55,31 @@ def get_enabled_remote_servers(db, user_id: int) -> list[McpServer]:
 
 
 def build_mcp_langchain_tools(db, user_id: int) -> list[StructuredTool]:
-    tools: list[StructuredTool] = []
-    for server in get_enabled_remote_servers(db, user_id):
+    servers = get_enabled_remote_servers(db, user_id)
+    if not servers:
+        return []
+    # P1：并行拉取各 server 的工具清单（冷启动握手并行，避免 N 个 server 顺序等待）。
+    # 工具构建（含闭包）仍串行走，保证闭包变量安全。
+    import concurrent.futures as _cf
+
+    def _fetch(srv):
         try:
-            mcp_tools = MCPConnectionManager.get_tools(user_id, server)
-        except Exception as e:
-            logger.warning("MCP list_tools failed server=%s: %s", server.name, e)
+            return srv, MCPConnectionManager.get_tools(user_id, srv)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("MCP list_tools failed server=%s: %s", srv.name, e)
+            return srv, None
+
+    fetched: dict = {}
+    _maxw = min(len(servers), 8)
+    with _cf.ThreadPoolExecutor(max_workers=_maxw) as ex:
+        for srv, mcp_tools in ex.map(_fetch, servers):
+            if mcp_tools is not None:
+                fetched[srv] = mcp_tools
+
+    tools: list[StructuredTool] = []
+    for server in servers:
+        mcp_tools = fetched.get(server)
+        if not mcp_tools:
             continue
         allow = server.tool_allowlist or []
         for t in mcp_tools:
@@ -94,6 +113,10 @@ def build_mcp_langchain_tools(db, user_id: int) -> list[StructuredTool]:
                 args_schema=args_model,
                 func=_make(),
             )
+            # P2：附带回指，便于在工具循环里安全地并行调用 call_tool
+            # （避免在线程内访问聊天会话 db；call_tool 内部用自身连接池，线程安全）。
+            lc_tool._mcp_server = server
+            lc_tool._mcp_tool_name = tname
             tools.append(lc_tool)
     return tools
 

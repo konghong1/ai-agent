@@ -18,6 +18,55 @@ from typing import Any
 
 import httpx
 
+from app.settings import get_settings  # 仅在 call_tool 缓存写入时取 TTL；settings 不反向依赖本模块
+
+# ── 工具结果缓存（P1：收敛重复实时查询延迟，纯增项）──
+# key = (user_id, server_id, tool_name, args_hash) -> (result_text, expire_ts)
+# 仅缓存成功的只读类工具结果；变更类工具与失败结果不缓存。
+_tool_cache: dict = {}
+_tool_cache_lock = threading.Lock()
+_MUTATION_HINTS = ("create", "send", "delete", "remove", "update", "write", "add", "insert", "post", "put")
+
+
+def _tool_cache_key(user_id: int, server_id: int, name: str, arguments: dict) -> tuple:
+    import hashlib
+    raw = json.dumps(arguments, sort_keys=True, default=str)
+    h = hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
+    return (user_id, server_id, name, h)
+
+
+def _is_mutation_tool(name: str) -> bool:
+    n = name.lower()
+    return any(k in n for k in _MUTATION_HINTS)
+
+
+def _tool_cache_get(key: tuple) -> str | None:
+    with _tool_cache_lock:
+        item = _tool_cache.get(key)
+        if not item:
+            return None
+        text, expire = item
+        if time.time() > expire:
+            _tool_cache.pop(key, None)
+            return None
+        return text
+
+
+def _tool_cache_put(key: tuple, text: str, ttl: int) -> None:
+    if not text:
+        return
+    with _tool_cache_lock:
+        if len(_tool_cache) > 2000:  # 简单上限，防内存无限增长
+            _tool_cache.clear()
+        _tool_cache[key] = (text, time.time() + ttl)
+
+
+def clear_tool_cache() -> None:
+    """测试 / 运维用：清空工具结果缓存。"""
+    with _tool_cache_lock:
+        _tool_cache.clear()
+
+
 # 触发一次出网代理策略探测（ensure_proxy_strategy）：若注入的 egress 代理
 # 不可达，则清空代理环境变量让 httpx 走直连。MCP 客户端依赖 httpx 的
 # trust_env 决策，必须在建连前确保该策略已执行，否则会卡在失效代理上
@@ -218,10 +267,20 @@ class MCPConnectionManager:
         return max(1, get_settings().mcp_max_concurrency)
 
     @classmethod
+    def _max_tool_timeout_ms(cls) -> int:
+        from app.settings import get_settings
+        return max(5000, get_settings().mcp_tool_max_timeout_ms)
+
+    @classmethod
     def _build_client(cls, server) -> RemoteMCPClient:
         headers = decrypt_json(getattr(server, "headers", ""))
         api_key = decrypt_secret(getattr(server, "api_key", ""))
-        timeout = (getattr(server, "timeout_ms", None) or 30000) / 1000.0
+        timeout_ms = getattr(server, "timeout_ms", None) or 30000
+        # 收敛最坏耗时：单条工具调用不得超过全局上限（P1）。
+        cap = cls._max_tool_timeout_ms()
+        if timeout_ms > cap:
+            timeout_ms = cap
+        timeout = timeout_ms / 1000.0
         return RemoteMCPClient(
             url=server.url,
             auth_type=getattr(server, "auth_type", "none") or "none",
@@ -278,9 +337,19 @@ class MCPConnectionManager:
             if entry is None:
                 entry = cls._pools[key] = _Entry(
                     client=cls._build_client(server), tools=[], last_used=time.time(),
-                    sem=threading.Semaphore(cls._max_concurrency()),
+                    sem=threading.Semaphore(cls._max_concurrency()),  # placeholder; real sem set below
                 )
             sem = entry.sem
+        # ── P1：工具结果缓存（仅成功、只读类工具）──
+        if not _is_mutation_tool(name):
+            _ck = _tool_cache_key(user_id, server.id, name, arguments)
+            _cached = _tool_cache_get(_ck)
+            if _cached is not None:
+                latency = int((time.time() - start) * 1000)
+                with cls._lock:
+                    entry.total_calls += 1
+                    entry.last_latency_ms = latency
+                return _cached, latency, None
         # 并发限流：超并发数则排队，避免压垮远端 MCP / 耗尽本地资源。
         sem.acquire()
         try:
@@ -300,6 +369,9 @@ class MCPConnectionManager:
                 entry.failures = 0
                 if entry.state == "half_open":
                     entry.state = "closed"
+            # 缓存成功结果（P1）
+            if not _is_mutation_tool(name) and result:
+                _tool_cache_put(_ck, result, get_settings().mcp_tool_cache_ttl_sec)
             return result, latency, None
         except Exception as e:
             latency = int((time.time() - start) * 1000)

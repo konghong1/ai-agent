@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, desc, func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.agent import ask_agent, _get_or_create_thread, ask_agent_stream_gen
+from app.agent import ask_agent, _get_or_create_thread, ask_agent_stream_gen, ask_agent_sync
 from app.core.database import get_db
 from app.core.security import create_access_token, hash_password
 from app.deps import get_current_user, get_current_user_sse, require_superuser, require_team_admin
@@ -768,7 +768,7 @@ def chat(payload: ChatRequest, current_user: User = Depends(get_current_user), d
                     model_name = provider.models[0].model_name if provider.models[0].model_type == "chat" else None
         
         # Call ask_agent with the resolved parameters
-        answer, thread_id, blocks = ask_agent(
+        answer, thread_id, blocks = ask_agent_sync(
             db=db,
             user_id=current_user.id,
             agent_id=payload.agent_id,
@@ -807,11 +807,11 @@ def _run_text_chat(user_id, agent_id, message, thread_id, system_prompt, model_n
     always persisted — even if the user switches tabs or conversations while
     the model is still generating a reply.
     """
-    from app.agent import ask_agent
+    from app.agent import ask_agent_sync
     from app.core.database import SessionLocal
     db = SessionLocal()
     try:
-        return ask_agent(
+        return ask_agent_sync(
             db=db,
             user_id=user_id,
             agent_id=agent_id,
@@ -866,7 +866,7 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
     import uuid
     
     async def event_generator():
-        from app.agent import ask_agent
+        from app.agent import ask_agent_sync
         _logger = logging.getLogger(__name__)
         try:
             # ── Model-type routing: detect non-chat models and dispatch ──
@@ -970,6 +970,8 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
                     break
                 if _item[0] == "delta":
                     yield f"data: {json.dumps({'delta': _item[1]})}\n\n"
+                elif _item[0] == "status":
+                    yield f"data: {json.dumps({'status': _item[1]})}\n\n"
                 elif _item[0] == "done":
                     yield f"data: {json.dumps({'answer': _item[3], 'thread_id': _item[1], 'blocks': _item[2]})}\n\n"
                 elif _item[0] == "error":
