@@ -181,8 +181,11 @@ services:
       ENABLE_USER_PROFILE_MEMORY: ${ENABLE_USER_PROFILE_MEMORY:-false}
 
       # ── MCP / Skill / Hook 扩展（ADR: MCP-Skill-Hook）──
-      ENABLE_MCP_TOOLS: ${ENABLE_MCP_TOOLS:-false}
-      ENABLE_SKILL_TOOLS: ${ENABLE_SKILL_TOOLS:-false}
+      # 注意：ENABLE_MCP_TOOLS / ENABLE_SKILL_TOOLS 改为默认开启，
+      # 使聊天能加载用户配置的 MCP 工具与 Skill（见 2026-07-20 修复：
+      # 此前默认 false 导致聊天完全不调用用户 MCP/Skill）。
+      ENABLE_MCP_TOOLS: ${ENABLE_MCP_TOOLS:-true}
+      ENABLE_SKILL_TOOLS: ${ENABLE_SKILL_TOOLS:-true}
       ENABLE_HOOKS: ${ENABLE_HOOKS:-false}
 
       # 禁止写入 .pyc 字节码缓存：源码通过 bind mount 覆盖镜像，若镜像自带

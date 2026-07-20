@@ -111,4 +111,16 @@ def get_mcp_tool_catalog(db, user_id: int) -> str:
             lines.append(f"- MCP server '{server.name}': tools {', '.join(names)}")
     if not lines:
         return ""
-    return "Available MCP tools:\n" + "\n".join(lines)
+    return (
+        "Available MCP tools (remote, live data):\n"
+        + "\n".join(lines)
+        + "\n\n[TOOL USAGE RULE — highest priority / 最高优先级]\n"
+        "If the user's request can be answered using one of the MCP tools listed above, you "
+        "MUST call that tool to retrieve live data. 如果用户的问题可以由上述 MCP 工具回答，你必须调用对应"
+        "工具获取实时数据。\n"
+        "Do NOT answer from prior knowledge. 不要凭记忆回答。\n"
+        "Do NOT respond with only a <blocks> choice stub such as 'search KB vs direct answer'. "
+        "绝不只返回一个选项桩（如“搜索知识库 / 直接回答”），而必须调用工具或给出实质性回答。\n"
+        "If unsure which tool to use, pick the one whose description best matches the request "
+        "and call it."
+    )

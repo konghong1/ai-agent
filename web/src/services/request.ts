@@ -42,8 +42,8 @@ export async function request<T = any>(
     })
   } catch (networkErr: any) {
     // ECONNREFUSED / backend down — fetch throws TypeError, not a Response
-    const msg = '无法连接到后端服务，请确认后端是否已启动（端口 8010）'
-    message.error(msg, 5)
+    const msg = `无法连接到后端服务（请求 ${path} 失败：${networkErr?.message || 'network error'}）。请确认后端是否已启动（端口 8010）`
+    message.error(msg, 6)
     throw new Error(msg)
   }
 
@@ -108,8 +108,8 @@ export function upload<T = any>(path: string, formData: FormData): Promise<T> {
   }).catch((err) => {
     // Network error (ECONNREFUSED etc.)
     if (err instanceof TypeError) {
-      const msg = '无法连接到后端服务，请确认后端是否已启动（端口 8010）'
-      message.error(msg, 5)
+      const msg = `无法连接到后端服务（上传 ${path} 失败：${err.message}）。请确认后端是否已启动（端口 8010）`
+      message.error(msg, 6)
       throw new Error(msg)
     }
     throw err

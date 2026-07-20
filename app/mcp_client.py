@@ -18,6 +18,12 @@ from typing import Any
 
 import httpx
 
+# 触发一次出网代理策略探测（ensure_proxy_strategy）：若注入的 egress 代理
+# 不可达，则清空代理环境变量让 httpx 走直连。MCP 客户端依赖 httpx 的
+# trust_env 决策，必须在建连前确保该策略已执行，否则会卡在失效代理上
+# （表现为 "Network is unreachable"）。http_client 模块在导入时即运行该探测。
+import app.http_client  # noqa: F401  (side-effect: ensure_proxy_strategy)
+
 from app.core.crypto import decrypt_json, decrypt_secret
 
 logger = logging.getLogger(__name__)

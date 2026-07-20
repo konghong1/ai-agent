@@ -3,12 +3,13 @@ import { Typography, Input, Button, message, Modal, Avatar, Space, Dropdown, Sel
 import {
   SendOutlined, PlusOutlined, DeleteOutlined, ReloadOutlined, EditOutlined,
   RobotOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
-  PictureOutlined, ControlOutlined, CopyOutlined,
+  PictureOutlined, ControlOutlined, CopyOutlined, StopOutlined,
 } from "@ant-design/icons"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useLayoutStore } from "@/stores/layout"
 import { useChatStore } from "@/stores/chatStore"
+import { registerStream, unregisterStream, stopStream } from "@/stores/chatStream"
 import { authHeaders, getToken } from "@/services/auth"
 import { proxyMediaUrl } from "@/services/media"
 import ChatSelector from "@/components/ChatSelector"
@@ -40,6 +41,11 @@ interface Message {
   role: string
   content: string
   created_at: string
+  pending?: boolean
+  /** 用户主动点「停止生成」提前结束（低调灰色提示，非错误）。 */
+  stopped?: boolean
+  /** 真实错误（网络/后端失败）导致的回复中断（红色提示）。 */
+  interrupted?: boolean
   blocks?: {
     type: string
     image_url?: string
@@ -87,12 +93,16 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  // True when the active thread has an in-flight SSE stream → show 停止生成.
+  // Subscribed from the store (not local `sending`) so it stays correct even
+  // after the component remounts from a page navigation mid-stream.
+  const streamingActive = useChatStore((s) => (activeThreadId ? s.streamingThreadIds.includes(activeThreadId) : false))
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeThreadIdRef = useRef<string | null>(null)  // ref to avoid closure issues
-  const chatAbortRef = useRef<AbortController | null>(null)  // abort SSE when switching threads
   const fetchMsgIdRef = useRef(0)  // race condition guard: only apply latest fetchMessages result
   const skipNextFetchRef = useRef(false)  // skip fetchMessages when creating a new thread (handleSend)
+  const fetchAbortRef = useRef<AbortController | null>(null)  // cancel in-flight message fetches on switch/unmount
 
   // ── Message pagination (latest page + scroll-up history loading) ──
   const PAGE_SIZE = 20
@@ -176,6 +186,9 @@ export default function ChatInterface() {
   const switchThread = useCallback((threadId: string | null) => {
     activeThreadIdRef.current = threadId
     setActiveThreadId(threadId)
+    // 同步到 chatStore：缓存只持久化「当前活跃会话」，避免所有会话历史叠加
+    // 撑爆 localStorage 配额（"setItem ... exceeded the quota"）。
+    useChatStore.getState().setActiveThreadId(threadId)
     try {
       if (threadId) localStorage.setItem(ACTIVE_THREAD_KEY, threadId)
       else localStorage.removeItem(ACTIVE_THREAD_KEY)
@@ -209,8 +222,14 @@ export default function ChatInterface() {
         const err = await res.json().catch(() => ({}))
         message.error(err?.detail || `加载会话列表失败 (HTTP ${res.status})`, 4)
       }
-    } catch {
-      message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return
+      message.error(
+        e instanceof TypeError
+          ? '网络异常：加载会话列表失败（/api/threads）。请检查网络或后端是否可访问'
+          : `加载会话列表失败：${e?.message || '未知错误'}`,
+        5,
+      )
     }
   }, [switchThread])
 
@@ -227,38 +246,81 @@ export default function ChatInterface() {
   const fetchLatest = useCallback(async (threadId: string) => {
     const reqId = ++fetchMsgIdRef.current
 
-    try {
-      const res = await fetch(`/api/threads/${threadId}/messages?limit=${PAGE_SIZE}`, {
-        headers: authHeaders(),
-      })
-      // Guard: if a newer request was fired, discard this stale response
-      if (reqId !== fetchMsgIdRef.current) return
-      if (res.ok) {
-        const data = await res.json()
-        if (reqId !== fetchMsgIdRef.current) return  // double-check after await
-        setMessages(mapMessages(data.messages || []))
-        useChatStore.getState().setMessages(threadId, mapMessages(data.messages || []))
-        hasMoreRef.current = !!data.has_more
-        setHasMoreHistory(!!data.has_more)
-        oldestIdRef.current = (data.oldest_id as number) ?? null
-        // After this render, jump to the newest message.
-        scrollToBottomRef.current = "instant"
-      } else {
+    // Cancel any in-flight previous fetch for this hook instance. Switching
+    // threads fast (or unmount) can leave a stale request running; aborting it
+    // intentionally avoids a spurious "backend down" error when it gets dropped.
+    if (fetchAbortRef.current) fetchAbortRef.current.abort()
+    const ctrl = new AbortController()
+    fetchAbortRef.current = ctrl
+
+    // Retry once on a genuine *network* failure (backend momentarily
+    // unreachable / proxy blip). HTTP errors (e.g. 404) and intentional
+    // aborts are NOT retried — they are real and must surface honestly.
+    const MAX_ATTEMPTS = 2
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const res = await fetch(`/api/threads/${threadId}/messages?limit=${PAGE_SIZE}`, {
+          headers: authHeaders(),
+          signal: ctrl.signal,
+        })
+        // Guard: if a newer request was fired, discard this stale response
         if (reqId !== fetchMsgIdRef.current) return
+        if (res.ok) {
+          const data = await res.json()
+          if (reqId !== fetchMsgIdRef.current) return  // double-check after await
+
+          const remote = mapMessages(data.messages || [])
+          const local = (useChatStore.getState().getMessages(threadId) || []) as Message[]
+          const remoteIds = new Set(remote.map((m) => m.id))
+          // Preserve any local-only messages (e.g. a pending assistant bubble while
+          // the stream is still in flight) so switching tabs/sessions doesn't make
+          // the in-progress reply disappear before the DB has it.
+          const localOnly = local.filter((m) => !remoteIds.has(m.id))
+          const merged = [...remote, ...localOnly].sort((a, b) => a.id - b.id)
+
+          setMessages(merged)
+          useChatStore.getState().setMessages(threadId, merged)
+          hasMoreRef.current = !!data.has_more
+          setHasMoreHistory(!!data.has_more)
+          oldestIdRef.current = (data.oldest_id as number) ?? null
+          // After this render, jump to the newest message.
+          scrollToBottomRef.current = "instant"
+          return
+        } else {
+          if (reqId !== fetchMsgIdRef.current) return
+          setMessages([])
+          hasMoreRef.current = false
+          setHasMoreHistory(false)
+          oldestIdRef.current = null
+          const err = await res.json().catch(() => ({}))
+          message.error(err?.detail || `加载消息失败 (HTTP ${res.status})`, 4)
+          return
+        }
+      } catch (e: any) {
+        if (reqId !== fetchMsgIdRef.current) return
+        // An aborted request (AbortError) is intentional — we superseded it with a
+        // newer fetch or the user switched threads. Never show "backend down".
+        if (e?.name === 'AbortError') return
+        // Transient network failure → retry once before surfacing an error.
+        if (e instanceof TypeError && attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, 800))
+          continue
+        }
         setMessages([])
         hasMoreRef.current = false
         setHasMoreHistory(false)
         oldestIdRef.current = null
-        const err = await res.json().catch(() => ({}))
-        message.error(err?.detail || `加载消息失败 (HTTP ${res.status})`, 4)
+        // Be honest: a TypeError from fetch means a real network failure (backend
+        // unreachable / proxy broken), anything else is an unexpected error.
+        const isNetwork = e instanceof TypeError
+        message.error(
+          isNetwork
+            ? `网络异常：加载消息失败（/api/threads/${threadId}/messages）。请检查网络或后端是否可访问`
+            : `加载消息失败：${e?.message || '未知错误'}`,
+          5,
+        )
+        return
       }
-    } catch (e: any) {
-      if (reqId !== fetchMsgIdRef.current) return
-      setMessages([])
-      hasMoreRef.current = false
-      setHasMoreHistory(false)
-      oldestIdRef.current = null
-      message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
     }
   }, [])  // No deps - fetches always use fresh URL
 
@@ -298,8 +360,14 @@ export default function ChatInterface() {
       hasMoreRef.current = !!data.has_more
       setHasMoreHistory(!!data.has_more)
       oldestIdRef.current = (data.oldest_id as number) ?? null
-    } catch {
-      message.error('无法连接到后端服务，请确认后端已启动（端口 8010）', 5)
+    } catch (e: any) {
+      if (e?.name === 'AbortError') { scrollPreserveRef.current = null; return }
+      message.error(
+        e instanceof TypeError
+          ? `网络异常：加载历史消息失败（/api/threads/${threadId}/messages）。请检查网络或后端是否可访问`
+          : `加载历史消息失败：${e?.message || '未知错误'}`,
+        5,
+      )
       scrollPreserveRef.current = null
     } finally {
       loadingHistoryRef.current = false
@@ -426,10 +494,13 @@ export default function ChatInterface() {
     esRef.current.set(msg.id, es);
   }, []);
 
-  // Cleanup EventSources on unmount
+  // Cleanup on unmount — NOTE: we intentionally do NOT abort the chat SSE here.
+  // The stream is owned by the StreamManager singleton and must keep running in
+  // the background so the reply continues and the bubble stays `pending` (the
+  // waiting animation) when the user navigates back. Only video SSE / timers
+  // (which are tied to this component's lifecycle) are torn down.
   useEffect(() => {
     return () => {
-      if (chatAbortRef.current) chatAbortRef.current.abort();
       esRef.current.forEach(es => es.close());
       esRef.current.clear();
       reconnectTimerRef.current.forEach(t => clearTimeout(t));
@@ -539,7 +610,7 @@ export default function ChatInterface() {
       // Hydrate instantly from the in-session cache so switching pages never
       // blanks the conversation; fetchLatest then reconciles with the DB.
       const cached = useChatStore.getState().getMessages(activeThreadId)
-      if (cached && cached.length) setMessages(cached)
+      if (cached && cached.length) setMessages(cached as Message[])
       fetchLatest(activeThreadId)
     } else {
       setMessages([])
@@ -554,8 +625,37 @@ export default function ChatInterface() {
   useEffect(() => {
     return () => {
       if (typewriterTimerRef.current) { clearInterval(typewriterTimerRef.current); typewriterTimerRef.current = null }
+      // Cancel any in-flight message fetch so an unmount (page navigation) never
+      // surfaces a spurious "backend down" error for a request we no longer care about.
+      if (fetchAbortRef.current) { fetchAbortRef.current.abort(); fetchAbortRef.current = null }
     }
   }, [])
+
+  // Sync rendered messages from the chat store when a stream finalizes in the
+  // BACKGROUND (e.g. the user navigated to another page/thread while a reply
+  // was still streaming). The active typewriter owns `messages` during live
+  // typing; we only adopt store state when a bubble's `pending` flips (a
+  // background stream finished), so we never clobber the in-progress animation.
+  useEffect(() => {
+    const unsub = useChatStore.subscribe((state) => {
+      const tid = activeThreadIdRef.current
+      if (!tid) return
+      const storeMsgs = state.byThread[tid]
+      if (!storeMsgs || !storeMsgs.length) return
+      setMessages((prev) => {
+        if (!prev.length) return prev
+        const lastStore = storeMsgs[storeMsgs.length - 1]
+        const lastLocal = prev[prev.length - 1]
+        // Adopt store state only when a terminal change happened (pending
+        // flipped, or a previously-empty bubble received content).
+        if (lastStore.id === lastLocal.id && lastStore.pending !== lastLocal.pending) {
+          return storeMsgs as Message[]
+        }
+        return prev
+      })
+    })
+    return unsub
+  }, [activeThreadId])
 
   // Controlled scrolling. This replaces the old "scrollIntoView on every
   // messages change" which caused the screen to keep jumping to the head.
@@ -623,8 +723,9 @@ export default function ChatInterface() {
         // cleanup in its own try/catch so it can never block the delete.
         if (activeThreadIdRef.current === threadId) {
           try {
-            chatAbortRef.current?.abort()
-            chatAbortRef.current = null
+            // Abandon any in-flight stream for this thread (the message being
+            // deleted is the one we were replying to)
+            stopStream(threadId)
             esRef.current.forEach(es => es.close())
             esRef.current.clear()
             reconnectTimerRef.current.forEach(t => clearTimeout(t))
@@ -751,7 +852,15 @@ export default function ChatInterface() {
     // Use SSE streaming
     let fetchRes: Response | null = null
     const abortCtrl = new AbortController()
-    chatAbortRef.current = abortCtrl
+    // Register with the StreamManager so this thread's stream survives page
+    // navigation / thread switching instead of being killed on unmount.
+    registerStream(threadId, abortCtrl)
+    // Accumulators shared with the catch/finally below, so a stopped or
+    // errored stream can finalize with whatever content already arrived.
+    // Declared at function scope (NOT inside try) so catch/finally can read them.
+    let assistantContent = ""
+    let finalThreadId = threadId
+    let assistantBlocks: any = null
     try {
       fetchRes = await fetch("/api/chat-stream", {
         method: "POST",
@@ -776,9 +885,6 @@ export default function ChatInterface() {
         // SSE streaming handler
         const reader = fetchRes.body?.getReader()
         const decoder = new TextDecoder()
-            let assistantContent = ""
-            let finalThreadId = threadId
-            let assistantBlocks: any = null
 
             if (reader) {
               // Create a streaming placeholder assistant bubble and render it
@@ -800,6 +906,7 @@ export default function ChatInterface() {
                   content: "",
                   created_at: new Date().toISOString(),
                   blocks: null,
+                  pending: true,
                 }
                 setMessages(prev => [...prev, placeholder])
                 useChatStore.getState().appendMessage(threadId, placeholder)
@@ -837,31 +944,30 @@ export default function ChatInterface() {
               // text to the typewriter; if its queue has already drained it
               // snaps to the complete message, otherwise it keeps revealing
               // until done — so we never clobber an in-progress animation.
-              if (assistantContent) {
-                typewriterFinalRef.current = assistantContent
-                if (!typewriterQueueRef.current) {
-                  // Nothing left to reveal — finalize immediately.
-                  typewriterDisplayedRef.current = assistantContent
-                  if (typewriterTimerRef.current) { clearInterval(typewriterTimerRef.current); typewriterTimerRef.current = null }
-                  if (activeThreadIdRef.current === threadId && assistantId != null) {
-                    setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: assistantContent, blocks: assistantBlocks } : m))
-                  }
-                  useChatStore.getState().updateLastAssistant(threadId, assistantContent, assistantBlocks)
+              // Always clear pending so empty answers don't stay stuck loading.
+              typewriterFinalRef.current = assistantContent
+              if (!typewriterQueueRef.current) {
+                // Nothing left to reveal — finalize immediately.
+                typewriterDisplayedRef.current = assistantContent
+                if (typewriterTimerRef.current) { clearInterval(typewriterTimerRef.current); typewriterTimerRef.current = null }
+                if (activeThreadIdRef.current === threadId && assistantId != null) {
+                  setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: assistantContent, blocks: assistantBlocks, pending: false } : m))
                 }
-
-                // Update thread list with new thread if created
-                if (finalThreadId !== threadId) {
-                  setThreads(prev => {
-                    const exists = prev.find(t => t.id === finalThreadId)
-                    if (exists) return prev
-                    return [...prev, { id: finalThreadId, title: messageContent.slice(0, 5) || "新会话", agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
-                  })
-                  // Skip fetch — we already have the messages in state
-                  skipNextFetchRef.current = true
-                  switchThread(finalThreadId)
-                }
+                useChatStore.getState().updateLastAssistant(threadId, assistantContent, assistantBlocks, { pending: false })
               }
-        }
+
+              // Update thread list with new thread if created
+              if (finalThreadId !== threadId) {
+                setThreads(prev => {
+                  const exists = prev.find(t => t.id === finalThreadId)
+                  if (exists) return prev
+                  return [...prev, { id: finalThreadId, title: messageContent.slice(0, 5) || "新会话", agent_id: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]
+                })
+                // Skip fetch — we already have the messages in state
+                skipNextFetchRef.current = true
+                switchThread(finalThreadId)
+              }
+            }
       } else {
         await fetchRes.json().catch(() => {})
         setMessages(prev => [
@@ -875,23 +981,33 @@ export default function ChatInterface() {
         ])
       }
     } catch (e: any) {
-      // AbortError means the user switched threads — don't show an error
-      if (e?.name === 'AbortError') return
+      // AbortError = the user clicked 停止生成 (or we stopped the stream).
+      // Finalize gracefully with whatever we have instead of leaving the
+      // bubble stuck in `pending` forever.
+      if (e?.name === 'AbortError') {
+        const revealed = typewriterDisplayedRef.current || assistantContent || ""
+        useChatStore.getState().updateLastAssistant(
+          threadId,
+          revealed,
+          assistantBlocks,
+          { pending: false, stopped: !revealed },
+        )
+        return
+      }
       const errMsg = e?.message?.includes('Failed to fetch')
-        ? '无法连接到后端服务，请确认后端已启动'
-        : `网络错误：${e.message}`
+        ? '无法连接到后端服务（POST /api/chat-stream 流中断）。请确认后端已启动（端口 8010）'
+        : `网络错误（POST /api/chat-stream）：${e.message}`
       message.error(errMsg, 5)
-      setMessages(prev => [
-        ...prev,
-        {
-          id: Date.now() + 1,
-          role: "assistant",
-          content: errMsg,
-          created_at: new Date().toISOString(),
-        },
-      ])
+      useChatStore.getState().updateLastAssistant(
+        threadId,
+        assistantContent || errMsg,
+        assistantBlocks,
+        { pending: false, interrupted: !assistantContent },
+      )
     } finally {
-      chatAbortRef.current = null
+      // Unregister from the StreamManager regardless of outcome. The controller
+      // is also cleared on explicit stop via stopStream → abort → catch above.
+      if (threadId) unregisterStream(threadId)
       setSending(false)
     }
   }
@@ -910,12 +1026,10 @@ export default function ChatInterface() {
     // Use ref for accurate current value (state may be stale in closures)
     if (threadId === activeThreadIdRef.current) return
 
-    // Abort any in-flight SSE chat stream from the previous thread
-    if (chatAbortRef.current) {
-      chatAbortRef.current.abort()
-      chatAbortRef.current = null
-    }
-
+    // IMPORTANT: do NOT abort the previous thread's chat stream here. The
+    // StreamManager keeps it running in the background so the reply continues
+    // and the bubble stays `pending` (waiting animation) when you come back.
+    // Only video SSE / timers (component-scoped) are torn down.
     // Close all video SSE connections from the previous thread
     esRef.current.forEach(es => es.close())
     esRef.current.clear()
@@ -937,11 +1051,8 @@ export default function ChatInterface() {
   }
 
   const handleNewThread = async () => {
-    // Abort any in-flight SSE chat stream
-    if (chatAbortRef.current) {
-      chatAbortRef.current.abort()
-      chatAbortRef.current = null
-    }
+    // Stop any in-flight chat stream on the current thread (user is starting fresh)
+    stopStream(activeThreadIdRef.current)
     // Close all video SSE connections
     esRef.current.forEach(es => es.close())
     esRef.current.clear()
@@ -1605,7 +1716,23 @@ export default function ChatInterface() {
                               )}
                             </div>
                           )}
-                          <ReactMarkdown
+                          {/* Text / markdown content */}
+                          {msg.pending && !msg.content ? (
+                            <span className="chat-loading-dots" aria-label="正在等待回复">
+                              <span />
+                              <span />
+                              <span />
+                            </span>
+                          ) : msg.stopped ? (
+                            <Text type="secondary" style={{ fontSize: 13, opacity: 0.7 }}>
+                              已停止生成
+                            </Text>
+                          ) : msg.interrupted ? (
+                            <Text type="danger" style={{ fontSize: 13 }}>
+                              回复失败，请重试
+                            </Text>
+                          ) : (
+                            <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
                               code: ({ className, children, ...props }: any) => {
@@ -1688,7 +1815,8 @@ export default function ChatInterface() {
                           >
                             {msg.content}
                           </ReactMarkdown>
-                        </div>
+                        )}
+                      </div>
                       ) : (
                         <div>
                           <Text style={{
@@ -1727,7 +1855,7 @@ export default function ChatInterface() {
                   </div>
                 </div>
               ))}
-              {sending && (
+              {sending && !(messages.length > 0 && messages[messages.length - 1].role === "assistant" && messages[messages.length - 1].pending) && (
                 <div style={{
                   display: "flex", gap: 10, marginBottom: 16, alignItems: "flex-start",
                 }}>
@@ -1888,21 +2016,38 @@ export default function ChatInterface() {
                 onTemplateChange={handleTemplateChange}
               />
               <span style={{ flex: 1 }} />
-              <Button
-                type="primary"
-                icon={<SendOutlined />}
-                loading={sending}
-                onClick={handleSend}
-                disabled={!inputValue.trim() || sending || !providerId || !modelName}
-                style={{
-                  background: primaryColor,
-                  borderColor: primaryColor,
-                  borderRadius: "50%",
-                  width: 38,
-                  height: 38,
-                  flexShrink: 0,
-                }}
-              />
+              {streamingActive ? (
+                <Tooltip title="停止生成">
+                  <Button
+                    danger
+                    aria-label="停止生成"
+                    icon={<StopOutlined />}
+                    onClick={() => stopStream(activeThreadId)}
+                    style={{
+                      borderRadius: "50%",
+                      width: 38,
+                      height: 38,
+                      flexShrink: 0,
+                    }}
+                  />
+                </Tooltip>
+              ) : (
+                <Button
+                  type="primary"
+                  icon={<SendOutlined />}
+                  loading={sending}
+                  onClick={handleSend}
+                  disabled={!inputValue.trim() || sending || !providerId || !modelName}
+                  style={{
+                    background: primaryColor,
+                    borderColor: primaryColor,
+                    borderRadius: "50%",
+                    width: 38,
+                    height: 38,
+                    flexShrink: 0,
+                  }}
+                />
+              )}
             </div>
 
             {advancedOpen && (modelType === 'image' || modelType === 'video') && (

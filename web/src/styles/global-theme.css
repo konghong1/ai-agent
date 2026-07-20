@@ -292,3 +292,80 @@ html, body, #root {
 .ant-notification-notice {
   transform: translateY(0) !important;
 }
+
+/* =========================================================
+   Chat 等待回复动画 — premium 三点跳动（深浅色自适应）
+   仅用 transform/opacity 动画，保证 60fps、无布局抖动
+   ========================================================= */
+.chat-loading-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 3px 2px;
+  vertical-align: middle;
+}
+.chat-loading-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ice-primary);
+  box-shadow: 0 0 8px var(--ice-primary-60);
+  animation: chatDotBounce 1.2s infinite ease-in-out;
+}
+.chat-loading-dots span:nth-child(2) { animation-delay: 0.18s; }
+.chat-loading-dots span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes chatDotBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-6px); opacity: 1; }
+}
+/* 偏好减少动态效果时降级为静态点 */
+@media (prefers-reduced-motion: reduce) {
+  .chat-loading-dots span { animation: none; opacity: 0.6; }
+}
+
+/* ===== 角色权限分配树（RBAC）UI 优化 ===== */
+.perm-tree-card {
+  max-height: calc(100vh - 320px);
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(128, 128, 128, 0.16);
+  background: rgba(128, 128, 128, 0.05);
+  transition: border-color 0.2s ease;
+}
+.perm-tree-card:hover { border-color: rgba(128, 128, 128, 0.28); }
+
+.rbac-perm-tree .ant-tree-treenode {
+  padding: 3px 0;
+  align-items: flex-start;
+  line-height: 1.5;
+}
+.rbac-perm-tree .ant-tree-node-content-wrapper {
+  border-radius: 8px;
+  padding: 3px 8px;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.rbac-perm-tree .ant-tree-node-content-wrapper:hover {
+  background: rgba(128, 128, 128, 0.10);
+}
+.rbac-perm-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  background: rgba(128, 128, 128, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.18);
+}
+.rbac-perm-tree .ant-tree-switcher {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 28px;
+}
+.rbac-perm-tree .ant-tree-node-content-wrapper .ant-tag {
+  border-radius: 6px;
+  line-height: 16px;
+  margin-inline-start: 4px;
+  transform: translateY(-1px);
+}
+.rbac-perm-tree .ant-tree-checkbox {
+  margin-inline-end: 6px;
+}

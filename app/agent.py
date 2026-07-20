@@ -536,6 +536,8 @@ def ask_agent(
         messages = list(lc_messages)
         answer_raw: str | None = None
         last_resp = None
+        any_tool_called = False
+        nudge_count = 0
         for _step in range(getattr(settings, "mcp_max_iterations", 5)):
             try:
                 resp = llm_with_tools.invoke(messages)
@@ -546,51 +548,74 @@ def ask_agent(
             last_resp = resp
             messages.append(resp)
             tool_calls = getattr(resp, "tool_calls", None) or []
-            if not tool_calls:
-                answer_raw = resp.content or ""
-                break
-            for tc in tool_calls:
-                tname = tc.get("name")
-                targs = tc.get("args", {}) or {}
-                # PreToolUse Hook：可拦截或改写工具参数
-                if getattr(settings, "enable_hooks", False):
-                    try:
-                        from app.hook_runner import run_hooks, first_blocking
+            if tool_calls:
+                any_tool_called = True
+                for tc in tool_calls:
+                    tname = tc.get("name")
+                    targs = tc.get("args", {}) or {}
+                    # PreToolUse Hook：可拦截或改写工具参数
+                    if getattr(settings, "enable_hooks", False):
+                        try:
+                            from app.hook_runner import run_hooks, first_blocking
 
-                        pre = run_hooks("PreToolUse", user_id, db,
-                                        {"session_id": thread.id, "tool_name": tname, "tool_args": targs},
-                                        matcher=tname)
-                        blk = first_blocking(pre)
-                        if blk:
-                            messages.append(ToolMessage(
-                                content=f"[blocked by hook] {blk.reason}", tool_call_id=tc.get("id")))
-                            continue
-                        mod = next((o for o in pre
-                                    if o.decision == "modify" and isinstance(o.data.get("tool_args"), dict)), None)
-                        if mod:
-                            targs = mod.data["tool_args"]
-                    except Exception as e:
-                        logger.warning("PreToolUse Hook 失败（放行）: %s", e)
-                tool = next((t for t in tools if t.name == tname), None)
-                try:
-                    result = tool.func(**targs) if tool else f"[error] unknown tool: {tname}"
-                except Exception as ex:
-                    result = f"[error] {ex}"
-                # PostToolUse Hook：可改写工具结果
-                if getattr(settings, "enable_hooks", False):
+                            pre = run_hooks("PreToolUse", user_id, db,
+                                            {"session_id": thread.id, "tool_name": tname, "tool_args": targs},
+                                            matcher=tname)
+                            blk = first_blocking(pre)
+                            if blk:
+                                messages.append(ToolMessage(
+                                    content=f"[blocked by hook] {blk.reason}", tool_call_id=tc.get("id")))
+                                continue
+                            mod = next((o for o in pre
+                                        if o.decision == "modify" and isinstance(o.data.get("tool_args"), dict)), None)
+                            if mod:
+                                targs = mod.data["tool_args"]
+                        except Exception as e:
+                            logger.warning("PreToolUse Hook 失败（放行）: %s", e)
+                    tool = next((t for t in tools if t.name == tname), None)
                     try:
-                        from app.hook_runner import run_hooks
+                        result = tool.func(**targs) if tool else f"[error] unknown tool: {tname}"
+                    except Exception as ex:
+                        result = f"[error] {ex}"
+                    # PostToolUse Hook：可改写工具结果
+                    if getattr(settings, "enable_hooks", False):
+                        try:
+                            from app.hook_runner import run_hooks
 
-                        post = run_hooks("PostToolUse", user_id, db,
-                                         {"session_id": thread.id, "tool_name": tname, "tool_result": result},
-                                         matcher=tname)
-                        mod = next((o for o in post
-                                    if o.decision == "modify" and "tool_result" in o.data), None)
-                        if mod:
-                            result = mod.data["tool_result"]
-                    except Exception as e:
-                        logger.warning("PostToolUse Hook 失败（保留原结果）: %s", e)
-                messages.append(ToolMessage(content=str(result), tool_call_id=tc.get("id")))
+                            post = run_hooks("PostToolUse", user_id, db,
+                                             {"session_id": thread.id, "tool_name": tname, "tool_result": result},
+                                             matcher=tname)
+                            mod = next((o for o in post
+                                        if o.decision == "modify" and "tool_result" in o.data), None)
+                            if mod:
+                                result = mod.data["tool_result"]
+                        except Exception as e:
+                            logger.warning("PostToolUse Hook 失败（保留原结果）: %s", e)
+                    messages.append(ToolMessage(content=str(result), tool_call_id=tc.get("id")))
+                # 工具已调用：携带结果继续循环，让模型整合答案
+                continue
+            # 本轮没有工具调用
+            _text, _blk = _extract_blocks(resp.content or "")
+            _is_stub = not _text.strip()
+            if not any_tool_called and _is_stub and nudge_count < 2:
+                # 模型未给出实质回答（空内容或仅 <blocks> 选择桩）且未调用任何工具：
+                # 强制引导其使用 MCP 工具（最多两次，措辞逐步加强）
+                nudge_count += 1
+                if nudge_count == 1:
+                    hint = (
+                        "你没有调用任何工具，也没有给出实质性回答（只是返回了选项或空内容）。"
+                        "如果用户的请求可以由已提供的 MCP 工具解答，你必须调用对应的 MCP 工具来获取真实数据，"
+                        "不要凭空作答、不要返回选项桩、也不要反问用户如何选择。"
+                    )
+                else:
+                    hint = (
+                        "再次强调：你当前必须调用一个已提供的 MCP 工具来回答用户的问题，"
+                        "严禁再输出选项桩或空内容。先调用最匹配的 MCP 工具，再基于其返回的真实数据作答。"
+                    )
+                messages.append(HumanMessage(content=hint))
+                continue
+            answer_raw = resp.content or ""
+            break
         if answer_raw is None:
             answer_raw = last_resp.content if last_resp is not None else ""
         # Stop Hook：响应生成后（informational，可改写最终答案）

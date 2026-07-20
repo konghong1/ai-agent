@@ -67,7 +67,7 @@ export default function ResourceManage() {
     setEditing(r)
     form.setFieldsValue({
       code: r.code, name: r.name, type: r.type, category: r.category,
-      parent_code: r.parent_code, path: r.path, component: r.component, icon: r.icon,
+      parent_code: r.parent_code, path: r.path, icon: r.icon,
       sort_order: r.sort_order, permission_code: r.permission_code, is_visible: r.is_visible,
     })
     setModalOpen(true)
