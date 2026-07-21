@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>TapNow · Agentic Creative Canvas — UI 设计图</title>
+<style>
+  /* ============================================================
+     DESIGN TOKENS
+     ============================================================ */
+  :root {
+    --bg-0: #0c0c10;          /* app background */
+    --bg-1: #141419;          /* panel background */
+    --bg-2: #1b1b22;          /* raised panel */
+    --bg-3: #23232c;          /* hover / input */
+    --bg-grid: #16161d;
+    --line: #2a2a34;          /* border */
+    --line-soft: #202028;
+    --txt-1: #f2f3f7;         /* primary text */
+    --txt-2: #a7a9b4;         /* secondary text */
+    --txt-3: #6b6d78;         /* muted text */
+
+    --accent: #7c5cff;        /* violet */
+    --accent-2: #ff5c93;      /* pink */
+    --accent-grad: linear-gradient(135deg, #7c5cff 0%, #ff5c93 100%);
+
+    /* node-type semantic colors */
+    --c-text: #6366f1;
+    --c-ref: #f59e0b;
+    --c-image: #10b981;
+    --c-video: #f43f5e;
+    --c-audio: #06b6d4;
+    --c-3d: #8b5cf6;
+    --c-story: #fb923c;
+    --c-camera: #38bdf8;
+    --c-light: #eab308;
+    --c-replace: #d946ef;
+    --c-agent: #7c5cff;
+
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow-1: 0 4px 16px rgba(0,0,0,.35);
+    --shadow-2: 0 12px 40px rgba(0,0,0,.5);
+    --fs-12: 12px; --fs-13: 13px; --fs-14: 14px; --fs-16: 16px; --fs-20: 20px;
+    --font: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    background: var(--bg-0);
+    color: var(--txt-1);
+    overflow: hidden;
+    font-size: var(--fs-14);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ============================================================
+     APP SHELL
+     ============================================================ */
+  .app {
+    display: grid;
+    grid-template-rows: 52px 1fr 56px;
+    grid-template-columns: 60px 1fr 320px;
+    grid-template-areas:
+      "topbar topbar topbar"
+      "left   canvas  right"
+      "left   bottom  right";
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ---------- TOP BAR ---------- */
+  .topbar {
+    grid-area: topbar;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 16px;
+    background: var(--bg-1);
+    border-bottom: 1px solid var(--line);
+    z-index: 30;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 9px;
+    font-weight: 700; font-size: var(--fs-16); letter-spacing: .2px;
+  }
+  .brand .logo {
+    width: 26px; height: 26px; border-radius: 8px;
+    background: var(--accent-grad);
+    display: grid; place-items: center;
+    font-size: 14px; color: #fff; box-shadow: 0 2px 10px rgba(124,92,255,.5);
+  }
+  .brand .sub { color: var(--txt-3); font-weight: 500; font-size: 11px; }
+
+  .proj {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    color: var(--txt-2); cursor: pointer; transition: background .15s;
+  }
+  .proj:hover { background: var(--bg-2); color: var(--txt-1); }
+  .proj b { color: var(--txt-1); font-weight: 600; }
+
+  .top-sep { width: 1px; height: 24px; background: var(--line); }
+
+  .engine-chip {
+    display: flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border-radius: 20px;
+    background: var(--bg-2); border: 1px solid var(--line);
+    font-size: var(--fs-13); cursor: pointer; transition: .15s;
+  }
+  .engine-chip:hover { border-color: var(--accent); }
+  .engine-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-image); box-shadow: 0 0 8px var(--c-image); }
+
+  .search {
+    flex: 1; max-width: 340px; margin-left: 6px;
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; border-radius: 20px;
+    background: var(--bg-2); border: 1px solid var(--line-soft);
+    color: var(--txt-3); font-size: var(--fs-13);
+  }
+  .search input { flex: 1; background: none; border: none; outline: none; color: var(--txt-1); font-size: var(--fs-13); }
+
+  .top-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .credits {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 20px;
+    background: linear-gradient(135deg, rgba(124,92,255,.18), rgba(255,92,147,.18));
+    border: 1px solid rgba(124,92,255,.4);
+    font-size: var(--fs-13); font-weight: 600;
+  }
+  .btn {
+    border: none; cursor: pointer; font-family: var(--font); font-weight: 600;
+    border-radius: var(--radius-sm); padding: 7px 14px; font-size: var(--fs-13);
+    transition: .15s; color: var(--txt-1);
+  }
+  .btn-ghost { background: var(--bg-2); border: 1px solid var(--line); }
+  .btn-ghost:hover { background: var(--bg-3); }
+  .btn-primary { background: var(--accent-grad); color: #fff; box-shadow: 0 3px 14px rgba(124,92,255,.4); }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .icon-btn {
+    width: 34px; height: 34px; border-radius: var(--radius-sm);
+    background: transparent; border: 1px solid transparent; color: var(--txt-2);
+    cursor: pointer; display: grid; place-items: center; transition: .15s; font-size: 16px;
+  }
+  .icon-btn:hover { background: var(--bg-2); color: var(--txt-1); }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--accent-grad); display: grid; place-items: center;
+    color: #fff; font-weight: 700; font-size: 13px; cursor: pointer;
+  }
+
+  /* ---------- LEFT RAIL ---------- */
+  .left-rail {
+    grid-area: left;
+    background: var(--bg-1);
+    border-right: 1px solid var(--line);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 12px 0; gap: 6px; z-index: 20;
+  }
+  .rail-btn {
+    width: 42px; height: 42px; border-radius: 10px;
+    display: grid; place-items: center; cursor: pointer;
+    color: var(--txt-2); font-size: 18px; transition: .15s;
+    position: relative;
+  }
+  .rail-btn:hover { background: var(--bg-2); color: var(--txt-1); }
+  .rail-btn.active { background: rgba(124,92,255,.16); color: var(--accent); }
+  .rail-btn.active::before {
+    content: ""; position: absolute; left: -12px; top: 9px; bottom: 9px;
+    width: 3px; border-radius: 3px; background: var(--accent);
+  }
+  .rail-spacer { flex: 1; }
+  .rail-tip {
+    position: absolute; left: 52px; background: var(--bg-3); color: var(--txt-1);
+    padding: 5px 9px; border-radius: 6px; font-size: 12px; white-space: nowrap;
+    opacity: 0; pointer-events: none; transform: translateX(-4px); transition: .15s;
+    border: 1px solid var(--line); box-shadow: var(--shadow-1); z-index: 50;
+  }
+  .rail-btn:hover .rail-tip { opacity: 1; transform: translateX(0); }
+
+  /* ---------- CANVAS ---------- */
+  .canvas-wrap {
+    grid-area: canvas; position: relative; overflow: hidden;
+    background:
+      radial-gradient(circle at 1px 1px, var(--bg-grid) 1px, transparent 0) 0 0 / 24px 24px,
+      var(--bg-0);
+  }
+  .canvas {
+    position: absolute; inset: 0; transform-origin: 0 0;
+    will-change: transform;
+  }
+  svg.wires { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+  .wire { fill: none; stroke: #3a3a48; stroke-width: 2.5; }
+  .wire.flow { stroke: url(#wireGrad); stroke-width: 3; }
+
+  /* node card */
+  .node {
+    position: absolute; width: 230px;
+    background: var(--bg-1); border: 1px solid var(--line);
+    border-radius: var(--radius); box-shadow: var(--shadow-1);
+    user-select: none; transition: box-shadow .15s, border-color .15s;
+  }
+  .node:hover { border-color: #3a3a48; }
+  .node.selected { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(124,92,255,.35), var(--shadow-2); }
+  .node-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 11px; border-bottom: 1px solid var(--line-soft);
+    cursor: grab;
+  }
+  .node-header .ico {
+    width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+    font-size: 12px; color: #fff; flex-shrink: 0;
+  }
+  .node-header .ttl { font-size: var(--fs-13); font-weight: 600; flex: 1; }
+  .node-header .badge {
+    font-size: 10px; padding: 2px 7px; border-radius: 10px;
+    background: var(--bg-3); color: var(--txt-2); font-weight: 600;
+  }
+  .node-body { padding: 11px; }
+  .node-img {
+    width: 100%; height: 118px; border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, #2a2a38, #1d1d28);
+    display: grid; place-items: center; color: var(--txt-3); font-size: 12px;
+    overflow: hidden; position: relative;
+  }
+  .node-img .ph { font-size: 26px; opacity: .5; }
+  .node-text {
+    font-size: var(--fs-13); color: var(--txt-2); line-height: 1.5;
+    max-height: 60px; overflow: hidden;
+  }
+  .node-meta { display: flex; align-items: center; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+  .tag { font-size: 10.5px; padding: 2px 7px; border-radius: 6px; background: var(--bg-3); color: var(--txt-2); }
+  .node-foot {
+    display: flex; align-items: center; gap: 8px; padding: 8px 11px;
+    border-top: 1px solid var(--line-soft);
+  }
+  .gen-btn {
+    flex: 1; text-align: center; padding: 6px; border-radius: 7px;
+    background: var(--accent-grad); color: #fff; font-size: 12px; font-weight: 600; cursor: pointer;
+  }
+  .gen-btn.alt { background: var(--bg-3); color: var(--txt-1); }
+
+  /* connection ports */
+  .port {
+    position: absolute; width: 13px; height: 13px; border-radius: 50%;
+    background: var(--bg-1); border: 2.5px solid #4a4a58; top: 50%;
+    transform: translateY(-50%); z-index: 5;
+  }
+  .port.in { left: -7px; }
+  .port.out { right: -7px; }
+  .port:hover { border-color: var(--accent); }
+
+  /* storyboard sub-nodes */
+  .story-scenes { display: flex; flex-direction: column; gap: 6px; }
+  .scene-row {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    background: var(--bg-2); border-radius: 7px; font-size: 12px;
+  }
+  .scene-thumb { width: 34px; height: 24px; border-radius: 4px; background: linear-gradient(135deg,#33334a,#222230); flex-shrink: 0; }
+  .scene-no { color: var(--c-story); font-weight: 700; }
+
+  /* ---------- RIGHT INSPECTOR ---------- */
+  .inspector {
+    grid-area: right;
+    background: var(--bg-1);
+    border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; overflow: hidden; z-index: 20;
+  }
+  .insp-head {
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .insp-head .ico { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color:#fff; font-size: 14px; }
+  .insp-head .t { font-weight: 700; font-size: var(--fs-14); }
+  .insp-head .s { font-size: 11px; color: var(--txt-3); }
+  .insp-body { padding: 16px; overflow-y: auto; flex: 1; }
+  .field { margin-bottom: 16px; }
+  .field > label { display: block; font-size: 11.5px; color: var(--txt-3); margin-bottom: 7px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+  .input, .textarea, .select {
+    width: 100%; background: var(--bg-2); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); color: var(--txt-1); padding: 9px 11px;
+    font-family: var(--font); font-size: var(--fs-13); outline: none; transition: .15s;
+  }
+  .input:focus, .textarea:focus, .select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,92,255,.15); }
+  .textarea { resize: vertical; min-height: 78px; line-height: 1.5; }
+  .select { cursor: pointer; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .slider { margin-bottom: 14px; }
+  .slider .lab { display: flex; justify-content: space-between; font-size: 12px; color: var(--txt-2); margin-bottom: 6px; }
+  .slider .lab b { color: var(--txt-1); font-weight: 600; }
+  .range { width: 100%; -webkit-appearance: none; height: 5px; border-radius: 4px; background: var(--bg-3); outline: none; }
+  .range::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--accent); cursor: pointer; box-shadow: 0 0 0 3px rgba(124,92,255,.25); }
+
+  /* camera cube */
+  .cube {
+    width: 92px; height: 92px; margin: 4px auto 12px; position: relative;
+    transform-style: preserve-3d; transform: rotateX(-22deg) rotateY(-32deg);
+  }
+  .cube div { position: absolute; width: 92px; height: 92px; border: 1.5px solid rgba(56,189,248,.6); background: rgba(56,189,248,.06); }
+  .cube .f { transform: translateZ(46px); }
+  .cube .b { transform: rotateY(180deg) translateZ(46px); }
+  .cube .r { transform: rotateY(90deg) translateZ(46px); }
+  .cube .l { transform: rotateY(-90deg) translateZ(46px); }
+  .cube .t { transform: rotateX(90deg) translateZ(46px); }
+  .cube .bo { transform: rotateX(-90deg) translateZ(46px); }
+
+  .insp-foot { padding: 14px 16px; border-top: 1px solid var(--line); }
+  .insp-foot .btn-primary { width: 100%; padding: 10px; }
+
+  /* ---------- BOTTOM AGENT BAR ---------- */
+  .bottom {
+    grid-area: bottom;
+    border-top: 1px solid var(--line);
+    background: var(--bg-1);
+    display: flex; align-items: center; gap: 12px; padding: 0 16px; z-index: 20;
+  }
+  .agent-avatar {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    background: var(--accent-grad); display: grid; place-items: center; color:#fff; font-size: 16px;
+    box-shadow: 0 0 0 3px rgba(124,92,255,.2); cursor: pointer;
+  }
+  .agent-input {
+    flex: 1; display: flex; align-items: center; gap: 10px;
+    background: var(--bg-2); border: 1px solid var(--line); border-radius: 24px;
+    padding: 9px 16px;
+  }
+  .agent-input input { flex: 1; background: none; border: none; outline: none; color: var(--txt-1); font-size: var(--fs-14); }
+  .agent-input input::placeholder { color: var(--txt-3); }
+  .agent-input .mini { color: var(--txt-3); font-size: 12px; cursor: pointer; }
+  .agent-send {
+    width: 38px; height: 38px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--accent-grad); color: #fff; display: grid; place-items: center; font-size: 16px;
+  }
+  .quick-chips { display: flex; gap: 7px; }
+  .chip { font-size: 12px; padding: 6px 12px; border-radius: 18px; background: var(--bg-2); border: 1px solid var(--line); color: var(--txt-2); cursor: pointer; white-space: nowrap; transition: .15s; }
+  .chip:hover { border-color: var(--accent); color: var(--txt-1); }
+
+  /* ---------- MINIMAP + ZOOM ---------- */
+  .minimap {
+    position: absolute; right: 16px; bottom: 16px; width: 168px; height: 110px;
+    background: rgba(20,20,25,.85); border: 1px solid var(--line); border-radius: 10px;
+    backdrop-filter: blur(8px); overflow: hidden; z-index: 15;
+  }
+  .minimap .mm-dot { position: absolute; width: 14px; height: 10px; border-radius: 3px; background: var(--accent); opacity: .7; }
+  .minimap .mm-view { position: absolute; border: 1px solid rgba(124,92,255,.7); border-radius: 3px; }
+
+  .zoom {
+    position: absolute; right: 16px; bottom: 140px; display: flex; align-items: center;
+    background: rgba(20,20,25,.9); border: 1px solid var(--line); border-radius: 10px;
+    overflow: hidden; z-index: 15; backdrop-filter: blur(8px);
+  }
+  .zoom button { width: 34px; height: 34px; background: none; border: none; color: var(--txt-2); cursor: pointer; font-size: 16px; }
+  .zoom button:hover { background: var(--bg-2); color: var(--txt-1); }
+  .zoom .lvl { padding: 0 4px; font-size: 12px; color: var(--txt-2); min-width: 46px; text-align: center; }
+
+  .hint {
+    position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
+    background: rgba(20,20,25,.9); border: 1px solid var(--line); border-radius: 20px;
+    padding: 6px 14px; font-size: 12px; color: var(--txt-3); z-index: 15; backdrop-filter: blur(8px);
+  }
+
+  /* node-library drawer (slide-over) */
+  .lib-drawer {
+    position: absolute; top: 0; left: 0; bottom: 0; width: 248px;
+    background: var(--bg-1); border-right: 1px solid var(--line);
+    transform: translateX(-100%); transition: transform .22s ease; z-index: 25;
+    display: flex; flex-direction: column;
+  }
+  .lib-drawer.open { transform: translateX(0); }
+  .lib-head { padding: 14px 16px; border-bottom: 1px solid var(--line); display:flex; justify-content: space-between; align-items:center; }
+  .lib-head b { font-size: var(--fs-14); }
+  .lib-search { margin: 12px 16px; }
+  .lib-list { overflow-y: auto; padding: 0 12px 16px; display: flex; flex-direction: column; gap: 6px; }
+  .lib-item { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 9px; cursor: pointer; transition: .15s; }
+  .lib-item:hover { background: var(--bg-2); }
+  .lib-item .ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color:#fff; font-size: 14px; flex-shrink: 0; }
+  .lib-item .t { font-size: 13px; font-weight: 600; }
+  .lib-item .d { font-size: 11px; color: var(--txt-3); }
+  .lib-group { font-size: 10.5px; color: var(--txt-3); text-transform: uppercase; letter-spacing: .5px; padding: 10px 10px 4px; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ===================== TOP BAR ===================== -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">T</div>
+      <div>TapNow <span class="sub">Agentic Creative Canvas</span></div>
+    </div>
+    <div class="top-sep"></div>
+    <div class="proj">📁 <b>赛博朋克城市短片</b> <span style="color:var(--txt-3)">▾</span></div>
+    <div class="engine-chip"><span class="dot"></span> Kling 3.0 · 4K <span style="color:var(--txt-3)">▾</span></div>
+    <div class="search">🔍 <input placeholder="搜索节点、模型、模板…" /></div>
+    <div class="top-right">
+      <div class="credits">✦ 1,280 <span style="color:var(--txt-3);font-weight:500">Tapies</span></div>
+      <button class="btn btn-ghost">↗ 分享</button>
+      <button class="icon-btn" title="通知">🔔</button>
+      <button class="icon-btn" title="帮助">❓</button>
+      <div class="avatar" title="账户">KH</div>
+    </div>
+  </header>
+
+  <!-- ===================== LEFT RAIL ===================== -->
+  <aside class="left-rail">
+    <div class="rail-btn active" data-tip="选择 / 移动">⤢<span class="rail-tip">选择 (V)</span></div>
+    <div class="rail-btn" id="libToggle" data-tip="节点库">⊞<span class="rail-tip">节点库</span></div>
+    <div class="rail-btn" data-tip="画布平移">✋<span class="rail-tip">抓手 (H)</span></div>
+    <div class="rail-btn" data-tip="框选">▢<span class="rail-tip">框选</span></div>
+    <div class="rail-btn" data-tip="评论">💬<span class="rail-tip">评论</span></div>
+    <div class="rail-spacer"></div>
+    <div class="rail-btn" data-tip="适配视图">⤢<span class="rail-tip">适配视图</span></div>
+    <div class="rail-btn" data-tip="设置">⚙<span class="rail-tip">设置</span></div>
+  </aside>
+
+  <!-- ===================== CANVAS ===================== -->
+  <main class="canvas-wrap" id="canvasWrap">
+    <div class="hint">拖动空白处平移画布 · 滚轮缩放 · 点击节点查看属性</div>
+
+    <div class="canvas" id="canvas">
+      <svg class="wires" id="wires">
+        <defs>
+          <linearGradient id="wireGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#7c5cff"/>
+            <stop offset="100%" stop-color="#ff5c93"/>
+          </linearGradient>
+        </defs>
+        <!-- wires drawn by JS -->
+      </svg>
+
+      <!-- NODE: Text / Prompt -->
+      <div class="node" data-id="n1" data-color="var(--c-text)" style="left:40px; top:60px;">
+        <div class="port out" style="top:54px;"></div>
+        <div class="node-header">
+          <div class="ico" style="background:var(--c-text)">✎</div>
+          <div class="ttl">创意提示词</div>
+          <div class="badge">Text</div>
+        </div>
+        <div class="node-body">
+          <div class="node-text">一位女子身披金色流动面料，闭目，神情宁静。空灵顶光，柔和焦外背景，电影级质感。</div>
+        </div>
+      </div>
+
+      <!-- NODE: Reference Image -->
+      <div class="node" data-id="n2" data-color="var(--c-ref)" style="left:40px; top:270px;">
+        <div class="port out" style="top:54px;"></div>
+        <div class="node-header">
+          <div class="ico" style="background:var(--c-ref)">🖼</div>
+          <div class="ttl">参考图</div>
+          <div class="badge">Ref</div>
+        </div>
+        <div class="node-body">
+          <div class="node-img"><span class="ph">🖼️</span></div>
+          <div class="node-meta"><span class="tag">角色设定</span><span class="tag">1024×1024</span></div>
+        </div>
+      </div>
+
+      <!-- NODE: Image Generation -->
+      <div class="node selected" data-id="n3" data-color="var(--c-image)" style="left:340px; top:150px;">
+        <div class="port in" style="top:80px;"></div>
+        <div class="port out" style="top:80px;"></div>
+        <div class="node-header">
+          <div class="ico" style="background:var(--c-image)">🌄</div>
+          <div class="ttl">图像生成</div>
+          <div class="badge">Midjourney</div>
+        </div>
+        <div class="node-body">
+          <div class="node-img"><span class="ph">✨ 已生成</span></div>
+          <div class="node-meta"><span class="tag">16:9</span><span class="tag">--style raw</span></div>
+        </div>
+        <div class="node-foot"><div class="gen-btn">↻ 重新生成</div></div>
+      </div>
+
+      <!-- NODE: Storyboard -->
+      <div class="node" data-id="n4" data-color="var(--c-story)" style="left:660px; top:40px;">
+        <div class="port in" style="top:54px;"></div>
+        <div class="port out" style="top:54px;"></div>
+        <div class="node-header">
+          <div class="ico" style="background:var(--c-story)">🎬</div>
+          <div class="ttl">分镜脚本</div>
+          <div class="badge">Story</div>
+        </div>
+        <div class="node-body">
+          <div class="story-scenes">
+            <div class="scene-row"><span class="scene-no">01</span><div class="scene-thumb"></div> 包裹</div>
+            <div class="scene-row"><span class="scene-no">02</span><div class="scene-thumb"></div> 破茧</div>
+            <div class="scene-row"><span class="scene-no">03</span><div class="scene-thumb"></div> 镜框</div>
+          </div>
+          <div class="node-meta"><span class="tag">3 场景 · 12 格</span></div>
+        </div>
+      </div>
+
+      <!-- NODE: Video Generation -->
+      <div class="node" data-id="n5" data-color="var(--c-video)" style="left:660px; top:300px;">
+        <div class="port in" style="top:80px;"></div>
+        <div class="port out" style="top:80px;"></div>
+        <div class="node-header">
+          <div class="ico" style="background:var(--c-video)">🎞</div>
+          <div class="ttl">视频生成</div>
+          <div class="badge">Kling 3.0</div>
+        </div>
+        <div class="node-body">
+          <div class="node-img"><span class="ph">▶ 8s · 4K</span></div>
+          <div class="node-meta"><span class="tag">图生视频</span><span class="tag">--motion strong</span></div>
+        </div>
+        <div class="node-foot"><div class="gen-btn">▶ 生成视频</div></div>
+      </div>
+
+      <!-- NODE: Camera Control -->
+      <div class="node" data-id="n6" data-color="var(--c-camera)" style="left:980px; top:110px;">
+        <div class="port in" style="top:54px;"></div>
+        <div class="node-header">
+          <div class="ico" style="background:var(--c-camera)">🎥</div>
+          <div class="ttl">相机控制</div>
+          <div class="badge">Camera</div>
+        </div>
+        <div class="node-body">
+          <div class="cube"><div class="f"></div><div class="b"></div><div class="r"></div><div class="l"></div><div class="t"></div><div class="bo"></div></div>
+          <div class="node-meta"><span class="tag">ARRI 65 · 50mm</span><span class="tag">旋转 45°</span></div>
+        </div>
+      </div>
+
+      <!-- NODE: Lighting -->
+      <div class="node" data-id="n7" data-color="var(--c-light)" style="left:980px; top:360px;">
+        <div class="port in" style="top:54px;"></div>
+        <div class="node-header">
+          <div class="ico" style="background:var(--c-light)">💡</div>
+          <div class="ttl">影棚灯光</div>
+          <div class="badge">Light</div>
+        </div>
+        <div class="node-body">
+          <div class="node-meta"><span class="tag">主光 左上</span><span class="tag">色温 5600K</span><span class="tag">轮廓光 10</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NODE LIBRARY DRAWER -->
+    <div class="lib-drawer" id="libDrawer">
+      <div class="lib-head"><b>节点库</b><span style="color:var(--txt-3);cursor:pointer" id="libClose">✕</span></div>
+      <div class="lib-search"><input class="input" placeholder="搜索节点类型…" /></div>
+      <div class="lib-list">
+        <div class="lib-group">内容生成</div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-text)">✎</div><div><div class="t">文本 / 提示词</div><div class="d">创意描述、脚本</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-ref)">🖼</div><div><div class="t">参考图</div><div class="d">上传 / 引用图像</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-image)">🌄</div><div><div class="t">图像生成</div><div class="d">Midjourney / Flux / GPT</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-video)">🎞</div><div><div class="t">视频生成</div><div class="d">Kling / Veo / Sora</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-audio)">🔊</div><div><div class="t">音频生成</div><div class="d">配音 / 音效 (Beta)</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-3d)">🧊</div><div><div class="t">3D 世界</div><div class="d">一句话建 3D 场景 (Beta)</div></div></div>
+        <div class="lib-group">编排控制</div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-story)">🎬</div><div><div class="t">分镜脚本</div><div class="d">拆解场景 · 纵向排布</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-camera)">🎥</div><div><div class="t">相机控制</div><div class="d">镜头组合 · 多角度</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-light)">💡</div><div><div class="t">影棚灯光</div><div class="d">主光 / 轮廓光 / 色温</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-replace)">🔁</div><div><div class="t">对象替换</div><div class="d">图 / 视频换主体</div></div></div>
+        <div class="lib-group">智能体</div>
+        <div class="lib-item"><div class="ico" style="background:var(--c-agent)">🤖</div><div><div class="t">TapNow Agent</div><div class="d">AI 执行导演</div></div></div>
+        <div class="lib-item"><div class="ico" style="background:#64748b">📑</div><div><div class="t">Playlist 片段</div><div class="d">剪辑灵感到画布</div></div></div>
+      </div>
+    </div>
+
+    <!-- MINIMAP -->
+    <div class="minimap">
+      <div class="mm-dot" style="left:20px;top:24px;"></div>
+      <div class="mm-dot" style="left:90px;top:60px;"></div>
+      <div class="mm-dot" style="left:50px;top:90px;background:var(--c-video);"></div>
+      <div class="mm-view" style="left:14px;top:18px;width:90px;height:60px;"></div>
+    </div>
+
+    <!-- ZOOM -->
+    <div class="zoom">
+      <button id="zoomOut">−</button>
+      <div class="lvl" id="zoomLvl">100%</div>
+      <button id="zoomIn">+</button>
+    </div>
+  </main>
+
+  <!-- ===================== RIGHT INSPECTOR ===================== -->
+  <aside class="inspector">
+    <div class="insp-head">
+      <div class="ico" style="background:var(--c-image)">🌄</div>
+      <div><div class="t">图像生成</div><div class="s">节点 #n3 · 已选中</div></div>
+    </div>
+    <div class="insp-body">
+      <div class="field">
+        <label>模型引擎</label>
+        <select class="select">
+          <option>Midjourney v8.1</option>
+          <option>Flux Pro</option>
+          <option>GPT Image 2.0</option>
+          <option>Nano Banana Pro</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>提示词</label>
+        <textarea class="textarea">一位女子身披金色流动面料，闭目，神情宁静。空灵顶光，柔和焦外背景，电影级质感，8k。</textarea>
+      </div>
+      <div class="field">
+        <label>参考输入</label>
+        <div class="row2">
+          <input class="input" value="参考图 #n2" />
+          <input class="input" value="提示词 #n1" />
+        </div>
+      </div>
+      <div class="field">
+        <label>尺寸比例</label>
+        <select class="select"><option>16:9 横屏</option><option>9:16 竖屏</option><option>1:1 方形</option><option>21:9 宽银幕</option></select>
+      </div>
+      <div class="field">
+        <label>参数</label>
+        <div class="row2">
+          <input class="input" placeholder="种子 (可选)" />
+          <input class="input" value="--style raw" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>相机控制</label>
+        <div class="cube"><div class="f"></div><div class="b"></div><div class="r"></div><div class="l"></div><div class="t"></div><div class="bo"></div></div>
+        <div class="slider"><div class="lab"><span>旋转</span><b>45°</b></div><input class="range" type="range" min="-180" max="180" value="45"></div>
+        <div class="slider"><div class="lab"><span>俯仰</span><b>-18°</b></div><input class="range" type="range" min="-90" max="90" value="-18"></div>
+        <div class="slider"><div class="lab"><span>缩放</span><b>4×</b></div><input class="range" type="range" min="1" max="10" value="4"></div>
+      </div>
+
+      <div class="field">
+        <label>影棚灯光</label>
+        <div class="slider"><div class="lab"><span>全局亮度</span><b>50%</b></div><input class="range" type="range" min="0" max="100" value="50"></div>
+        <div class="slider"><div class="lab"><span>色温</span><b>5600K</b></div><input class="range" type="range" min="2000" max="10000" value="5600"></div>
+        <div class="slider"><div class="lab"><span>轮廓光</span><b>10</b></div><input class="range" type="range" min="0" max="100" value="10"></div>
+      </div>
+    </div>
+    <div class="insp-foot"><button class="btn btn-primary">▶ 生成</button></div>
+  </aside>
+
+  <!-- ===================== BOTTOM AGENT BAR ===================== -->
+  <footer class="bottom">
+    <div class="agent-avatar" title="TapNow Agent">🤖</div>
+    <div class="agent-input">
+      <input placeholder="描述你的想法，或选中节点作为上下文…" />
+      <span class="mini">＋ 附件</span>
+      <span class="mini">⚙ 参数</span>
+    </div>
+    <div class="quick-chips">
+      <div class="chip">✨ 扩写脚本</div>
+      <div class="chip">🎬 生成分镜</div>
+      <div class="chip">🎥 电影级镜头</div>
+    </div>
+    <button class="agent-send">➤</button>
+  </footer>
+
+</div>
+
+<script>
+  /* ---------- Node selection ---------- */
+  const nodes = document.querySelectorAll('.node');
+  nodes.forEach(n => {
+    n.addEventListener('click', (e) => {
+      if (e.target.classList.contains('port')) return;
+      nodes.forEach(x => x.classList.remove('selected'));
+      n.classList.add('selected');
+    });
+  });
+
+  /* ---------- Wire rendering (bezier between ports) ---------- */
+  const wires = [
+    ['n1','n3'], ['n2','n3'], ['n3','n4'], ['n3','n5'],
+    ['n4','n6'], ['n5','n6'], ['n4','n7'], ['n5','n7']
+  ];
+  const svg = document.getElementById('wires');
+  function portEl(node, side){
+    return node.querySelector('.port.' + side);
+  }
+  function drawWires(){
+    svg.querySelectorAll('.wire').forEach(w => w.remove());
+    wires.forEach(([from,to]) => {
+      const fn = document.querySelector(`.node[data-id="${from}"]`);
+      const tn = document.querySelector(`.node[data-id="${to}"]`);
+      if(!fn || !tn) return;
+      const fp = portEl(fn,'out'), tp = portEl(tn,'in');
+      if(!fp || !tp) return;
+      const fr = fp.getBoundingClientRect(), tr = tp.getBoundingClientRect();
+      const cr = svg.getBoundingClientRect();
+      const x1 = fr.left + fr.width/2 - cr.left, y1 = fr.top + fr.height/2 - cr.top;
+      const x2 = tr.left + tr.width/2 - cr.left, y2 = tr.top + tr.height/2 - cr.top;
+      const dx = Math.max(40, Math.abs(x2-x1)*0.5);
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+      path.setAttribute('d', `M ${x1} ${y1} C ${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`);
+      path.setAttribute('class', 'wire flow');
+      svg.appendChild(path);
+    });
+  }
+
+  /* ---------- Pan + Zoom ---------- */
+  const wrap = document.getElementById('canvasWrap');
+  const canvas = document.getElementById('canvas');
+  let scale = 1, tx = 0, ty = 0;
+  function apply(){
+    canvas.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    document.getElementById('zoomLvl').textContent = Math.round(scale*100) + '%';
+    requestAnimationFrame(drawWires);
+  }
+  wrap.addEventListener('mousedown', (e) => {
+    if(e.target.closest('.node') || e.target.closest('.lib-drawer') || e.target.closest('.minimap') || e.target.closest('.zoom')) return;
+    let sx = e.clientX, sy = e.clientY, stx = tx, sty = ty;
+    const mv = (ev) => { tx = stx + (ev.clientX - sx); ty = sty + (ev.clientY - sy); apply(); };
+    const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+  });
+  wrap.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const f = e.deltaY < 0 ? 1.1 : 0.9;
+    scale = Math.min(2, Math.max(0.4, scale * f));
+    apply();
+  }, {passive:false});
+  document.getElementById('zoomIn').onclick = () => { scale = Math.min(2, scale*1.15); apply(); };
+  document.getElementById('zoomOut').onclick = () => { scale = Math.max(0.4, scale*0.87); apply(); };
+
+  /* ---------- Node library drawer ---------- */
+  const drawer = document.getElementById('libDrawer');
+  document.getElementById('libToggle').onclick = () => drawer.classList.toggle('open');
+  document.getElementById('libClose').onclick = () => drawer.classList.remove('open');
+
+  window.addEventListener('resize', drawWires);
+  drawWires(); apply();
+</script>
+</body>
+</html>

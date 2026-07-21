@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1440">
+<title>TapNow Creative OS — Full Product UI</title>
+<style>
+/* ═══════════════════════════════════════════
+   TAPNOW CREATIVE OS — DESIGN TOKENS (from real screenshots)
+   ═══════════════════════════════════════════ */
+:root {
+  --bg-deep:      #08080c;
+  --bg-surface:   #101016;
+  --bg-panel:     #18181f;
+  --bg-elevated:  #1e1e28;
+  --bg-hover:     #252532;
+  --border:       rgba(255,255,255,.06);
+  --border-focus: rgba(255,255,255,.12);
+  --text-primary: #ececf0;
+  --text-secondary:#9999a8;
+  --text-muted:   #555564;
+  --accent:       #4a90ff;
+  --accent-hover: #6aa3ff;
+  --accent-glow:  rgba(74,144,255,.18);
+  --success:      #34d399;
+  --warning:      #fbbf24;
+  --danger:       #f87171;
+  --radius-sm:    6px;
+  --radius-md:    10px;
+  --radius-lg:    14px;
+  --radius-xl:    20px;
+  --radius-pill:  999px;
+  --shadow-sm:    0 1px 3px rgba(0,0,0,.35);
+  --shadow-md:    0 4px 12px rgba(0,0,0,.45);
+  --font:         -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Noto Sans CJK SC",sans-serif;
+}
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:var(--font); background:var(--bg-deep); color:var(--text-primary); overflow:hidden; height:100vh; width:100vw; user-select:none; }
+button { font-family:var(--font); cursor:pointer; border:none; background:none; color:inherit; }
+input { font-family:var(--font); }
+
+/* ── TOP NAV BAR ── */
+.topbar {
+  position:fixed; top:0; left:0; right:0; z-index:100; height:52px;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 20px; background:rgba(10,10,15,.85);
+  backdrop-filter:saturate(180%) blur(12px);
+  border-bottom:1px solid var(--border);
+}
+.tb-left { display:flex; align-items:center; gap:14px; flex:1; }
+.logo { display:flex; align-items:center; gap:7px; font-size:15px; font-weight:700; letter-spacing:-.3px; }
+.logo-icon { width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#7c5cfc,#4a90ff,#34d399);display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff;font-weight:800; }
+.canvas-title { display:flex; flex-direction:column; }
+.ct-name { font-size:13px; font-weight:600; }
+.ct-meta { font-size:11px; color:var(--text-muted); }
+.tb-center { display:flex; align-items:center; gap:4px; }
+.nav-item {
+  padding:6px 14px; border-radius:var(--radius-pill); font-size:13px;
+  color:var(--text-secondary); transition:.15s; white-space:nowrap;
+}
+.nav-item:hover,.nav-item.active { background:var(--bg-hover); color:var(--text-primary); }
+.nav-item.active { color:var(--accent); }
+.tb-right { display:flex; align-items:center; gap:8px; }
+.tapies { display:flex; align-items:center; gap:5px; padding:5px 11px; border-radius:var(--radius-md); background:var(--bg-elevated); font-size:12px; font-weight:600; }
+.tapies-icon { width:16px;height:16px;border-radius:50%;background:linear-gradient(135deg,#ffd700,#ffb300); }
+.btn-ghost { padding:6px 12px; border-radius:var(--radius-md); font-size:12px; transition:.15s; }
+.btn-ghost:hover { background:var(--bg-hover); }
+.btn-primary { padding:6px 16px; border-radius:var(--radius-md); background:var(--accent); color:#fff; font-size:12px; font-weight:600; }
+.btn-primary:hover { background:var(--accent-hover); }
+.icon-btn { width:33px;height:33px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius-md);transition:.15s;font-size:15px; position:relative; }
+.icon-btn:hover { background:var(--bg-hover); }
+.avatar-xs { width:26px;height:26px;border-radius:50%; background:linear-gradient(135deg,#667eea,#764ba2); display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff; }
+
+/* ── LEFT TOOLBAR (canvas editor) ── */
+.toolbar-left {
+  position:fixed; left:14px; top:64px; bottom:40px; width:46px;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  padding:10px 0; border-radius:var(--radius-xl); background:var(--bg-panel);
+  border:1px solid var(--border); z-index:50;
+}
+.tlb-btn {
+  width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+  border-radius:var(--radius-md); font-size:17px; transition:.15s; position:relative;
+}
+.tlb-btn:hover { background:var(--bg-hover); }
+.tlb-btn.active { background:var(--accent-glow); }
+.tlb-dot { position:absolute;top:5px;right:5px;width:7px;height:7px;border-radius:50%; background:var(--accent); }
+.tlb-bottom { margin-top:auto; }
+
+/* ── CANVAS AREA ── */
+.canvas-wrap {
+  position:fixed; left:68px; right:280px; top:52px; bottom:48px;
+  overflow:hidden; background:var(--bg-deep);
+  /* Dot grid like React Flow */
+  background-image: radial-gradient(circle, rgba(255,255,255,.04) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+/* React Flow node styling */
+.rf-node {
+  position:absolute; min-width:140px; max-width:240px;
+  border-radius:var(--radius-lg); background:var(--bg-panel);
+  border:1px solid var(--border); padding:12px 14px;
+  box-shadow:var(--shadow-md); cursor:move; transition:box-shadow .2s, transform .15s;
+}
+.rf-node:hover { box-shadow:0 8px 24px rgba(0,0,0,.5); transform:translateY(-1px); }
+.rf-node.selected { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-glow), 0 8px 24px rgba(0,0,0,.5); }
+.rf-node-header { display:flex;align-items:center;gap:7px;margin-bottom:6px; }
+.rf-node-icon { width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0; }
+.rf-node-title { font-size:12px; font-weight:600; }
+.rf-node-body { font-size:11px; color:var(--text-secondary); line-height:1.5; }
+.rf-node-footer { margin-top:8px;padding-top:7px;border-top:1px solid var(--border); display:flex;justify-content:space-between;align-items:center; }
+.rf-tag { font-size:10px;padding:2px 7px;border-radius:var(--radius-pill);background:var(--bg-elevated);color:var(--text-secondary); }
+.rf-handle { position:absolute; width:10px;height:10px;background:var(--bg-elevated);border:2px solid var(--accent);border-radius:50%; }
+.rf-handle.left  { left:-5px;top:50%;transform:translateY(-50%); }
+.rf-handle.right { right:-5px;top:50%;transform: translateY(-50%); }
+.rf-handle.top    { top:-5px;left:50%;transform:translateX(-50%); }
+.rf-handle.bottom { bottom:-5px;left:50%;transform:translateX(-50%); }
+/* Connection lines (SVG) */
+.connections-svg { position:absolute; inset:0; pointer-events:none; z-index:0; }
+
+/* ── RIGHT PANEL (Agent input) ── */
+.right-panel {
+  position:fixed; right:0; top:52px; bottom:0; width:278px;
+  background:var(--bg-surface); border-left:1px solid var(--border);
+  display:flex; flex-direction:column; z-index:50;
+}
+.rp-header { padding:12px 16px; border-bottom:1px solid var(--border); font-size:12px; color:var(--text-secondary); }
+.rp-body { flex:1; overflow-y:auto; padding:12px 16px; }
+/* Skeleton loader placeholder */
+.skeleton { background:var(--bg-elevated); border-radius:6px; margin-bottom:8px; }
+.skeleton-line { height:12px; border-radius:4px; margin-bottom:7px; opacity:.5; }
+.skeleton-line.short { width:60%; }
+.skeleton-line.med { width:82%; }
+.skeleton-card { padding:14px; border-radius:var(--radius-md); border:1px solid var(--border); margin-bottom:10px; }
+/* Agent input area at bottom of right panel */
+.agent-input-area {
+  padding:12px 14px 14px; border-top:1px solid var(--border);
+  background:var(--bg-panel);
+}
+.ai-hint { font-size:11px; color:var(--text-muted); margin-bottom:8px; line-height:1.5; }
+.ai-input-row { display:flex; align-items:center; gap:6px; }
+.ai-input {
+  flex:1; background:var(--bg-elevated); border:1px solid var(--border); border-radius:var(--radius-md);
+  padding:9px 12px; font-size:12px; color:var(--text-primary); outline:none; transition:.15s;
+}
+.ai-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+.ai-input::placeholder { color:var(--text-muted); }
+.ai-chip { font-size:10px; padding:3px 8px; border-radius:var(--radius-pill); background:var(--bg-elevated); color:var(--text-secondary); white-space:nowrap; border:1px solid var(--border); }
+.ai-send { width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:var(--radius-md); background:var(--accent); color:#fff; font-size:14px; flex-shrink:0; }
+.ai-send:hover { background:var(--accent-hover); }
+
+/* ── BOTTOM ZOOM CONTROLS ── */
+.zoom-bar {
+  position:fixed; left:14px; bottom:10px; z-index:50;
+  display:flex; align-items:center; gap:4px;
+  padding:5px 8px; border-radius:var(--radius-xl);
+  background:var(--bg-panel); border:1px solid var(--border);
+}
+.zb-btn { width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:14px; transition:.15s; }
+.zb-btn:hover { background:var(--bg-hover); }
+.zb-slider { width:70px; accent-color:var(--accent); }
+
+/* ══════════════════════════════════
+   WORKSPACE / HOME PAGE
+   ══════════════════════════════════ */
+.page { display:none; }
+.page.active { display:block; }
+.workspace-page {
+  position:fixed; inset:0; top:52px; overflow-y:auto; padding:28px 36px;
+  background:var(--bg-deep);
+}
+.ws-welcome { margin-bottom:28px; }
+.ws-user-row { display:flex;align-items:center;gap:10px;margin-bottom:6px; }
+.ws-avatar { width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#667eea,#764ba2);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff; }
+.ws-greeting { font-size:19px; font-weight:700; }
+.ws-sub { font-size:12px; color:var(--text-secondary); }
+/* Agent prompt on workspace */
+.ws-agent { margin:20px 0 28px; }
+.wsa-inner { max-width:720px; }
+.wsa-prompt { font-size:15px; margin-bottom:12px; }
+.wsa-input-wrap { display:flex;align-items:center;gap:8px; background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-xl); padding:4px 6px 4px 16px; transition:.2s; }
+.wsa-input-wrap:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+.wsa-input { flex:1; border:none; outline:none; background:none; font-size:14px; padding:10px 0; color:var(--text-primary); }
+.wsa-input::placeholder { color:var(--text-muted); }
+.wsa-model { font-size:11px; padding:4px 10px; border-radius:var(--radius-md); background:var(--bg-elevated); color:var(--text-secondary); border:1px solid var(--border); white-space:nowrap; }
+.wsa-chips { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+.wsa-chip { font-size:11px; padding:5px 12px; border-radius:var(--radius-pill); background:var(--bg-elevated); color:var(--text-secondary); border:1px solid var(--border); transition:.15s; cursor:pointer; }
+.wsa-chip:hover { border-color:var(--accent); color:var(--accent); }
+/* Projects grid */
+.ws-section { margin-bottom:32px; }
+.ws-section-head { display:flex;align-items:center;justify-content:space-between;margin-bottom:14px; }
+.ws-section-title { font-size:16px; font-weight:700; }
+.ws-tabs { display:flex;gap:4px; }
+.ws-tab { font-size:12px;padding:5px 12px;border-radius:var(--radius-md);color:var(--text-secondary);transition:.15s;cursor:pointer; }
+.ws-tab.active,.ws-tab:hover { background:var(--bg-elevated); color:var(--text-primary); }
+.ws-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; }
+.ws-card {
+  background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-lg);
+  padding:18px; transition:.2s; cursor:pointer;
+}
+.ws-card:hover { border-color:var(--border-focus); transform:translateY(-2px); box-shadow:var(--shadow-md); }
+.ws-card-name { font-size:14px; font-weight:600; margin-bottom:4px; }
+.ws-card-meta { font-size:11px; color:var(--text-muted); }
+.ws-card-preview { margin-top:12px; height:110px; border-radius:var(--radius-md); background:var(--bg-elevated); display:flex;align-items:center;justify-content:center; color:var(--text-muted); font-size:11px; overflow:hidden; position:relative; }
+.ws-new-card { display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:160px; border:2px dashed var(--border); border-radius:var(--radius-lg); color:var(--text-secondary); transition:.15s; cursor:pointer; }
+.ws-new-card:hover { border-color:var(--accent); color:var(--accent); background:var(--accent-glow); }
+/* Featured / Community feed */
+.featured-scroll { display:flex; gap:12px; overflow-x:auto; padding-bottom:8px; scroll-behavior:smooth; }
+.fc-card { min-width:220px;max-width:260px; background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; flex-shrink:0; transition:.15s; cursor:pointer; }
+.fc-card:hover { border-color:var(--border-focus); transform:translateY(-2px); }
+.fc-img { height:120px; background:linear-gradient(135deg,#1a1a2e,#16213e); display:flex;align-items:center;justify-content:center; font-size:24px; }
+.fc-body { padding:12px 14px; }
+.fc-title { font-size:12px; font-weight:600; line-height:1.4; margin-bottom:4px; }
+.fc-meta { font-size:10px; color:var(--text-muted); }
+
+/* ══════════════════════════════════
+   COMMUNITY / TapTV PAGE
+   ══════════════════════════════════ */
+.comm-page {
+  position:fixed; inset:0; top:52px; overflow-y:auto; padding:24px 36px;
+  background:var(--bg-deep);
+}
+.comm-hero { text-align:center; padding:36px 0 28px; }
+.comm-hero h1 { font-size:28px; font-weight:800; background:linear-gradient(135deg,var(--accent),#a78bfa,var(--success)); -webkit-background-clip:text;-webkit-text-fill-color:transparent; margin-bottom:8px; }
+.comm-hero p { font-size:14px; color:var(--text-secondary); max-width:520px; margin:0 auto; }
+.comm-feed { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:16px; }
+.comm-card {
+  background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-lg);
+  overflow:hidden; transition:.2s; cursor:pointer;
+}
+.comm-card:hover { transform:translateY(-3px); box-shadow:var(--shadow-md); border-color:var(--border-focus); }
+.comm-thumb { height:156px; position:relative; overflow:hidden; }
+.comm-thumb-bg { width:100%;height:100%;object-fit:cover; }
+.comm-overlay { position:absolute;bottom:0;left:0;right:0;padding:10px 14px; background:linear-gradient(transparent,rgba(0,0,0,.7)); }
+.comm-author { font-size:11px; color:rgba(255,255,255,.8); }
+.comm-body { padding:14px; }
+.comm-title { font-size:13px; font-weight:600; margin-bottom:4px; line-height:1.4; }
+.comm-stats { display:flex; gap:12px; font-size:11px; color:var(--text-muted); }
+.comm-stat { display:flex;align-items:center;gap:4px; }
+
+/* ══════════════════════════════════
+   PROMO MODAL (like real screenshot)
+   ══════════════════════════════════ */
+.promo-modal {
+  position:fixed; inset:0;z-index:200;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.55); backdrop-filter:blur(4px);
+}
+.pm-card { width:480px; max-width:92vw; background:var(--bg-panel); border:1px solid var(--border); border-radius:var(--radius-xl); padding:32px; position:relative; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+.pm-close { position:absolute;top:14px;right:14px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:50%;font-size:14px;color:var(--text-muted);transition:.15s; }
+.pm-close:hover { background:var(--bg-hover); color:var(--text-primary); }
+.pm-timer { display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;border-radius:var(--radius-pill);background:var(--bg-elevated);color:var(--warning);margin-bottom:16px; }
+.pm-label { font-size:12px; color:var(--text-secondary); margin-bottom:4px; }
+.pm-title { font-size:22px; font-weight:800; line-height:1.3; margin-bottom:6px; }
+.pm-sub { font-size:14px; color:var(--accent); font-weight:700; margin-bottom:18px; }
+.pm-list { list-style:none; margin-bottom:22px; }
+.pm-list li { display:flex;align-items:flex-start;gap:8px;font-size:13px;padding:5px 0; color:var(--text-secondary); }
+.pm-check { color:var(--success); font-size:14px; flex-shrink:0; margin-top:1px; }
+.pm-date { font-size:11px; color:var(--text-muted); margin-bottom:18px; }
+.pm-cta { width:100%;padding:12px;border-radius:var(--radius-md);background:var(--bg-elevated);color:var(--text-primary);font-size:14px;font-weight:600;text-align:center;transition:.15s;border:1px solid var(--border); }
+.pm-cta:hover { background:var(--bg-hover); border-color:var(--accent); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width:6px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--bg-elevated); border-radius:3px; }
+::-webkit-scrollbar-thumb:hover { background:var(--text-muted); }
+
+/* ── Animations ── */
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+@keyframes slideUp { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+.animate-in { animation:fadeIn .3s ease, slideUp .3s ease; }
+</style>
+</head>
+<body>
+
+<!-- ═════════════════ TOP NAV ═══════════ -->
+<header class="topbar" id="topbar">
+  <div class="tb-left">
+    <div class="logo"><div class="logo-icon">T</div>TapNow</div>
+    <div class="canvas-title" id="tbCanvasInfo" style="display:none;">
+      <span class="ct-name">Creative Concept (0721)</span>
+      <span class="ct-meta">上次修改于 5 分钟前</span>
+    </div>
+  </div>
+  <nav class="tb-center">
+    <button class="nav-item active" data-page="workspace" onclick="switchPage('workspace')">🏠 主页</button>
+    <button class="nav-item" data-page="canvas" onclick="switchPage('canvas')">📋 工作空间</button>
+    <button class="nav-item" data-page="community" onclick="switchPage('community')">📺 TapTV</button>
+    <button class="nav-item" onclick="">🏆 竞技场</button>
+  </nav>
+  <div class="tb-right">
+    <div class="tapies"><div class="tapies-icon"></div>200</div>
+    <button class="btn-ghost">✦ 社区</button>
+    <button class="icon-btn" title="分享">↗</button>
+    <button class="icon-btn" title="通知">🔔</button>
+    <button class="icon-btn avatar-xs" title="wah1763751448">W</button>
+    <button class="icon-btn" title="编辑">✎</button>
+    <button class="btn-primary" style="margin-left:4px;">免费体验</button>
+  </div>
+</header>
+
+<!-- ═══════════════ CANVAS EDITOR PAGE ═══════════ -->
+<div class="page active" id="page-canvas">
+
+<!-- Left Toolbar -->
+<aside class="toolbar-left">
+  <button class="tlb-btn" title="添加节点" onclick="toggleLib()"><span class="tlb-dot"></span>➕</button>
+  <button class="tlb-btn" title="搜索">🔍</button>
+  <button class="tlb-btn" title="文件"><span class="tlb-dot"></span>📁</button>
+  <button class="tlb-btn" title="节点库" id="libToggle" onclick="toggleLib()">⊞</button>
+  <button class="tlb-btn" title="评论">💬</button>
+  <button class="tlb-btn" title="历史记录">🕐</button>
+  <div class="tlb-bottom">
+    <button class="tlb-btn avatar-xs" style="width:30px;height:30px;font-size:10px;" title="wah1763751448">W</button>
+  </div>
+</aside>
+
+<!-- Canvas Area -->
+<div class="canvas-wrap" id="canvasArea">
+  <svg class="connections-svg" id="connectionsSvg"></svg>
+
+  <!-- Sample nodes positioned like a real canvas -->
+  <div class="rf-node" id="node1" style="left:120px;top:80px;" onclick="selectNode(this)">
+    <div class="rf-handle left"></div><div class="rf-handle right"></div>
+    <div class="rf-node-header"><div class="rf-node-icon" style="background:linear-gradient(135deg,#4a90ff,#2563eb);">T</div><span class="rf-node-title">文本提示词</span></div>
+    <div class="rf-node-body">一个关于城市夜景的创意短片脚本，主角是一位孤独的摄影师…</div>
+    <div class="rf-node-footer"><span class="rf-tag">Prompt</span><span class="rf-tag">文本</span></div>
+  </div>
+
+  <div class="rf-node" id="node2" style="left:420px;top:40px;" onclick="selectNode(this)">
+    <div class="rf-handle left"></div><div class="rf-handle right"></div>
+    <div class="rf-node-header"><div class="rf-node-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706);">🖼</div><span class="rf-node-title">参考图像</span></div>
+    <div class="rf-node-body">上传参考风格图或从社区引用灵感素材</div>
+    <div class="rf-node-footer"><span class="rf-tag">Image</span><span class="rf-tag">Reference</span></div>
+  </div>
+
+  <div class="rf-node" id="node3" style="left:420px;top:210px;" onclick="selectNode(this)">
+    <div class="rf-handle left"></div><div class="rf-handle right"></div>
+    <div class="rf-node-header"><div class="rf-node-icon" style="background:linear-gradient(135deg,#34d399,#059669);">🎨</div><span class="rf-node-title">图像生成</span></div>
+    <div class="rf-node-body">Midjourney · Flux · GPT Image<br/>尺寸 1024×1024 · 风格: 电影级</div>
+    <div class="rf-node-footer"><span class="rf-tag" style="color:var(--success)">MJ V8.1</span><span class="rf-tag">生成中</span></div>
+  </div>
+
+  <div class="rf-node" id="node4" style="left:120px;top:310px;" onclick="selectNode(this)">
+    <div class="rf-handle left"></div><div class="rf-handle right"></div>
+    <div class="rf-node-header"><div class="rf-node-icon" style="background:linear-gradient(135deg,#f472b6,#db2777);">🎬</div><span class="rf-node-title">视频生成</span></div>
+    <div class="rf-node-body">Kling 3.0 · Veo · Sora<br/>时长 5s · 分辨率 1080p</div>
+    <div class="rf-node-footer"><span class="rf-tag" style="color:var(--warning)">Kling</span><span class="rf-tag">视频</span></div>
+  </div>
+
+  <div class="rf-node" id="node5" style="left:750px;top:130px;" onclick="selectNode(this)" data-selected>
+    <div class="rf-handle left"></div><div class="rf-handle right"></div>
+    <div class="rf-node-header"><div class="rf-node-icon" style="background:linear-gradient(135deg,#a78bfa,#7c3aed);">🤖</div><span class="rf-node-title">TapNow Agent</span></div>
+    <div class="rf-node-body">AI 执行导演 — 自然语言驱动工作流编排与参数优化</div>
+    <div class="rf-node-footer"><span class="rf-tag" style="color:var(--accent)">Kimi 2.6</span><span class="rf-tag">Agent</span></div>
+  </div>
+
+  <div class="rf-node" id="node6" style="left:750px;top:320px;" onclick="selectNode(this)">
+    <div class="rf-handle left"></div><div class="rf-handle right"></div>
+    <div class="rf-node-header"><div class="rf-node-icon" style="background:linear-gradient(135deg,#22d3ee,#0891b2);">🎙</div><span class="rf-node-title">音频生成</span></div>
+    <div class="rf-node-body">配音合成 · 背景音效<br/>语言: 中文 · 风格: 电影旁白</div>
+    <div class="rf-node-footer"><span class="rf-tag">Audio</span><span class="rf-tag" style="color:var(--text-muted)">Beta</span></div>
+  </div>
+
+  <div class="rf-node" id="node7" style="left:340px;top:400px;" onclick="selectNode(this)" style="left:340px;top:400px;">
+    <div class="rf-handle left"></div><div class="rf-handle right"></div>
+    <div class="rf-node-header"><div class="rf-node-icon" style="background:linear-gradient(135deg,#fb923c,#ea580c);">🎬</div><span class="rf-node-title">分镜脚本</span></div>
+    <div class="rf-node-body">场景拆解 · 镜头序列 · 时间轴排布</div>
+    <div class="rf-node-footer"><span class="rf-tag">Storyboard</span><span class="rf-tag">6 场景</span></div>
+  </div>
+</div>
+
+<!-- Right Panel -->
+<div class="right-panel">
+  <div class="rp-header">属性检查器</div>
+  <div class="rp-body" id="rpBody">
+    <!-- Skeleton when no node selected -->
+    <div class="skeleton-card">
+      <div class="skeleton-line med"></div>
+      <div class="skeleton-line"></div>
+      <div class="skeleton-line short"></div>
+      <div style="margin-top:14px;">
+        <div class="skeleton skeleton-line" style="height:80px;"></div>
+      </div>
+    </div>
+    <div class="skeleton-card">
+      <div class="skeleton-line short"></div>
+      <div class="skeleton-line med"></div>
+      <div class="skeleton-line"></div>
+    </div>
+  </div>
+  <div class="agent-input-area">
+    <div class="ai-hint">描述创意或需求 / 使用技能：<span style="color:var(--accent)">@</span> 添加画布内容</div>
+    <div class="ai-input-row">
+      <span class="ai-chip">/</span>
+      <input class="ai-input" placeholder="输入你的想法…" />
+      <span class="ai-chip">@</span>
+      <button class="ai-send">↑</button>
+    </div>
+    <div class="ai-hint" style="margin-top:6px;"><span style="color:var(--accent)">@</span> 引用参考或使用插件</div>
+  </div>
+</div>
+
+<!-- Zoom Bar -->
+<div class="zoom-bar">
+  <button class="zb-btn" title="网格视图">⊞</button>
+  <button class="zb-btn" title="布局切换">▦</button>
+  <button class="zb-btn" title="适配视图" onclick="fitView()">⊡</button>
+  <input type="range" class="zb-slider" min="25" max="200" value="100" id="zoomSlider" oninput="setZoom(this.value)">
+  <span id="zoomLvl" style="font-size:10px;color:var(--text-muted);width:28px;text-align:center;">100%</span>
+  <button class="zb-btn" title="帮助" style="font-size:12px;">?</button>
+</div>
+
+</div><!-- end page-canvas -->
+
+<!-- ═══════════════ WORKSPACE / HOME PAGE ═══════════ -->
+<div class="page" id="page-workspace">
+<div class="workspace-page animate-in">
+  <div class="ws-welcome">
+    <div class="ws-user-row">
+      <div class="ws-avatar">W</div>
+      <div><div class="ws-greeting">Hi wah1763751448! 👋</div><div class="ws-sub">wah1763751448的团队</div></div>
+    </div>
+  </div>
+
+  <!-- Agent Prompt -->
+  <div class="ws-agent">
+    <div class="wsa-inner">
+      <div class="wsa-prompt">今天一起创作点什么？</div>
+      <div class="wsa-input-wrap">
+        <input class="wsa-input" placeholder="体验 Seedance 2.0 4K 提升视频画质上限…" />
+        <select class="wsa-model"><option>Kimi 2.6</option><option>GPT-4o</option><option>Claude Sonnet</option></select>
+        <button class="ai-send" style="border-radius:var(--radius-md);">→</button>
+      </div>
+      <div class="wsa-chips">
+        <span class="wsa-chip">✨ 体验 Brainstorm 模式设计人物关系</span>
+        <span class="wsa-chip">🧠 帮我建立这个项目的创作记忆</span>
+        <span class="wsa-chip">🎬 把我的创作流程做成 Skill</span>
+        <span class="wsa-chip">🤖 创建适合我的 Agent Skill</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- My Projects -->
+  <div class="ws-section">
+    <div class="ws-section-head">
+      <div class="ws-section-title">我的项目</div>
+      <div class="ws-tabs">
+        <span class="ws-tab active">所有项目</span>
+        <span class="ws-tab">精选推荐</span>
+        <span class="ws-tab">最近打开</span>
+      </div>
+    </div>
+    <div class="ws-grid">
+      <div class="ws-new-card" onclick="switchPage('canvas')">
+        <span style="font-size:28px;margin-bottom:8px;">+</span>
+        <span style="font-size:13px;font-weight:600;">新建项目</span>
+      </div>
+      <div class="ws-card" onclick="switchPage('canvas')">
+        <div class="ws-card-name">Creative Concept (0721)</div>
+        <div class="ws-card-meta">编辑于 7 分钟前 · 1 个节点</div>
+        <div class="ws-card-preview">📋 画布编辑器</div>
+      </div>
+      <div class="ws-card">
+        <div class="ws-card-name">Untitled</div>
+        <div class="ws-card-meta">编辑于 1 小时前 · 0 个节点</div>
+        <div class="ws-card-preview">📄 空白画布</div>
+      </div>
+      <div class="ws-card">
+        <div class="ws-card-name">东京动画短片</div>
+        <div class="ws-card-meta">编辑于昨天 · 8 个节点</div>
+        <div class="ws-card-preview" style="background:linear-gradient(135deg,#1e1b4b,#312e81);">🎬 动画项目</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Featured / Community Feed -->
+  <div class="ws-section">
+    <div class="ws-section-head">
+      <div class="ws-section-title">精选推荐</div>
+      <button class="btn-ghost" style="font-size:12px;">查看全部 →</button>
+    </div>
+    <div class="featured-scroll" id="featuredScroll">
+      <div class="fc-card">
+        <div class="fc-img" style="background:linear-gradient(135deg,#4a90ff,#7c3aed);">🚀</div>
+        <div class="fc-body">
+          <div class="fc-title">TapNow Creative OS，成为你的全能创作入口</div>
+          <div class="fc-meta">全球首款原生AI创意操作系统</div>
+        </div>
+      </div>
+      <div class="fc-card">
+        <div class="fc-img" style="background:linear-gradient(135deg,#059669,#34d399);">🎬</div>
+        <div class="fc-body">
+          <div class="fc-title">TapNow x Seedance 2.0 4K院线级上新</div>
+          <div class="fc-meta">4K原生超清，重构画质上限</div>
+        </div>
+      </div>
+      <div class="fc-card">
+        <div class="fc-img" style="background:linear-gradient(135deg,#db2777,#f472b6);">🏟️</div>
+        <div class="fc-body">
+          <div class="fc-title">TapTV Arena全球AI动画黑客松·杭州站</div>
+          <div class="fc-meta">100支队伍即刻集结</div>
+        </div>
+      </div>
+      <div class="fc-card">
+        <div class="fc-img" style="background:linear-gradient(135deg,#d97706,#fbbf24);">🏆</div>
+        <div class="fc-body">
+          <div class="fc-title">「一万个平行宇宙」全球大赛</div>
+          <div class="fc-meta">创作你的独属IP宇宙</div>
+        </div>
+      </div>
+      <div class="fc-card">
+        <div class="fc-img" style="background:linear-gradient(135deg,#0891b2,#22d3ee);">🎵</div>
+        <div class="fc-body">
+          <div class="fc-title">TapNow 正式推出Playlist功能</div>
+          <div class="fc-meta">以画布 剪新意</div>
+        </div>
+      </div>
+      <div class="fc-card">
+        <div class="fc-img" style="background:linear-gradient(135deg,#7c3aed,#a78bfa);">⚡</div>
+        <div class="fc-body">
+          <div class="fc-title">Midjourney V8.1 正式上线</div>
+          <div class="fc-meta">重塑美学叙事</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════ COMMUNITY / TapTV PAGE ═══════════ -->
+<div class="page" id="page-community">
+<div class="comm-page animate-in">
+  <div class="comm-hero">
+    <h1>探索 TapTV</h1>
+    <p>查看创作者们的完整过程 — 从想法到成片，每一步都清晰可见</p>
+  </div>
+  <div class="comm-feed">
+    <div class="comm-card">
+      <div class="comm-thumb"><div class="comm-thumb-bg" style="background:linear-gradient(135deg,#1a1a2e,#e94560);"></div>
+        <div class="comm-overlay"><span class="comm-author">@DiDi_OK</span></div>
+      </div>
+      <div class="comm-body">
+        <div class="comm-title">Waste to Energy</div>
+        <div class="comm-stats"><span class="comm-stat">👁 74</span><span class="comm-stat">⏱ 03:11</span><span class="comm-stat" style="color:var(--accent)">查看创作过程 →</span></div>
+      </div>
+    </div>
+    <div class="comm-card">
+      <div class="comm-thumb"><div class="comm-thumb-bg" style="background:linear-gradient(135deg,#16213e,#0f3460);"></div>
+        <div class="comm-overlay"><span class="comm-author">@婧宝宝</span></div>
+      </div>
+      <div class="comm-body">
+        <div class="comm-title">全AI世界杯广告｜联想 ✖️ 阿迪达斯｜2026 FIFA</div>
+        <div class="comm-stats"><span class="comm-stat">👁 270</span><span class="comm-stat">⏱ 02:52</span><span class="comm-stat" style="color:var(--accent)">查看创作过程 →</span></div>
+      </div>
+    </div>
+    <div class="comm-card">
+      <div class="comm-thumb"><div class="comm-thumb-bg" style="background:linear-gradient(135deg,#1b1b2f,#162447);"></div>
+        <div class="comm-overlay"><span class="comm-author">@STUDIO_TOZ</span></div>
+      </div>
+      <div class="comm-body">
+        <div class="comm-title">MISFIT</div>
+        <div class="comm-stats"><span class="comm-stat">👁 97</span><span class="comm-stat">⏱ 03:04</span><span class="comm-stat" style="color:var(--accent)">查看创作过程 →</span></div>
+      </div>
+    </div>
+    <div class="comm-card">
+      <div class="comm-thumb"><div class="comm-thumb-bg" style="background:linear-gradient(135deg,#0d1b2a,#1b263b);"></div>
+        <div class="comm-overlay"><span class="comm-author">@ossimonmeyer</span></div>
+      </div>
+      <div class="comm-body">
+        <div class="comm-title">TapNow 创作过程全览</div>
+        <div class="comm-stats"><span class="comm-stat">👁 226</span><span class="comm-stat">⏱ 07:44</span><span class="comm-stat" style="color:var(--accent)">查看创作过程 →</span></div>
+      </div>
+    </div>
+    <div class="comm-card">
+      <div class="comm-thumb"><div class="comm-thumb-bg" style="background:linear-gradient(135deg,#2d132c,#801336);"></div>
+        <div class="comm-overlay"><span class="comm-author">@DiDi_OK</span></div>
+      </div>
+      <div class="comm-body">
+        <div class="comm-title">【SIGN】What Comes After Curiosity?</div>
+        <div class="comm-stats"><span class="comm-stat">👁 2146</span><span class="comm-stat">⏱ 18:34</span><span class="comm-stat" style="color:var(--accent)">查看创作过程 →</span></div>
+      </div>
+    </div>
+    <div class="comm-card">
+      <div class="comm-thumb"><div class="comm-thumb-bg" style="background:linear-gradient(135deg,#1a1a2e,#4a148c);"></div>
+        <div class="comm-overlay"><span class="comm-author">@Dir.BillSun</span></div>
+      </div>
+      <div class="comm-body">
+        <div class="comm-title">一万个平行宇宙｜第一季01集「稻草人导演」</div>
+        <div class="comm-stats"><span class="comm-stat">👁 0</span><span class="comm-stat">⏱ 04:06</span><span class="comm-stat" style="color:var(--accent)">查看创作过程 →</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════ PROMO MODAL ═══════════ -->
+<div class="promo-modal" id="promoModal" onclick="if(event.target===this)this.style.display='none'">
+  <div class="pm-card animate-in">
+    <button class="pm-close" onclick="document.getElementById('promoModal').style.display='none'">✕</button>
+    <div class="pm-timer">⏰ 特惠倒计时：10d 2h 18m 7s</div>
+    <div class="pm-label">为卓越创作而生</div>
+    <div class="pm-title">立即订阅，解锁 Creative OS 全链路创作</div>
+    <div class="pm-sub">首发特惠，年付低至 5.5 折</div>
+    <ul class="pm-list">
+      <li><span class="pm-check">✓</span> 订阅即刻解锁 Creative OS 一句话从剧本到成片</li>
+      <li><span class="pm-check">✓</span> 年付套餐低至 5.5 折</li>
+      <li><span class="pm-check">✓</span> 月付套餐低至 6 折</li>
+      <li><span class="pm-check">✓</span> 剧本、角色、分镜 一站式统筹</li>
+    </ul>
+    <div class="pm-date">活动结束时间：2026年7月31日</div>
+    <button class="pm-cta">抢先体验 Creative OS ✨</button>
+  </div>
+</div>
+
+<script>
+// ─── Page switching ───
+function switchPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const pg = document.getElementById('page-' + name);
+  if(pg) pg.classList.add('active');
+  document.querySelectorAll(`[data-page="${name}"]`).forEach(n => n.classList.add('active'));
+  
+  // Show/hide canvas-specific elements
+  const isCanvas = name === 'canvas';
+  document.getElementById('tbCanvasInfo').style.display = isCanvas ? '' : 'none';
+}
+
+// ─── Node selection & dragging ───
+let selected = null, dragOffX=0, dragOffY=0;
+function selectNode(el) {
+  document.querySelectorAll('.rf-node').forEach(n=>n.classList.remove('selected'));
+  el.classList.add('selected');
+  selected = el;
+}
+document.addEventListener('mousedown', e => {
+  const nd = e.target.closest('.rf-node');
+  if(nd) { selectNode(nd); dragOffX=e.clientX-nd.offsetLeft; dragOffY=e.clientY-nd.offsetTop; } else selected=null;
+});
+document.addEventListener('mousemove', e => {
+  if(selected && e.buttons===1) {
+    const wrap=document.getElementById('canvasArea');
+    let x=e.clientX-dragOffX, y=e.clientY-dragOffY;
+    x=Math.max(0,Math.min(wrap.clientWidth-nd.offsetWidth,x));
+    y=Math.max(0,Math.min(wrap.clientHeight-nd.offsetHeight,y));
+    selected.style.left=x+'px'; selected.style.top=y+'px';
+    drawConnections();
+  }
+});
+document.addEventListener('mouseup', ()=>{ selected=null; });
+
+// ─── Bezier connection lines ───
+const edges = [
+  { from:'node1', to:'node3', fPort:'right', tPort:'left', color:'#4a90ff' },
+  { from:'node1', to:'node4', fPort:'bottom', tPort:'top', color:'#4a90ff' },
+  { from:'node2', to:'node3', fPort:'bottom', tPort:'top', color:'#f59e0b' },
+  { from:'node3', to:'node5', fPort:'right', tPort:'left', color:'#34d399' },
+  { from:'node4', to:'node7', fPort:'right', tPort:'left', color:'#f472b6' },
+  { from:'node7', to:'node5', fPort:'top', tPort:'bottom', color:'#fb923c' },
+  { from:'node5', to:'node6', fPort:'bottom', tPort:'top', color:'#a78bfa' },
+];
+function drawConnections() {
+  const svg = document.getElementById('connectionsSvg');
+  svg.innerHTML = '';
+  edges.forEach(e => {
+    const fn=document.getElementById(e.from), tn=document.getElementById(e.to);
+    if(!fn||!tn)return;
+    const wrap=document.getElementById('canvasArea');
+    const fr=fn.getBoundingClientRect(), tr=tn.getBoundingClientRect();
+    const wr=wrap.getBoundingClientRect();
+    // Get handle positions relative to SVG container
+    let fx,fy,tx,ty;
+    const fOff={left:[-5,fn.offsetHeight/2], right:[fn.offsetWidth+5,fn.offsetHeight/2], top:[fn.offsetWidth/2,-5], bottom:[fn.offsetWidth/2,fn.offsetHeight+5]};
+    const tOff={left:[-5,tn.offsetHeight/2], right:[tn.offsetWidth+5,tn.offsetHeight/2], top:[tn.offsetWidth/2,-5], bottom:[tn.offsetWidth/2,tn.offsetHeight+5]};
+    fx=fr.left-wr.left+fOff[e.fPort][0]; fy=fr.top-wr.top+fOff[e.fPort][1];
+    tx=tr.left-wr.left+tOff[e.tPort][0]; ty=tr.top-wr.top+tOff[e.tPort][1];
+    const dx=tx-fx, dy=ty-fy;
+    const c1x=fx+dx*.42, c1y=fy, c2x=tx-dx*.42, c2y=ty;
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d',`M${fx},${fy} C${c1x},${c1y} ${c2x},${c2y} ${tx},${ty}`);
+    path.setAttribute('fill','none');
+    path.setAttribute('stroke',e.color);
+    path.setAttribute('stroke-width','2');
+    path.setAttribute('opacity','.65');
+    svg.appendChild(path);
+  });
+}
+window.addEventListener('load', drawConnections);
+window.addEventListener('resize', drawConnections);
+
+// ─── Node library drawer toggle ───
+function toggleLib() {
+  const d = document.getElementById('libDrawer');
+  d.classList.toggle('open');
+}
+// Create node lib drawer
+const libDrawer = document.createElement('div');
+libDrawer.id='libDrawer';
+libDrawer.innerHTML=`
+<style>
+.lib-drawer{position:fixed;left:68px;top:52px;bottom:48px;width:248px;background:var(--bg-panel);border-right:1px solid var(--border);z-index:49;display:none;overflow-y:auto;padding:16px;}
+.lib-drawer.open{display:block; animation:fadeIn .2s ease;}
+.ld-title{font-size:13px;font-weight:700;margin-bottom:12px;color:var(--text-secondary);}
+.ld-cat{margin-bottom:14px;}
+.ld-cat-name{font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px;}
+.ld-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:var(--radius-md);cursor:pointer;transition:.12s;margin-bottom:2px;}
+.ld-item:hover{background:var(--bg-hover);}
+.ld-item-icon{width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
+.ld-item-name{font-size:12px;font-weight:500;}
+.ld-item-desc{font-size:10px;color:var(--text-muted);}</style>
+<div class="lib-drawer open" id="libDrawerInner">
+  <div class="ld-title">节点库</div>
+  <div class="ld-cat"><div class="ld-cat-name">输入</div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#4a90ff,#2563eb);">T</div><div><div class="ld-item-name">文本 / 提示词</div><div class="ld-item-desc">创意描述、脚本输入</div></div></div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#f59e0b,#d97706);">🖼</div><div><div class="ld-item-name">参考图</div><div class="ld-item-desc">上传或引用图像素材</div></div></div>
+  </div>
+  <div class="ld-cat"><div class="ld-cat-name">生成</div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#34d399,#059669);">🎨</div><div><div class="ld-item-name">图像生成</div><div class="ld-item-desc">MJ · Flux · GPT Image</div></div></div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#f472b6,#db2777);">🎬</div><div><div class="ld-item-name">视频生成</div><div class="ld-item-desc">Kling · Veo · Sora · Luma</div></div></div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#22d3ee,#0891b2);">🎙</div><div><div class="ld-item-name">音频生成</div><div class="ld-item-desc">配音、音效 (Beta)</div></div></div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#a78bfa,#7c3aed);">🌐</div><div><div class="ld-item-name">3D 世界</div><div class="ld-item-desc">一句话建 3D 场景 (Beta)</div></div></div>
+  </div>
+  <div class="ld-cat"><div class="ld-cat-name">结构</div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#fb923c,#ea580c);">🎬</div><div><div class="ld-item-name">分镜脚本</div><div class="ld-item-desc">场景拆解 · 纵向排布</div></div></div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#38bdf8,#0284c7);">📷</div><div><div class="ld-item-name">相机控制</div><div class="ld-item-desc">ARRI 镜头组合 + 3D 立体旋转</div></div></div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#fbbf24,#d97706);">💡</div><div><div class="ld-item-name">影棚灯光</div><div class="ld-item-desc">主光 / 轮廓光 / 色温</div></div></div>
+  </div>
+  <div class="ld-cat"><div class="ld-cat-name">智能</div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#a78bfa,#7c3aed);">🤖</div><div><div class="ld-item-name">TapNow Agent</div><div class="ld-item-desc">AI 执行导演 · 自然语言驱动</div></div></div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#94a3b8,#64748b);">🎞</div><div><div class="ld-item-name">Playlist 片段</div><div class="ld-item-desc">剪辑灵感到画布</div></div></div>
+    <div class="ld-item"><div class="ld-item-icon" style="background:linear-gradient(135deg,#f87171,#dc2626);">🔄</div><div><div class="ld-item-name">对象替换</div><div class="ld-item-desc">图/视频换主体保留光影</div></div></div>
+  </div>
+</div>`;
+document.body.appendChild(libDrawer);
+// Override toggle to work with our drawer
+const origToggle = window.toggleLib;
+window.toggleLib = function(){
+  const d = document.getElementById('libDrawerInner');
+  if(d) d.classList.toggle('open');
+};
+
+// ─── Zoom ───
+function setZoom(v){
+  document.getElementById('zoomLvl').textContent=v+'%';
+  document.getElementById('canvasArea').style.transform=`scale(${v/100})`;
+  document.getElementById('canvasArea').style.transformOrigin='top left';
+}
+function fitView(){ setZoom(95); }
+
+// ─── Init ───
+(function init(){
+  selectNode(document.getElementById('node5'));
+  drawConnections();
+})();
+</script>
+</body>
+</html>
