@@ -1,0 +1,21 @@
+event: thread_ready
+data: {"thread_id": null}
+
+data: {"status": "\u6b63\u5728\u5904\u7406\u4e2d...(10\u79d2)"}
+
+data: {"status": "\u6b63\u5728\u5904\u7406\u4e2d...(20\u79d2)"}
+
+data: {"status": "\u6b63\u5728\u5904\u7406\u4e2d...(30\u79d2)"}
+
+data: {"status": "\u6b63\u5728\u5904\u7406\u4e2d...(40\u79d2)"}
+
+data: {"status": "\u6b63\u5728\u5904\u7406\u4e2d...(50\u79d2)"}
+
+data: {"status": "\u6b63\u5728\u5904\u7406\u4e2d...(60\u79d2)"}
+
+data: {"status": "\u6b63\u5728\u5904\u7406\u4e2d...(70\u79d2)"}
+
+data: {"status": "\u6b63\u5728\u5904\u7406\u4e2d...(80\u79d2)"}
+
+data: {"error": "\u8bf7\u6c42\u8d85\u65f6\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002\u53ef\u80fd\u662f\u7f51\u7edc\u95ee\u9898\u6216\u670d\u52a1\u7aef\u7e41\u5fd9\u3002"}
+

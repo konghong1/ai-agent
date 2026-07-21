@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import mimetypes
 import os
+import queue as _queue
+import threading as _threading
 import urllib.request
 import uuid
 from datetime import datetime
@@ -939,43 +942,115 @@ def chat_stream(payload: ChatRequest, current_user: User = Depends(get_current_u
             # ── Stream tokens via a worker thread that owns its OWN DB session. ──
             # ask_agent_stream_gen runs in a daemon thread (so a client
             # disconnect cancelling this generator can never close its session
-            # mid-commit) and pushes ("delta"|"done"|"error") items into a
-            # queue. This generator pulls from the queue and emits SSE events,
-            # giving true token-by-token streaming while keeping messages
-            # persisted. This is what prevents chat messages from being lost
-            # when the user switches tabs or conversations mid-generation.
-            import queue as _queue
-            import threading as _threading
-            _q: "_queue.Queue" = _queue.Queue()
+            # mid-commit) and pushes events into an asyncio.Queue via
+            # call_soon_threadsafe (thread-safe). This generator pulls from the
+            # asyncio.Queue and emits SSE events, giving true token-by-token
+            # streaming while keeping messages persisted.
+            _loop = asyncio.get_event_loop()
+            import asyncio as _aio
+            _q: "_aio.Queue" = _aio.Queue()
 
             def _produce() -> None:
+                """Background thread: call agent, push events to asyncio.Queue."""
                 try:
-                    for _item in ask_agent_stream_gen(
-                        current_user.id, payload.agent_id, payload.message,
-                        request_data.get("thread_id"), system_prompt, model_name,
-                        provider_base_url, payload.provider_type, payload.provider_id,
-                        payload.reference_images,
-                    ):
-                        _q.put(_item)
+                    # ── Architecture selection: V2 (model-driven) or V1 (legacy) ──
+                    from app.agent_v2 import should_use_v2_architecture, ask_agent_v2_stream_gen
+                    
+                    if should_use_v2_architecture():
+                        _logger.info("Using V2 architecture (model-driven agent loop)")
+                        _gen = ask_agent_v2_stream_gen(
+                            current_user.id, payload.agent_id, payload.message,
+                            request_data.get("thread_id"), system_prompt, model_name,
+                            provider_base_url, payload.provider_type, payload.provider_id,
+                            payload.reference_images,
+                        )
+                    else:
+                        _gen = ask_agent_stream_gen(
+                            current_user.id, payload.agent_id, payload.message,
+                            request_data.get("thread_id"), system_prompt, model_name,
+                            provider_base_url, payload.provider_type, payload.provider_id,
+                            payload.reference_images,
+                        )
+                    
+                    for _item in _gen:
+                        # Use call_soon_threadsafe to safely push to asyncio.Queue
+                        _loop.call_soon_threadsafe(_q.put_nowait, _item)
                 except Exception as _e:  # pragma: no cover - defensive
-                    _q.put(("error", f"{type(_e).__name__}: {_e}"))
+                    _loop.call_soon_threadsafe(
+                        _q.put_nowait,
+                        ("error", f"{type(_e).__name__}: {_e}"),
+                    )
                 finally:
-                    _q.put(None)
+                    _loop.call_soon_threadsafe(_q.put_nowait, None)
 
             _threading.Thread(target=_produce, daemon=True).start()
-            _loop = asyncio.get_event_loop()
+
+            # ── 双保险超时监控 ──
+            # 1) chunk_timeout: 60秒无新chunk视为卡死（精准判定）
+            # 2) total_timeout: 180秒总时间兜底（防无限跑）
+            # 收到delta时重置chunk计时，容忍"慢但有响应"的多步任务
+            _start_time = _loop.time()
+            _last_chunk_time = _start_time
+            _chunk_timeout = 60  # 60秒无chunk视为卡死
+            _total_timeout = 180  # 3分钟总超时兜底
+            _heartbeat_interval = 10  # 每10秒发一次心跳
+
             while True:
-                _item = await _loop.run_in_executor(None, _q.get)
+                try:
+                    # 直接 await asyncio.Queue.get - 这是 async-native 方式，不会丢失事件
+                    # 用 wait_for 实现可中断的等待（用于心跳检查和超时判定）
+                    _item = await _aio.wait_for(_q.get(), timeout=1.0)
+                except _aio.TimeoutError:
+                    _now = _loop.time()
+                    _elapsed = _now - _start_time
+                    _no_chunk = _now - _last_chunk_time
+
+                    # 优先判断卡死（更精准）
+                    if _no_chunk > _chunk_timeout:
+                        _logger.warning("Chat stream stall: no chunk for %ds (total %ds)", _no_chunk, _elapsed)
+                        yield f"data: {json.dumps({'error': 'LLM响应超时，请稍后重试。'})}\n\n"
+                        break
+
+                    # 兜底：总超时
+                    if _elapsed > _total_timeout:
+                        _logger.warning("Chat stream total timeout after %ds", _elapsed)
+                        yield f"data: {json.dumps({'error': '请求超时，请稍后重试。'})}\n\n"
+                        break
+
+                    # 发送心跳（让用户知道还在处理）
+                    if int(_elapsed) % _heartbeat_interval == 0 and int(_elapsed) > 0:
+                        yield f"data: {json.dumps({'status': f'正在处理中...({int(_elapsed)}秒)'})}\n\n"
+                    continue
+
                 if _item is None:
                     break
+
+                # 只有收到 delta 时才重置 chunk 计时
                 if _item[0] == "delta":
+                    _last_chunk_time = _loop.time()
                     yield f"data: {json.dumps({'delta': _item[1]})}\n\n"
                 elif _item[0] == "status":
                     yield f"data: {json.dumps({'status': _item[1]})}\n\n"
+                elif _item[0] == "token_usage":
+                    # Token 用量统计（前端圆环组件）
+                    _total = _item[1].get('total', '?') if isinstance(_item[1], dict) else '?'
+                    _logger.info("Yielding token_usage to SSE: total=%s", _total)
+                    yield f"data: {json.dumps({'token_usage': _item[1]})}\n\n"
+                elif _item[0] == "warning":
+                    # 警告（如 max_tokens 截断）
+                    yield f"data: {json.dumps({'warning': _item[1]})}\n\n"
                 elif _item[0] == "done":
                     yield f"data: {json.dumps({'answer': _item[3], 'thread_id': _item[1], 'blocks': _item[2]})}\n\n"
                 elif _item[0] == "error":
-                    yield f"data: {json.dumps({'error': _item[1]})}\n\n"
+                    # 友好化错误提示
+                    _err_msg = _item[1]
+                    if "timeout" in _err_msg.lower() or "timed out" in _err_msg.lower():
+                        _err_msg = "网络请求超时，请检查网络连接后重试。"
+                    elif "connection" in _err_msg.lower():
+                        _err_msg = "无法连接到 AI 服务，请稍后重试。"
+                    elif "api" in _err_msg.lower() and ("key" in _err_msg.lower() or "auth" in _err_msg.lower()):
+                        _err_msg = "API 认证失败，请检查您的 API 配置。"
+                    yield f"data: {json.dumps({'error': _err_msg})}\n\n"
                 
         except Exception as exc:
             import traceback
@@ -1275,6 +1350,12 @@ def create_mcp_server(payload: McpServerCreate, current_user: User = Depends(get
     db.add(server)
     db.commit()
     db.refresh(server)
+    # §1.1 工具池事件失效：新增 server 后下一轮聊天重建工具。
+    from app.mcp_tools import invalidate_tool_pool as _invalidate_mcp_pool
+    from app.tool_pool import invalidate_tool_pool as _invalidate_tool_pool_v2
+    
+    _invalidate_mcp_pool(current_user.id)
+    _invalidate_tool_pool_v2(current_user.id, reason="mcp_server_created")
     return _to_mcp_read(server)
 
 
@@ -1294,6 +1375,12 @@ def update_mcp_server(server_id: int, payload: McpServerUpdate, current_user: Us
         server.headers = encrypt_json(headers)
     db.commit()
     db.refresh(server)
+    # §1.1 工具池事件失效：配置变更（allowlist/enabled/name 等）后重建工具。
+    from app.mcp_tools import invalidate_tool_pool as _invalidate_mcp_pool
+    from app.tool_pool import invalidate_tool_pool as _invalidate_tool_pool_v2
+    
+    _invalidate_mcp_pool(current_user.id)
+    _invalidate_tool_pool_v2(current_user.id, reason="mcp_server_updated")
     return _to_mcp_read(server)
 
 
@@ -1304,6 +1391,12 @@ def delete_mcp_server(server_id: int, current_user: User = Depends(get_current_u
         raise HTTPException(status_code=404, detail="MCP server not found.")
     db.delete(server)
     db.commit()
+    # §1.1 工具池事件失效：删除 server 后重建工具。
+    from app.mcp_tools import invalidate_tool_pool as _invalidate_mcp_pool
+    from app.tool_pool import invalidate_tool_pool as _invalidate_tool_pool_v2
+    
+    _invalidate_mcp_pool(current_user.id)
+    _invalidate_tool_pool_v2(current_user.id, reason="mcp_server_deleted")
 
 
 def _get_mcp_owner(server_id: int, current_user: User, db: Session) -> McpServer:

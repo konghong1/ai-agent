@@ -7,7 +7,9 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import threading
 from typing import Any
 
 from langchain_core.tools import StructuredTool
@@ -18,6 +20,54 @@ from app.mcp_client import MCPConnectionManager, MCPClientError
 from app.models import McpServer
 
 logger = logging.getLogger(__name__)
+
+
+# ── 工具池缓存 (plan-chat-perf-v2 §1.1) ──
+# 避免每轮重建 StructuredTool（含 pydantic args_schema 构造、闭包）。
+# key = user_id；value = (配置 hash, 工具列表)。MCP 配置变更走 invalidate_tool_pool 事件失效。
+_TOOL_POOL: dict[int, tuple[str, list[StructuredTool]]] = {}
+_POOL_LOCK = threading.Lock()
+
+
+def _servers_config_hash(db, user_id: int) -> str:
+    """配置指纹：server id/name/allowlist/enabled 任一变化即变更 → 触发重建。"""
+    servers = get_enabled_remote_servers(db, user_id)
+    payload = "|".join(
+        f"{s.id}:{s.name}:{','.join(sorted(s.tool_allowlist or []))}:{s.enabled}"
+        for s in servers
+    )
+    return hashlib.md5(payload.encode()).hexdigest()
+
+
+def invalidate_tool_pool(user_id: int | None = None) -> None:
+    """MCP server 增删改后调用：清缓存，下一轮聊天重建（事件失效，非时间过期）。"""
+    with _POOL_LOCK:
+        if user_id is None:
+            _TOOL_POOL.clear()
+        else:
+            _TOOL_POOL.pop(user_id, None)
+    logger.info("tool pool invalidated user_id=%s", user_id)
+
+
+def _call_mcp_tool(user_id: int, server_id: int, tname: str, kwargs: dict) -> str:
+    """自包含调用：独立 session 取 server，绝不依赖请求作用域 db。
+
+    工具池缓存跨请求复用，若闭包捕获请求 db 会在后续请求中因会话关闭而失败；
+    这里每次调用自行开 SessionLocal 取 server，线程安全、可缓存。
+    """
+    from app.core.database import SessionLocal
+
+    db2 = SessionLocal()
+    try:
+        srv = db2.get(McpServer, server_id)
+        if srv is None:
+            return "[error] MCP server not found"
+        res, _dur, err = MCPConnectionManager.call_tool(user_id, srv, tname, kwargs)
+        if err:
+            return f"[MCP error] {err}"
+        return res or ""
+    finally:
+        db2.close()
 
 
 def _json_type_to_python(t: str) -> Any:
@@ -54,7 +104,34 @@ def get_enabled_remote_servers(db, user_id: int) -> list[McpServer]:
     )
 
 
-def build_mcp_langchain_tools(db, user_id: int) -> list[StructuredTool]:
+def build_mcp_langchain_tools(db, user_id: int, _force: bool = False) -> list[StructuredTool]:
+    """构建该用户启用的远端 MCP 工具（LangChain StructuredTool）。
+
+    §1.1 工具池缓存：命中则零重建（避免每轮重建 pydantic args_schema + 闭包）。
+    配置指纹（_servers_config_hash）不匹配或 _force 时重建；MCP CRUD 后调用
+    invalidate_tool_pool 立即失效。
+    """
+    from app.settings import get_settings
+
+    settings = get_settings()
+    if getattr(settings, "enable_tool_pool", True) and not _force:
+        with _POOL_LOCK:
+            cached = _TOOL_POOL.get(user_id)
+        if cached and cached[0] == _servers_config_hash(db, user_id):
+            logger.info("tool pool HIT user_id=%s (skip rebuild, %d tools)", user_id, len(cached[1]))
+            return cached[1]
+
+    tools = _build_tools_impl(db, user_id)
+
+    if getattr(settings, "enable_tool_pool", True):
+        cfg_hash = _servers_config_hash(db, user_id)
+        with _POOL_LOCK:
+            _TOOL_POOL[user_id] = (cfg_hash, tools)
+        logger.info("tool pool MISS user_id=%s rebuilt %d tools", user_id, len(tools))
+    return tools
+
+
+def _build_tools_impl(db, user_id: int) -> list[StructuredTool]:
     servers = get_enabled_remote_servers(db, user_id)
     if not servers:
         return []
@@ -90,14 +167,9 @@ def build_mcp_langchain_tools(db, user_id: int) -> list[StructuredTool]:
                 continue
 
             def _make(server_id: int = server.id, tname: str = tname):
+                # §1.1 闭包仅捕获 server_id/tname/user_id；调用时由 _call_mcp_tool 自开 session。
                 def _run(**kwargs):
-                    srv = db.get(McpServer, server_id)
-                    if srv is None:
-                        return "[error] MCP server not found"
-                    res, _dur, err = MCPConnectionManager.call_tool(user_id, srv, tname, kwargs)
-                    if err:
-                        return f"[MCP error] {err}"
-                    return res or ""
+                    return _call_mcp_tool(user_id, server_id, tname, kwargs)
 
                 return _run
 
@@ -114,14 +186,19 @@ def build_mcp_langchain_tools(db, user_id: int) -> list[StructuredTool]:
                 func=_make(),
             )
             # P2：附带回指，便于在工具循环里安全地并行调用 call_tool
-            # （避免在线程内访问聊天会话 db；call_tool 内部用自身连接池，线程安全）。
+            # （_exec_mcp 现在用 _mcp_server_id + _call_mcp_tool 走独立 session，线程安全、可缓存）。
             lc_tool._mcp_server = server
+            lc_tool._mcp_server_id = server.id
             lc_tool._mcp_tool_name = tname
             tools.append(lc_tool)
     return tools
 
 
 def get_mcp_tool_catalog(db, user_id: int) -> str:
+    """§1.2 Catalog 瘦身：仅列「名称 + 一句话用途」，避免把完整 schema 塞满上下文。
+
+    保留最高优先级 TOOL USAGE RULE（可用 MCP 工具回答时必须调用）。
+    """
     lines: list[str] = []
     for server in get_enabled_remote_servers(db, user_id):
         try:
@@ -129,13 +206,18 @@ def get_mcp_tool_catalog(db, user_id: int) -> str:
         except Exception:
             continue
         allow = server.tool_allowlist or []
-        names = [t.get("name") for t in mcp_tools if (not allow or t.get("name") in allow)]
-        if names:
-            lines.append(f"- MCP server '{server.name}': tools {', '.join(names)}")
+        for t in mcp_tools:
+            name = t.get("name")
+            if not name:
+                continue
+            if allow and name not in allow:
+                continue
+            purpose = (t.get("description") or "")[:60].replace("\n", " ")
+            lines.append(f"- {server.name}.{name}: {purpose}")
     if not lines:
         return ""
     return (
-        "Available MCP tools (remote, live data):\n"
+        "Available MCP tools (call to get live data; do NOT answer from memory):\n"
         + "\n".join(lines)
         + "\n\n[TOOL USAGE RULE — highest priority / 最高优先级]\n"
         "If the user's request can be answered using one of the MCP tools listed above, you "

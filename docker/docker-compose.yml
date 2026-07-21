@@ -188,6 +188,21 @@ services:
       ENABLE_SKILL_TOOLS: ${ENABLE_SKILL_TOOLS:-true}
       ENABLE_HOOKS: ${ENABLE_HOOKS:-false}
 
+      # ── 聊天每轮性能优化 (plan-chat-perf-v2) ──
+      # 每根优化独立开关，关闭即回退当前 complex_path 行为（可灰度、可一键回退）。
+      # 默认：tool_pool/catalog-slim/kb-gate/intent-router/tool-prune 开；ondemand_kb 关（激进项，需配合 ENABLE_MEMORY_RECALL 才生效）。
+      ENABLE_TOOL_POOL: ${ENABLE_TOOL_POOL:-true}
+      ENABLE_KB_GATE: ${ENABLE_KB_GATE:-true}
+      ENABLE_INTENT_ROUTER: ${ENABLE_INTENT_ROUTER:-true}
+      ENABLE_ONDEMAND_KB: ${ENABLE_ONDEMAND_KB:-false}
+      ENABLE_TOOL_PRUNE: ${ENABLE_TOOL_PRUNE:-true}
+      TOOL_PRUNE_TOP_K: ${TOOL_PRUNE_TOP_K:-8}
+
+      # ── Agent Architecture Switch ──
+      # V1 (default): Old architecture with unconditional RAG + Intent Router
+      # V2 (experimental): Model-driven agent loop with Hooks + Tool Pool caching
+      USE_AGENT_V2: ${USE_AGENT_V2:-false}
+
       # 禁止写入 .pyc 字节码缓存：源码通过 bind mount 覆盖镜像，若镜像自带
       # 的 .pyc mtime 比源码新，Python 会信任陈旧字节码导致运行时类缺失字段
       # （如 GalleryRecord.error）。禁用缓存后始终读取最新源码，避免此类坑。
@@ -215,7 +230,7 @@ services:
         find /app -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
         python -m app.db.init_db
         python -m app.storage.ilm || true
-        exec uvicorn app.server:app --host 0.0.0.0 --port 8010
+        exec uvicorn app.server:app --host 0.0.0.0 --port 8010 --workers 4
 
   # ──────────────────────────────────────────────────────────────
   # BACKGROUND WORKER: Async media downloader

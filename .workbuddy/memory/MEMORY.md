@@ -82,6 +82,17 @@ Docker 注入 `HTTPS_PROXY=host.docker.internal:33210`(可能不可达)；`ensur
 ## 跨会话记忆（ADR-024/ADR-025 Tier1）
 `ContextService.build()` 读本 MEMORY.md 作 system 块注入(开关 `ENABLE_WORKSPACE_MEMORY=true`)。改记忆系统新开关须 docker-compose.yml api `environment` 显式注入(compose 优先级>根.env)。用户级偏好：`_user_profile_memory(user_id)` 无条件加载 `UserMemory` 中 active+layer>=1 偏好/事实；Tier2 语义回忆待配 embedding。
 
+## 聊天每轮性能优化（plan-chat-perf-v2 · 2026-07-21 实施）
+设计稿 `designs/plan-chat-perf-v2.md`。全部按文档落地，每根优化独立开关（关→回退 complex_path，零能力回归）。
+- **开关（app/settings.py + docker-compose.yml）**：`ENABLE_TOOL_POOL`(默认true)、`ENABLE_KB_GATE`(默认true)、`ENABLE_INTENT_ROUTER`(默认true)、`ENABLE_ONDEMAND_KB`(默认false，激进项)、`ENABLE_TOOL_PRUNE`(默认true)+`TOOL_PRUNE_TOP_K`(默认8)。
+- **§1.1 工具池缓存**（`app/mcp_tools.py`）：`_TOOL_POOL` 按 user_id 缓存 StructuredTool，配置 hash 校验 + `invalidate_tool_pool()` 事件失效（MCP CRUD 端点已接线）；工具闭包改自开 SessionLocal（`_call_mcp_tool`），跨请求复用安全。
+- **§1.2 Catalog 瘦身**：`get_mcp_tool_catalog` 仅列「名称+60字用途」，保留 TOOL USAGE RULE。
+- **§1.3 KB 前置门控**（`agent.py`）：`_needs_knowledge_base()` 用纯正则实体+召回意图词，平凡轮跳过 semantic_recall/reflex。
+- **§2.1 Intent Router**（`ask_agent_stream_gen`）：T0 纯问候→直答(<2s 路径)；T1 实时意图→仅工具(skip_kb)；T2 全量。T0 须整句仅问候（正则 `^[\s\W]*(问候)[\s\W]*$`）且排除实时意图+agent 无 KB 绑定，避免误判漏工具。
+- **§2.2 按需 KB 工具** `retrieve_knowledge`：开启 `ENABLE_ONDEMAND_KB` 时关自动语义回忆，改由模型按需调用（仅 enable_context_service 时注入）。
+- **§2.3 top-k 剪枝** `_prune_tools`：中文按字级重叠（无空格须按字切），仅绑最相关 top-k，不影响缓存。
+- **验证**：10/10 单测 `tests/test_chat_perf_v2.py` 通过；容器重启干净（MySQL OK）；`/chat` 200、`/chat-stream` 流式 200，日志见 `intent router: tier=...` 与 `tool pool HIT/MISS`。注：`test_agent_extensions.py::test_ask_agent_runs_skill_and_hooks` 为**预先存在失败**（假 LLM 无 `.stream`），与本改动无关。
+
 ## 通用
 - 生成文件归 `ai/agent-output/`：`overviews/` `verify-shots/` `logs/`。
 - 不可移动：`agent.db`/`.env`/运行时SQLite；文档(PRD/FDD/README/AGENTS/TASKS)；`designs/`、`疑问/`。

@@ -17,6 +17,7 @@ import ChatSelector from "@/components/ChatSelector"
 import { useChatSelectors } from "@/stores/useChatSelectors"
 import MediaCard, { MediaCardStyles } from "@/components/MediaCard"
 import MediaLightbox, { type LightboxImage } from "@/components/MediaLightbox"
+import { TokenRing } from "@/components/TokenRing"
 
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -111,6 +112,17 @@ export default function ChatInterface() {
   const [loadingHistory, setLoadingHistory] = useState(false)
   // P0：后端重型路径（MCP/工具/联网检索）流式期间推送的状态提示，渲染在等待气泡中
   const [streamStatus, setStreamStatus] = useState<string | null>(null)
+  // Token usage tracking
+  const [tokenUsage, setTokenUsage] = useState<{
+    system_prompt: number;
+    tools: number;
+    messages: number;
+    mcp: number;
+    skills: number;
+    total: number;
+    max_tokens: number;
+    usage_ratio: number;
+  } | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)          // messages scroll container
   const atBottomRef = useRef(true)                        // is the view currently at the bottom?
   const loadingHistoryRef = useRef(false)                 // guard against duplicate history fetches
@@ -936,6 +948,9 @@ export default function ChatInterface() {
                     } else if (data.status !== undefined && data.status) {
                       // P0：后端推送的进度提示（如「正在调用工具查询实时数据…」）
                       setStreamStatus(String(data.status))
+                    } else if (data.token_usage !== undefined) {
+                      // Token usage update from backend
+                      setTokenUsage(data.token_usage)
                     } else if (data.answer !== undefined) {
                       // Final (authoritative) full response — keep for finalize.
                       assistantContent = data.answer
@@ -2049,21 +2064,24 @@ export default function ChatInterface() {
                   />
                 </Tooltip>
               ) : (
-                <Button
-                  type="primary"
-                  icon={<SendOutlined />}
-                  loading={sending}
-                  onClick={handleSend}
-                  disabled={!inputValue.trim() || sending || !providerId || !modelName}
-                  style={{
-                    background: primaryColor,
-                    borderColor: primaryColor,
-                    borderRadius: "50%",
-                    width: 38,
-                    height: 38,
-                    flexShrink: 0,
-                  }}
-                />
+                <>
+                  <TokenRing usage={tokenUsage} />
+                  <Button
+                    type="primary"
+                    icon={<SendOutlined />}
+                    loading={sending}
+                    onClick={handleSend}
+                    disabled={!inputValue.trim() || sending || !providerId || !modelName}
+                    style={{
+                      background: primaryColor,
+                      borderColor: primaryColor,
+                      borderRadius: "50%",
+                      width: 38,
+                      height: 38,
+                      flexShrink: 0,
+                    }}
+                  />
+                </>
               )}
             </div>
 

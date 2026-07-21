@@ -17,6 +17,7 @@ from app.core.database import SessionLocal
 from app.llm import LLMFactory, LLMConfig
 from app.llm.openai_compat import OpenAICompatibleAdapter
 from app.storage import inline_reference_image
+from langchain_core.tools import StructuredTool
 
 
 from app.models import AgentConfig, AgentKnowledgeBase, KnowledgeBase, KBChunk, Message, Provider, ProviderModel, Thread, RetrievalLog
@@ -181,25 +182,35 @@ def _make_chat_http_client(force_proxy: bool = False):
 
     ``force_proxy=True`` returns a proxy-routed client — used by the one-shot
     retry after a direct attempt fails.
+
+    Timeout configuration
+    ---------------------
+    分层超时：防止单个请求无限卡住整个 worker 进程。
+    - connect=10s: 连接建立超时；
+    - read=60s: 读取超时（流式响应的最长等待）；
+    - write=30s: 写入超时；
+    - pool=10s: 连接池获取超时。
     """
     import httpx
     from app.http_client import _proxy_url, _proxy_reachable
 
     proxy = _proxy_url()
+    # 分层超时：connect 10s, read 60s, write 30s, pool 10s
+    timeout = httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0)
 
     # Mandatory-proxy mode: keep the original behaviour (proxy when present).
     if os.environ.get("DISABLE_PROXY_AUTOFALLBACK"):
         if proxy and _proxy_reachable():
             logging.getLogger(__name__).info("Chat client forced via egress proxy %s", proxy)
-            return httpx.Client(proxy=proxy, timeout=120.0)
-        return httpx.Client(timeout=120.0)
+            return httpx.Client(proxy=proxy, timeout=timeout)
+        return httpx.Client(timeout=timeout)
 
     if force_proxy and proxy:
-        return httpx.Client(proxy=proxy, timeout=120.0)
+        return httpx.Client(proxy=proxy, timeout=timeout)
 
     # Default: DIRECT. Do NOT read env proxy auto-detection (trust_env=False),
     # so a flaky/dead injected proxy can never hang the chat stream.
-    return httpx.Client(trust_env=False, timeout=120.0)
+    return httpx.Client(trust_env=False, timeout=timeout)
 
 
 def _create_llm_from_config(config: LLMConfig, force_proxy: bool = False):
@@ -292,6 +303,131 @@ def _get_or_create_thread(db: Session, user_id: int, agent_id: int | None, messa
     return thread
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# 聊天每轮性能优化 (plan-chat-perf-v2)
+# ──────────────────────────────────────────────────────────────────────────
+
+class Tier:
+    """Fast Intent Router 三档（§2.1）。默认保守：不确定→FULL，零能力回归。"""
+    DIRECT = "direct"   # T0 闲聊/致谢：极简 system + llm.stream()，无 KB/无工具（目标 <2s）
+    TOOLS  = "tools"    # T1 实时数据：绑定[缓存+剪枝]工具，跳过 KB 检索
+    FULL   = "full"     # T2 全量：完整装配 + 按需 KB 工具
+
+
+# 纯问候/致谢短句（T0 候选）。中文无空格，须用「整句仅问候」正则把关，
+# 避免「你好，帮我查天气」这类带实时意图的语句被误判为 T0（漏调工具）。
+_GREETING_RE = re.compile(
+    r"^[\s\W]*(你好|您好|hi|hello|hey|hiya|thanks|thank you|谢谢|感谢|多谢|"
+    r"好的|好嘞|okay|ok|在吗|在的|👋)[\s\W]*$",
+    re.I,
+)
+# 实时数据意图词（T1 触发）。
+_REALTIME_RE = re.compile(r"(车次|余票|天气|汇率|搜索|查询|查一下|帮我查|帮我搜)")
+
+
+def _needs_knowledge_base(text: str) -> bool:
+    """§1.3 KB 前置门控：保守判定是否需要知识库。
+
+    仅当消息含可匹配记忆的实体（纯正则，零 embedding）或显式召回意图词时才检索；
+    平凡轮返回 False → 完全跳过 semantic_recall(embedding+Chroma) 与 reflex(500 行扫描)。
+    """
+    if not text or len(text.strip()) < 4:
+        return False
+    from app.context_service import ContextService
+
+    if ContextService._extract_entities(text):
+        return True
+    if re.search(r"(我记得|之前|上次|我们讨论过|你说过|我的偏好|我的设置|记住)", text):
+        return True
+    return False
+
+
+def _is_greeting(t: str) -> bool:
+    # 整句须仅由「问候词 + 空白/标点」组成（中文问候后不允许再跟其他内容）。
+    return bool(_GREETING_RE.match(t))
+
+
+def _route_intent(message: str, settings, agent_has_kb: bool = False) -> str:
+    """§2.1 三档分流。保守默认：不确定→FULL（保留完整路径，不丢能力）。
+
+    - T0 DIRECT：纯闲聊/致谢短句（无实时意图、<=12 字），且 agent 无强制 KB 绑定。
+    - T1 TOOLS：含实时数据意图（车次/余票/天气/汇率/搜索/查询…）但非知识召回。
+    - T2 FULL：其余（保守兜底）。
+    """
+    t = (message or "").strip()
+    has_realtime = bool(_REALTIME_RE.search(t))
+    # T0：仅纯问候/致谢（排除任何实时意图），且 agent 未强制绑定 KB。
+    if not agent_has_kb and not has_realtime and len(t) <= 12 and _is_greeting(t):
+        return Tier.DIRECT
+    # T1：实时数据意图且无需知识库 → 仅工具，跳过 KB。
+    if has_realtime and not _needs_knowledge_base(t):
+        return Tier.TOOLS
+    return Tier.FULL
+
+
+def _tokens(s: str) -> set[str]:
+    """混合分词：拉丁词 + 独立 CJK 字（中文无空格，须按字切，否则整句塌成一个 token）。"""
+    toks = set(re.findall(r"[a-z0-9_]+", (s or "").lower()))
+    toks |= set(re.findall(r"[一-鿿]", s or ""))
+    return toks
+
+
+def _prune_tools(tools, query: str, top_k: int = 8) -> list:
+    """§2.3 top-k 工具相关性剪枝：bind_tools 前对工具描述做轻量匹配，仅绑最相关 top-k。
+
+    中文按字级重叠（无空格场景下列表名/描述整体塌成一个词，必须按字切）；
+    仅影响 bind_tools 传入列表，不改 Tool Pool 缓存本身。
+    """
+    if len(tools) <= top_k:
+        return tools
+    q = _tokens(query)
+    scored = []
+    for t in tools:
+        desc = (getattr(t, "description", "") or "").lower()
+        overlap = len(q & _tokens(desc))
+        scored.append((overlap, getattr(t, "name", "").count("_"), t))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [t for _, _, t in scored[:top_k]]
+
+
+def _make_retrieve_knowledge_tool(db, user_id: int, settings) -> StructuredTool:
+    """§2.2 按需知识库工具：模型需要历史记忆/偏好时才调用，避免每轮必做 embedding+Chroma。
+
+    调用时自开 session（不依赖请求作用域 db），与工具池缓存跨请求复用兼容。
+    """
+    from app.context_service import ContextService
+    from app.mcp_tools import _build_args_model
+
+    def _run(query: str) -> str:
+        from app.core.database import SessionLocal
+
+        db2 = SessionLocal()
+        try:
+            cs = ContextService(db2)
+            hits = cs._semantic_recall(user_id, query, k=settings.context_service_recall_k)
+            reflex = cs._retrieval_reflex(user_id, query, cap=settings.context_service_reflex_cap)
+            merged = (reflex or []) + [h.get("content", "") for h in hits]
+            return "\n".join(merged) if merged else "（知识库无相关记忆）"
+        finally:
+            db2.close()
+
+    args_model = _build_args_model({
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "检索语句，如用户提到的主题/偏好/过往讨论",
+            }
+        },
+        "required": ["query"],
+    })
+    return StructuredTool(
+        name="retrieve_knowledge",
+        description="当用户问题需要调用历史记忆、个人偏好或过往讨论时使用；输入检索语句，返回相关记忆。",
+        args_schema=args_model,
+        func=_run,
+    )
+
+
 def ask_agent(
     db: Session,
     user_id: int,
@@ -305,6 +441,7 @@ def ask_agent(
     provider_id: int | None = None,
     temperature: float | None = None,
     reference_images: list[str] | None = None,
+    skip_kb: bool = False,
 ):
     """Run an agent turn.
 
@@ -427,16 +564,40 @@ def ask_agent(
             ])
             return resp.content or ""
 
+        # §1.3 KB 前置门控 + §2.2 按需 KB + skip_kb：组合出最终开关。
+        _reflex_on = getattr(settings, "enable_retrieval_reflex", False)
+        _recall_on = getattr(settings, "enable_memory_recall", False)
+        _rrf_on = getattr(settings, "enable_rrf", False)
+        if getattr(settings, "enable_kb_gate", True):
+            _need_kb = _needs_knowledge_base(message)
+            _reflex_on = _reflex_on and _need_kb
+            _rrf_on = _rrf_on and _need_kb
+            # §2.2 开启时：关闭"自动"语义回忆（重活 embedding+Chroma），改由模型按需调用工具。
+            if getattr(settings, "enable_ondemand_kb", False):
+                _recall_on = False
+            else:
+                _recall_on = _recall_on and _need_kb
+        else:
+            if getattr(settings, "enable_ondemand_kb", False):
+                _recall_on = False
+        if skip_kb:
+            _reflex_on = _recall_on = _rrf_on = False
+        logger.info(
+            "KB gate: need_kb=%s skip_kb=%s -> reflex=%s recall=%s rrf=%s",
+            _need_kb if getattr(settings, "enable_kb_gate", True) else "n/a",
+            skip_kb, _reflex_on, _recall_on, _rrf_on,
+        )
+
         opts = BuildOptions(
             recent_turns=settings.context_service_recent_turns,
             reserved_reply_ratio=settings.context_service_reserved_reply_ratio,
             reflex_cap=settings.context_service_reflex_cap,
             recall_k=settings.context_service_recall_k,
             summarizer=_summarizer,
-            enable_reflex=getattr(settings, "enable_retrieval_reflex", False),
-            enable_memory_recall=getattr(settings, "enable_memory_recall", False),
+            enable_reflex=_reflex_on,
+            enable_memory_recall=_recall_on,
             enable_gap_analysis=getattr(settings, "enable_gap_analysis", False),
-            enable_rrf=getattr(settings, "enable_rrf", False),
+            enable_rrf=_rrf_on,
         )
         cs = ContextService(db)
         langchain_messages = cs.build(
@@ -564,6 +725,85 @@ def ask_agent(
         except Exception as e:
             logger.warning("use_skill 工具加载失败（优雅降级）: %s", e)
 
+    # §2.2 按需 KB 工具：用 retrieve_knowledge 替代"自动"语义回忆（开启 ondemand_kb 时）。
+    if getattr(settings, "enable_ondemand_kb", False) and getattr(settings, "enable_context_service", False):
+        try:
+            kb_tool = _make_retrieve_knowledge_tool(db, user_id, settings)
+            tools.append(kb_tool)
+            # 在 system 消息追加调用指示（此时 catalog_block 已并入 system）。
+            for _i, _m in enumerate(lc_messages):
+                if isinstance(_m, SystemMessage):
+                    _m.content += (
+                        "\n\n[记忆工具] 若回答需要调用历史记忆、个人偏好或过往讨论，"
+                        "请先调用 retrieve_knowledge 工具检索；仅在确实相关时使用。"
+                    )
+                    break
+        except Exception as e:
+            logger.warning("retrieve_knowledge 工具加载失败（优雅降级）: %s", e)
+
+    # §2.3 top-k 工具相关性剪枝：仅绑定最相关工具（不影响 Tool Pool 缓存）。
+    if getattr(settings, "enable_tool_prune", True) and len(tools) > getattr(settings, "tool_prune_top_k", 8):
+        _pruned = _prune_tools(tools, message, getattr(settings, "tool_prune_top_k", 8))
+        logger.info("tool prune: %d -> %d (top_k=%d)", len(tools), len(_pruned), getattr(settings, "tool_prune_top_k", 8))
+        tools = _pruned
+
+    # ── Token 统计（T1/T2 重型路径也要发，前端圆环才能更新）──
+    try:
+        from app.token_counter import TokenCounter
+        _token_counter = TokenCounter(model_name or "gpt-4")
+        # 计算 token 使用量（含工具定义、消息、系统提示词等）
+        _lc_messages_dicts = []
+        for _m in lc_messages:
+            if isinstance(_m, SystemMessage):
+                _lc_messages_dicts.append({"role": "system", "content": _m.content or ""})
+            elif isinstance(_m, HumanMessage):
+                _lc_messages_dicts.append({"role": "user", "content": _m.content or ""})
+            elif isinstance(_m, AIMessage):
+                _lc_messages_dicts.append({"role": "assistant", "content": _m.content or ""})
+        _usage = _token_counter.compute_usage(
+            system_prompt=system_prompt or "",
+            tools=tools,
+            messages=_lc_messages_dicts,
+            max_tokens=_token_counter.get_max_tokens(model_name),
+        )
+        yield ("token_usage", _usage.to_dict())
+        logger.info("token_usage T1/T2: total=%d ratio=%.1f%%", _usage.total, _usage.usage_ratio * 100)
+
+        # 触发自动压缩
+        from app.context_compressor import ContextCompressor
+        _compressor = ContextCompressor(llm, _token_counter)
+        if _compressor.should_compress(_usage):
+            yield ("status", f"上下文已使用 {_usage.usage_ratio*100:.0f}%，正在压缩...")
+            _compressed_msgs, _summary = _compressor.compress_messages(
+                _lc_messages_dicts, system_prompt, tools
+            )
+            # 转换回 LangChain 消息对象
+            from langchain_core.messages import HumanMessage as _HM, AIMessage as _AM, SystemMessage as _SM, ToolMessage as _TM
+            _lc_new = []
+            for _m in _compressed_msgs:
+                _r = _m.get("role", "")
+                _c = _m.get("content", "")
+                if _r == "system":
+                    _lc_new.append(_SM(content=_c))
+                elif _r == "assistant":
+                    _lc_new.append(_AM(content=_c))
+                elif _r == "tool":
+                    pass  # skip tool messages in summary path
+                else:
+                    _lc_new.append(_HM(content=_c))
+            lc_messages = _lc_new
+            # 重新计算 usage
+            _usage2 = _token_counter.compute_usage(
+                system_prompt=system_prompt or "",
+                tools=tools,
+                messages=_lc_messages_dicts,
+                max_tokens=_usage.max_tokens,
+            )
+            yield ("token_usage", _usage2.to_dict())
+            logger.info("After T1/T2 compression: ratio=%.1f%%", _usage2.usage_ratio * 100)
+    except Exception as _t_e:
+        logger.warning("token_usage 事件生成失败（不影响主流程）: %s", _t_e)
+
     if tools:
         from langchain_core.messages import ToolMessage
 
@@ -614,16 +854,14 @@ def ask_agent(
 
         # 并行执行 MCP 工具（call_tool 内部用自带连接池，线程安全；不碰聊天 db 会话）
         def _exec_mcp(_tool, _targs):
-            from app.mcp_client import MCPConnectionManager
+            # §1.1 工具池缓存跨请求复用：走 _call_mcp_tool（自开 session），不依赖请求作用域 db。
+            from app.mcp_tools import _call_mcp_tool
 
-            srv = getattr(_tool, "_mcp_server", None)
+            server_id = getattr(_tool, "_mcp_server_id", None)
             mcp_name = getattr(_tool, "_mcp_tool_name", None) or _tool.name
-            if srv is None:
+            if server_id is None:
                 return f"[error] unknown MCP server for tool {_tool.name}"
-            res, _lat, err = MCPConnectionManager.call_tool(user_id, srv, mcp_name, _targs)
-            if err:
-                return f"[MCP error] {err}"
-            return res or ""
+            return _call_mcp_tool(user_id, server_id, mcp_name, _targs)
 
         for _step in range(getattr(settings, "mcp_max_iterations", 5)):
             try:
@@ -811,24 +1049,39 @@ def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, m
             or getattr(settings, "enable_context_service", False)
             or (agent_config and getattr(agent_config, "knowledge_bases", None))
         )
-        if complex_path:
-            # P0：转发 ask_agent 生成器的流式事件（status / delta / done），
-            # 不再把整段答案当一个 delta 一次性吐出。
+
+        # §2.1 Fast Intent Router：逐消息三档分流（关闭开关则回退静态 complex_path）。
+        agent_has_kb = bool(agent_config and getattr(agent_config, "knowledge_bases", None))
+        if getattr(settings, "enable_intent_router", True):
+            tier = _route_intent(message, settings, agent_has_kb)
+        else:
+            tier = Tier.DIRECT if not complex_path else Tier.FULL
+
+        if tier != Tier.DIRECT:
+            # T1（工具，跳过 KB）或 T2（全量）→ 委派 ask_agent（转发流式事件）。
+            skip_kb = (tier == Tier.TOOLS)
+            logger.info("intent router: tier=%s skip_kb=%s", tier, skip_kb)
             for ev in ask_agent(
                 db=db, user_id=user_id, agent_id=agent_id, message=message,
                 thread_id=thread_id, system_prompt=system_prompt, model_name=model_name,
                 provider_base_url=provider_base_url, provider_type=provider_type,
                 provider_id=provider_id, reference_images=reference_images,
+                skip_kb=skip_kb,
             ):
                 if ev[0] == "status":
                     yield ("status", ev[1])
                 elif ev[0] == "delta":
                     yield ("delta", ev[1])
+                elif ev[0] == "token_usage":
+                    # 转发 T1/T2 路径的 token_usage 事件给前端
+                    yield ("token_usage", ev[1])
+                elif ev[0] == "warning":
+                    yield ("warning", ev[1])
                 elif ev[0] == "done":
                     yield ("done", ev[1], ev[2], ev[3])
             return
 
-        # ── Simple default path: stream token-by-token ──
+        # ── Simple default path (T0 DIRECT): stream token-by-token ──
         if system_prompt is None:
             if agent_config and agent_config.system_prompt:
                 system_prompt = agent_config.system_prompt
@@ -865,7 +1118,57 @@ def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, m
                 content = [{"type": "text", "text": content}, *image_blocks]
             lc_messages.append({"role": msg.role, "content": content})
 
+        # ── Token 统计与上下文压缩 ──
+        from app.token_counter import TokenCounter
+        from app.context_compressor import ContextCompressor
+
         llm = _create_llm_from_config(resolved_config)
+        token_counter = TokenCounter(model_name or "gpt-4")
+
+        # 计算 token 使用量
+        usage = token_counter.compute_usage(
+            system_prompt=system_prompt or "",
+            tools=[],  # T0 DIRECT 无工具
+            messages=lc_messages,
+            max_tokens=token_counter.get_max_tokens(model_name),
+        )
+        logger.info("T0 token_usage: total=%d ratio=%.1f%% max=%d",
+                    usage.total, usage.usage_ratio * 100, usage.max_tokens)
+
+        # 发送 token 统计事件
+        yield ("token_usage", usage.to_dict())
+
+        # 判断是否需要压缩
+        compressor = ContextCompressor(llm, token_counter)
+        if compressor.should_compress(usage):
+            logger.info(
+                "Context usage %.1f%% >= threshold, compressing",
+                usage.usage_ratio * 100
+            )
+            yield ("status", f"上下文已使用 {usage.usage_ratio*100:.0f}%，正在压缩...")
+
+            # 执行压缩
+            compressed_msgs, summary = compressor.compress_messages(
+                lc_messages, system_prompt, []
+            )
+
+            # 更新消息列表
+            lc_messages = compressed_msgs
+
+            # 重新计算 token 使用量
+            usage = token_counter.compute_usage(
+                system_prompt=system_prompt or "",
+                tools=[],
+                messages=lc_messages,
+                max_tokens=usage.max_tokens,
+            )
+            yield ("token_usage", usage.to_dict())
+            logger.info(
+                "After compression: usage %.1f%%",
+                usage.usage_ratio * 100
+            )
+
+        # 转换为 LangChain 消息对象
         from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
         _lc = []
         for m in lc_messages:
@@ -879,18 +1182,61 @@ def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, m
                 _lc.append(HumanMessage(content=content))
 
         def _stream_once(_llm, _msgs):
-            """Stream one attempt; yields ('delta', text) and returns collected chunks."""
+            """Stream one attempt; yields ('delta', text) and returns collected chunks.
+            
+            带超时监控：如果 60 秒无新 chunk，抛出 TimeoutError。
+            带 max_tokens 检测：如果模型返回 finish_reason='length'，返回警告。
+            """
+            import time
             collected: list[str] = []
-            for chunk in _llm.stream(_msgs):
-                text = chunk.content if isinstance(chunk.content, str) else ""
-                if text:
-                    collected.append(text)
-                    yield ("delta", text)
+            _chunk_timeout = 60.0  # 60 秒无新 chunk 视为超时
+            _last_chunk_time = time.time()
+            _finish_reason = None
+            
+            try:
+                for chunk in _llm.stream(_msgs):
+                    _now = time.time()
+                    # 检查是否超时
+                    if _now - _last_chunk_time > _chunk_timeout:
+                        logger.warning("Stream chunk timeout after %.1fs", _now - _last_chunk_time)
+                        raise TimeoutError(f"LLM 响应超时（{_chunk_timeout:.0f}秒无新内容），请稍后重试。")
+                    
+                    # 提取 finish_reason（如果存在）
+                    if hasattr(chunk, 'response_metadata'):
+                        _finish_reason = chunk.response_metadata.get('finish_reason')
+                    
+                    text = chunk.content if isinstance(chunk.content, str) else ""
+                    if text:
+                        collected.append(text)
+                        _last_chunk_time = _now  # 更新最后 chunk 时间
+                        yield ("delta", text)
+                
+                # 流结束后，根据 finish_reason 返回提示
+                if _finish_reason == 'length':
+                    logger.warning("Stream stopped due to max_tokens limit")
+                    yield ("warning", "回答被截断（达到token上限），可能不完整")
+                elif _finish_reason == 'tool_calls':
+                    yield ("status", "正在执行工具...")
+                    
+            except TimeoutError:
+                raise  # 超时异常向上抛出
+            except Exception as e:
+                # 其他异常（网络/连接）也检查是否接近超时
+                _elapsed = time.time() - _last_chunk_time
+                if _elapsed > 30:
+                    logger.warning("Stream failed after %.1fs: %s", _elapsed, e)
+                    raise TimeoutError(f"LLM 响应超时，请稍后重试。") from e
+                raise
             return collected
 
         full: list[str] = []
         try:
             full = yield from _stream_once(llm, _lc)
+        except TimeoutError as _timeout_err:
+            # 超时异常：给用户明确提示
+            logger.error("ask_agent_stream_gen: timeout: %s", _timeout_err)
+            yield ("error", str(_timeout_err))
+            return
         except Exception as _stream_err:  # connectivity / transient failure
             # Direct egress is the reliable path in this deployment. Retry DIRECT
             # first (transient errors usually clear on a fresh connection); only
@@ -904,11 +1250,20 @@ def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, m
             )
             try:
                 full = yield from _stream_once(_create_llm_from_config(resolved_config), _lc)
+            except TimeoutError as _retry_timeout:
+                logger.error("ask_agent_stream_gen: retry timeout: %s", _retry_timeout)
+                yield ("error", str(_retry_timeout))
+                return
             except Exception:
                 logger.warning("ask_agent_stream_gen: direct retry failed; trying proxy once")
-                full = yield from _stream_once(
-                    _create_llm_from_config(resolved_config, force_proxy=True), _lc
-                )
+                try:
+                    full = yield from _stream_once(
+                        _create_llm_from_config(resolved_config, force_proxy=True), _lc
+                    )
+                except TimeoutError as _proxy_timeout:
+                    logger.error("ask_agent_stream_gen: proxy timeout: %s", _proxy_timeout)
+                    yield ("error", str(_proxy_timeout))
+                    return
 
         # Empty-response resume: agnes-2.0-flash occasionally returns no content
         # (the "no output" symptom). Retry DIRECT only — the injected proxy is
@@ -917,6 +1272,10 @@ def ask_agent_stream_gen(user_id, agent_id, message, thread_id, system_prompt, m
             logger.warning("ask_agent_stream_gen: empty stream response; retrying direct once")
             try:
                 full = yield from _stream_once(_create_llm_from_config(resolved_config), _lc)
+            except TimeoutError as _empty_timeout:
+                logger.error("ask_agent_stream_gen: empty-retry timeout: %s", _empty_timeout)
+                yield ("error", str(_empty_timeout))
+                return
             except Exception as _empty_err:
                 logger.error("ask_agent_stream_gen: empty-retry also failed: %s", _empty_err)
 

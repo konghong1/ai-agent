@@ -102,6 +102,33 @@ class Settings(BaseSettings):
     # 熔断：连续失败达阈值→熔断 cooldown；cooldown 后首次调用为探测（半开）。
     mcp_circuit_max_failures: int = Field(default=5, alias="MCP_CIRCUIT_MAX_FAILURES")
     mcp_circuit_cooldown_secs: float = Field(default=60.0, alias="MCP_CIRCUIT_COOLDOWN_SECS")
+
+    # ── 聊天每轮性能优化 (plan-chat-perf-v2) ──
+    # 每根优化独立开关：关闭即回退到当前 complex_path 行为（零能力回归、可灰度、可一键回退）。
+    # §1.1 工具池缓存：避免每轮重建 StructuredTool（事件失效，非时间过期）。
+    enable_tool_pool: bool = Field(default=True, alias="ENABLE_TOOL_POOL")
+    # §1.2 Catalog 瘦身：见 mcp_tools.get_mcp_tool_catalog（随 enable_tool_pool 一并生效）。
+    # §1.3 KB 前置门控：无实体/召回意图的平凡轮跳过 semantic_recall / retrieval_reflex。
+    enable_kb_gate: bool = Field(default=True, alias="ENABLE_KB_GATE")
+    # §2.1 Fast Intent Router：闲聊/短句直答（T0）、实时数据仅工具（T1）、其余全量（T2）。
+    enable_intent_router: bool = Field(default=True, alias="ENABLE_INTENT_ROUTER")
+    # §2.2 按需 KB 工具 retrieve_knowledge：关闭自动语义回忆，改由模型按需调用（最大收益项，默认关）。
+    enable_ondemand_kb: bool = Field(default=False, alias="ENABLE_ONDEMAND_KB")
+    # §2.3 top-k 工具相关性剪枝：bind_tools 前仅绑定最相关 top-k（仅影响绑定列表，不改缓存）。
+    enable_tool_prune: bool = Field(default=True, alias="ENABLE_TOOL_PRUNE")
+    tool_prune_top_k: int = Field(default=8, alias="TOOL_PRUNE_TOP_K")
+    
+    # ── Model-Driven Agent Loop V2 (learn-claude-code) ──
+    # 基于 learn-claude-code 的重构架构：模型决定何时调用工具，代码只执行模型请求。
+    # 开启后：
+    # - 删除无条件 RAG（改为 retrieve_knowledge 工具）
+    # - 删除 Intent Router（模型自主决定路径）
+    # - Tool Pool 缓存（MCP/Skills 首次加载后缓存）
+    # - Hook 系统管理所有扩展点
+    use_agent_v2: bool = Field(default=False, alias="USE_AGENT_V2")
+    # V2 知识库工具开关（仅在 use_agent_v2=True 时生效）
+    enable_knowledge_tool: bool = Field(default=True, alias="ENABLE_KNOWLEDGE_TOOL")
+    
     # 部署模式：saas（多租户）| private（私有化单租户）。影响配额/隔离策略。
     deploy_mode: str = Field(default="saas", alias="DEPLOY_MODE")
 
